@@ -78,6 +78,10 @@ publishes grid before React using `npm publish --access public --tag roma --prov
 skips a version already present on npm, allowing recovery if only the first package was published.
 Feature branches have no publishing trigger.
 
+The annotated-tag check reads the remote tag and its peeled `^{}` ref. Do not replace it with a
+local `git cat-file` check: `actions/checkout` materializes the event tag as a commit ref, which
+makes a valid remotely annotated tag appear lightweight.
+
 ### One-time npm setup
 
 The package owner must first ensure both public package names exist under the `@etokheim` scope.

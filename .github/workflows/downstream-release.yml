@@ -37,11 +37,15 @@ jobs:
         run: |
           set -euo pipefail
           git fetch origin roma --no-tags
-          test "$(git cat-file -t "refs/tags/${GITHUB_REF_NAME}")" = tag || {
+          TAG_REFS=$(git ls-remote origin \
+            "refs/tags/${GITHUB_REF_NAME}" \
+            "refs/tags/${GITHUB_REF_NAME}^{}")
+          TAG_OBJECT=$(awk -v ref="refs/tags/${GITHUB_REF_NAME}" '$2 == ref { print $1 }' <<< "$TAG_REFS")
+          TAG_COMMIT=$(awk -v ref="refs/tags/${GITHUB_REF_NAME}^{}" '$2 == ref { print $1 }' <<< "$TAG_REFS")
+          test -n "$TAG_OBJECT" && test -n "$TAG_COMMIT" || {
             echo "Roma releases require an annotated tag." >&2
             exit 1
           }
-          TAG_COMMIT=$(git rev-list -n 1 "refs/tags/${GITHUB_REF_NAME}")
           ROMA_COMMIT=$(git rev-parse origin/roma)
           test "$TAG_COMMIT" = "$ROMA_COMMIT" || {
             echo "Release tag must point at the current origin/roma tip." >&2
