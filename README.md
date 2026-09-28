@@ -1,5 +1,10 @@
 # Toolbox Web
 
+This repository is the public downstream fork of
+[OysteinAmundsen/toolbox](https://github.com/OysteinAmundsen/toolbox). See
+[Fork maintenance](./FORK_MAINTENANCE.md) for the `main`/`roma` branch model and downstream
+package release process.
+
 [![CI/CD Pipeline](https://github.com/OysteinAmundsen/toolbox/actions/workflows/ci.yml/badge.svg)](https://github.com/OysteinAmundsen/toolbox/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![GitHub Sponsors](https://img.shields.io/badge/Sponsor-❤-ea4aaa?logo=github)](https://github.com/sponsors/OysteinAmundsen)

@@ -56,6 +56,19 @@
         "command": "bun run tools/check-bundle-budget.ts dist/libs/grid-react \"[{\\\"path\\\":\\\"index.js\\\",\\\"maxSize\\\":51200,\\\"maxGzip\\\":15360,\\\"warnGzip\\\":12288}]\""
       }
     },
+    "consumer-smoke": {
+      "executor": "nx:run-commands",
+      "dependsOn": [
+        "build",
+        {
+          "projects": ["grid"],
+          "target": "build"
+        }
+      ],
+      "options": {
+        "command": "bun tools/prepare-downstream-packages.ts && bun tools/downstream-consumer-smoke.ts"
+      }
+    },
     "test": {
       "executor": "@nx/vitest:test",
       "outputs": ["{options.reportsDirectory}"],
