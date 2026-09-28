@@ -52,6 +52,7 @@ import { VirtualizationManager } from './internal/virtualization-manager';
 import type { AfterCellRenderContext, AfterRowRenderContext, CellMouseEvent, ScrollEvent } from './plugin';
 import type { BaseGridPlugin, CellClickEvent, HeaderClickEvent, RowClickEvent } from './plugin/base-plugin';
 import { PluginManager } from './plugin/plugin-manager';
+import { getUtilityColumnOwner, removeOrphanedUtilityColumns } from './plugin/utility-column';
 import { gridStyles as styles } from './styles';
 import type {
   AnimationConfig,
@@ -2006,10 +2007,31 @@ export class DataGridElement<T = any> extends HTMLElement implements InternalGri
     // Start from base columns (before any plugin transformation) - like #rebuildRowModel uses #rows
     if (this.#pluginManager) {
       // Use base columns as source of truth, falling back to current _columns if not set
-      const sourceColumns = this.#baseColumns.length > 0 ? this.#baseColumns : this._columns;
+      let sourceColumns = removeOrphanedUtilityColumns(
+        this.#baseColumns.length > 0 ? this.#baseColumns : this._columns,
+        this.#pluginManager.getAll(),
+      );
       const visibleCols = sourceColumns.filter((c) => !c.hidden);
+      let processedColumns = this.#pluginManager.processColumns(visibleCols);
+      // Hidden managed columns do not reach the hooks. Retain their saved state
+      // only if the owner still produces them, and discard the new visible copy.
+      sourceColumns = sourceColumns.filter((column) => {
+        const owner = getUtilityColumnOwner(column);
+        return (
+          !column.hidden ||
+          !owner ||
+          processedColumns.some(
+            (processed) => processed.field === column.field && getUtilityColumnOwner(processed) === owner,
+          )
+        );
+      });
       const hiddenCols = sourceColumns.filter((c) => c.hidden);
-      const processedColumns = this.#pluginManager.processColumns([...visibleCols]);
+      if (hiddenCols.length) {
+        const hiddenFields = new Set(hiddenCols.map((column) => column.field));
+        processedColumns = processedColumns.filter(
+          (column) => !getUtilityColumnOwner(column) || !hiddenFields.has(column.field),
+        );
+      }
 
       // If plugins modified visible columns, update them
       if (processedColumns !== visibleCols) {

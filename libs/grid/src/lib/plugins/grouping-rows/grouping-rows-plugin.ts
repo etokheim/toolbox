@@ -17,7 +17,7 @@ import {
   type PluginManifest,
   type PluginQuery,
 } from '../../core/plugin/base-plugin';
-import { isExpanderColumn } from '../../core/plugin/expander-column';
+import { isExpanderColumn } from '../../core/plugin/utility-column';
 import type { RowElementInternal } from '../../core/types';
 import type {
   DataSourceChildrenDetail,

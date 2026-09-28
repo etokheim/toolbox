@@ -14,7 +14,13 @@ import { getPrimaryPointer } from '../../core/internal/pointer-modality';
 import { clearCellFocus, getRowIndexFromCell } from '../../core/internal/utils';
 import type { GridElement, HeaderClickEvent, PluginManifest, PluginQuery } from '../../core/plugin/base-plugin';
 import { BaseGridPlugin, CellClickEvent, CellMouseEvent } from '../../core/plugin/base-plugin';
-import { isExpanderColumn, isUtilityColumn } from '../../core/plugin/expander-column';
+import {
+  createUtilityColumn,
+  EXPANDER_COLUMN_FIELD,
+  isUtilityColumn,
+  removeUtilityColumn,
+  upsertUtilityColumn,
+} from '../../core/plugin/utility-column';
 import type { ColumnConfig } from '../../core/types';
 import type { ContextMenuParams, HeaderContextMenuItem } from '../context-menu/types';
 import {
@@ -1427,17 +1433,11 @@ export class SelectionPlugin extends BaseGridPlugin<SelectionConfig> {
    */
   override processColumns(columns: ColumnConfig[]): ColumnConfig[] {
     if (this.config.checkbox && this.#mode.primary === 'row') {
-      // Check if checkbox column already exists
-      if (columns.some((col) => col.field === CHECKBOX_COLUMN_FIELD)) {
-        return columns;
-      }
-      const checkboxCol = this.#createCheckboxColumn();
-      // Insert after expander column if present, otherwise first
-      const expanderIdx = columns.findIndex(isExpanderColumn);
-      const insertAt = expanderIdx >= 0 ? expanderIdx + 1 : 0;
-      return [...columns.slice(0, insertAt), checkboxCol, ...columns.slice(insertAt)];
+      return upsertUtilityColumn(columns, CHECKBOX_COLUMN_FIELD, () => this.#createCheckboxColumn(), {
+        after: EXPANDER_COLUMN_FIELD,
+      });
     }
-    return columns;
+    return removeUtilityColumn(columns, this);
   }
 
   /**
@@ -1445,13 +1445,7 @@ export class SelectionPlugin extends BaseGridPlugin<SelectionConfig> {
    */
   #createCheckboxColumn(): ColumnConfig {
     return {
-      field: CHECKBOX_COLUMN_FIELD,
-      header: '',
-      width: 32,
-      resizable: false,
-      sortable: false,
-      lockPosition: true,
-      utility: true,
+      ...createUtilityColumn(CHECKBOX_COLUMN_FIELD, 32, this),
       checkboxColumn: true,
       headerRenderer: () => {
         // A label, not a div: it forwards the pointer to the checkbox natively,

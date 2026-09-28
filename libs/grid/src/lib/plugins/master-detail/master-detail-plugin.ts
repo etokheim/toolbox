@@ -7,7 +7,13 @@
 
 import { evalTemplateString, sanitizeHTML } from '../../core/internal/sanitize';
 import { BaseGridPlugin, CellClickEvent, GridElement, RowClickEvent } from '../../core/plugin/base-plugin';
-import { createExpanderColumnConfig, findExpanderColumn, isExpanderColumn } from '../../core/plugin/expander-column';
+import {
+  createExpanderColumnConfig,
+  EXPANDER_COLUMN_FIELD,
+  isExpanderColumn,
+  removeUtilityColumn,
+  upsertUtilityColumn,
+} from '../../core/plugin/utility-column';
 import type { ColumnConfig, GridHost } from '../../core/types';
 import type { DataSourceChildrenDetail, FetchChildrenQuery } from '../server-side/datasource-types';
 import {
@@ -424,21 +430,14 @@ export class MasterDetailPlugin extends BaseGridPlugin<MasterDetailConfig> {
       this.config.showExpandColumn === true || (this.config.showExpandColumn !== false && !!this.config.detailRenderer);
 
     if (!shouldAddExpander) {
-      return [...columns];
+      return removeUtilityColumn(columns, this);
     }
 
-    const cols = [...columns];
+    return upsertUtilityColumn(columns, EXPANDER_COLUMN_FIELD, () => this.#createExpanderColumn(), 'start');
+  }
 
-    // Check if expander column already exists (from this or another plugin)
-    const existingExpander = findExpanderColumn(cols);
-    if (existingExpander) {
-      // Another plugin already added an expander column - don't add duplicate
-      // Our expand logic will be handled via onCellClick on the expander column
-      return cols;
-    }
-
-    // Create dedicated expander column that stays fixed at position 0
-    const expanderCol = createExpanderColumnConfig(this.name);
+  #createExpanderColumn(): ColumnConfig {
+    const expanderCol = createExpanderColumnConfig(this);
     expanderCol.viewRenderer = (renderCtx) => {
       const { row } = renderCtx;
       const isExpanded = this.expandedRows.has(row as object);
@@ -461,8 +460,7 @@ export class MasterDetailPlugin extends BaseGridPlugin<MasterDetailConfig> {
       return container;
     };
 
-    // Prepend expander column to ensure it's always first
-    return [expanderCol, ...cols];
+    return expanderCol;
   }
 
   /** @internal */
