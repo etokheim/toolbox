@@ -112,61 +112,81 @@ async function main(): Promise<void> {
     const started = await startRegistry(registry);
     server = started.server;
 
-    const consumer = join(temp, 'consumer');
-    await mkdir(consumer);
     const gridVersion = registry.get('@etokheim/toolbox-grid')!.manifest.version;
     const reactVersion = registry.get('@etokheim/toolbox-grid-react')!.manifest.version;
-    await writeFile(
-      join(consumer, 'package.json'),
-      JSON.stringify(
-        {
-          name: 'roma-alias-smoke',
-          private: true,
-          dependencies: {
-            '@toolbox-web/grid': `npm:@etokheim/toolbox-grid@${gridVersion}`,
-            '@toolbox-web/grid-react': `npm:@etokheim/toolbox-grid-react@${reactVersion}`,
-            react: `file:${resolve(root, 'node_modules/react')}`,
-            'react-dom': `file:${resolve(root, 'node_modules/react-dom')}`,
+    const reactPeer = registry.get('@etokheim/toolbox-grid-react')!.manifest.peerDependencies as
+      Record<string, string> | undefined;
+    if (reactPeer?.['@toolbox-web/grid'] !== gridVersion) {
+      throw new Error(
+        `React peer ${reactPeer?.['@toolbox-web/grid'] ?? '(missing)'} does not accept paired grid ${gridVersion}`,
+      );
+    }
+
+    for (const packageManager of ['bun', 'npm']) {
+      const consumer = join(temp, `consumer-${packageManager}`);
+      await mkdir(consumer);
+      await writeFile(
+        join(consumer, 'package.json'),
+        JSON.stringify(
+          {
+            name: `roma-alias-smoke-${packageManager}`,
+            private: true,
+            dependencies: {
+              '@toolbox-web/grid': `npm:@etokheim/toolbox-grid@${gridVersion}`,
+              '@toolbox-web/grid-react': `npm:@etokheim/toolbox-grid-react@${reactVersion}`,
+              react: `file:${resolve(root, 'node_modules/react')}`,
+              'react-dom': `file:${resolve(root, 'node_modules/react-dom')}`,
+            },
           },
-        },
-        null,
-        2,
-      ),
-    );
-    await writeFile(
-      join(consumer, '.npmrc'),
-      `@etokheim:registry=${started.baseUrl}/\nregistry=https://registry.npmjs.org/\n`,
-    );
-    await run('bun', ['install', '--ignore-scripts', '--no-progress'], consumer);
+          null,
+          2,
+        ),
+      );
+      await writeFile(
+        join(consumer, '.npmrc'),
+        `@etokheim:registry=${started.baseUrl}/\nregistry=https://registry.npmjs.org/\n`,
+      );
+      const installArgs =
+        packageManager === 'bun'
+          ? ['install', '--ignore-scripts', '--no-progress']
+          : ['install', '--ignore-scripts', '--no-audit', '--no-fund'];
+      await run(packageManager, installArgs, consumer);
 
-    const gridPackagePath = join(consumer, 'node_modules/@toolbox-web/grid/package.json');
-    const reactPackagePath = join(consumer, 'node_modules/@toolbox-web/grid-react/package.json');
-    const installedGrid = JSON.parse(await readFile(gridPackagePath, 'utf8')) as { name: string };
-    const installedReact = JSON.parse(await readFile(reactPackagePath, 'utf8')) as { name: string };
-    if (installedGrid.name !== '@etokheim/toolbox-grid') throw new Error('Grid alias was not installed');
-    if (installedReact.name !== '@etokheim/toolbox-grid-react') {
-      throw new Error('React alias was not installed');
+      const gridPackagePath = join(consumer, 'node_modules/@toolbox-web/grid/package.json');
+      const reactPackagePath = join(consumer, 'node_modules/@toolbox-web/grid-react/package.json');
+      const installedGrid = JSON.parse(await readFile(gridPackagePath, 'utf8')) as { name: string };
+      const installedReact = JSON.parse(await readFile(reactPackagePath, 'utf8')) as {
+        name: string;
+      };
+      if (installedGrid.name !== '@etokheim/toolbox-grid') {
+        throw new Error(`${packageManager}: grid alias was not installed`);
+      }
+      if (installedReact.name !== '@etokheim/toolbox-grid-react') {
+        throw new Error(`${packageManager}: React alias was not installed`);
+      }
+
+      const consumerGrid = await realpath(Bun.resolveSync('@toolbox-web/grid', consumer).replace(/\/index\.js$/, ''));
+      const reactGrid = await realpath(
+        Bun.resolveSync('@toolbox-web/grid', dirname(reactPackagePath)).replace(/\/index\.js$/, ''),
+      );
+      if (consumerGrid !== reactGrid) {
+        throw new Error(`${packageManager}: React resolved a duplicate grid copy:\n${consumerGrid}\n${reactGrid}`);
+      }
+
+      const manifests = Array.from(
+        new Bun.Glob('node_modules/**/package.json').scanSync({ cwd: consumer, absolute: true }),
+      );
+      let gridCopies = 0;
+      for (const manifestPath of manifests) {
+        const manifest = JSON.parse(await readFile(manifestPath, 'utf8')) as { name?: string };
+        if (manifest.name === '@etokheim/toolbox-grid') gridCopies++;
+      }
+      if (gridCopies !== 1) {
+        throw new Error(`${packageManager}: expected one downstream grid copy, found ${gridCopies}`);
+      }
     }
 
-    const consumerGrid = await realpath(Bun.resolveSync('@toolbox-web/grid', consumer).replace(/\/index\.js$/, ''));
-    const reactGrid = await realpath(
-      Bun.resolveSync('@toolbox-web/grid', dirname(reactPackagePath)).replace(/\/index\.js$/, ''),
-    );
-    if (consumerGrid !== reactGrid) {
-      throw new Error(`React resolved a duplicate grid copy:\n${consumerGrid}\n${reactGrid}`);
-    }
-
-    const manifests = Array.from(
-      new Bun.Glob('node_modules/**/package.json').scanSync({ cwd: consumer, absolute: true }),
-    );
-    let gridCopies = 0;
-    for (const manifestPath of manifests) {
-      const manifest = JSON.parse(await readFile(manifestPath, 'utf8')) as { name?: string };
-      if (manifest.name === '@etokheim/toolbox-grid') gridCopies++;
-    }
-    if (gridCopies !== 1) throw new Error(`Expected one downstream grid copy, found ${gridCopies}`);
-
-    console.log('Roma aliases resolve @toolbox-web/grid and @toolbox-web/grid-react with one grid copy.');
+    console.log('Bun and npm aliases resolve @toolbox-web/grid and @toolbox-web/grid-react with one grid copy.');
   } finally {
     if (server) {
       server.close();

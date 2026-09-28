@@ -39,9 +39,15 @@ for (const { source, dist, upstreamName } of packages) {
   await writeFile(distPath, `${JSON.stringify({ ...distManifest, ...romaManifest }, null, 2)}\n`);
 }
 
+const gridManifest = await readManifest('dist/libs/grid/package.json');
 const reactManifest = await readManifest('dist/libs/grid-react/package.json');
-if (reactManifest.peerDependencies?.['@toolbox-web/grid'] === undefined) {
+if (!reactManifest.peerDependencies?.['@toolbox-web/grid']) {
   throw new Error('Roma React package must retain the @toolbox-web/grid peer for npm aliases');
+}
+reactManifest.peerDependencies['@toolbox-web/grid'] = gridManifest.version;
+await writeFile(resolve(root, 'dist/libs/grid-react/package.json'), `${JSON.stringify(reactManifest, null, 2)}\n`);
+if (reactManifest.peerDependencies['@toolbox-web/grid'] !== gridManifest.version) {
+  throw new Error('Roma React peer must exactly match the paired downstream grid prerelease');
 }
 
 console.log('Prepared @etokheim Roma package manifests in dist.');

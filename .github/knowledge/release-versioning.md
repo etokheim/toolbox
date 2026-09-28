@@ -50,7 +50,7 @@ Config: [release-please-config.json](release-please-config.json) + `.release-ple
 - DECIDED (Sep 2026): `origin/main` stays a clean `upstream/main` mirror; `origin/roma` owns downstream integration/releases. Reusable features branch from clean `main`; accepted upstream work reaches `roma` through sync, while required pending/declined work remains explicit downstream commits. Canonical operator procedure: `FORK_MAINTENANCE.md`.
 - INVARIANT: upstream workspace manifests keep `@toolbox-web/*` identities. `libs/{grid,grid-react}/package.roma.json` overrides only built `dist` manifests via `tools/prepare-downstream-packages.ts`; changing source manifests makes Bun re-resolve the full adapter graph and creates avoidable lockfile churn.
 - FLOW: annotated `roma-release-*` tag at current `origin/roma` tip → `.github/workflows/downstream-release.yml` validates identity/version derivation → one job lint/tests/builds grid + React → local-registry alias smoke → prepare dist manifests → publish grid then React with trusted publishing/provenance and fixed `roma` dist-tag.
-- INVARIANT: React's emitted imports and peer stay `@toolbox-web/grid`; consumers alias both upstream names to `@etokheim/toolbox-grid{,-react}@roma`, producing one grid copy. `grid-react:consumer-smoke` proves Bun alias install and peer convergence.
+- INVARIANT: React's emitted imports and peer NAME stay `@toolbox-web/grid`, but dist preparation pins the peer RANGE to the exact paired Roma grid prerelease (`^3.0.0` excludes `3.8.2-roma.0`). Consumers alias both upstream names to `@etokheim/toolbox-grid{,-react}@roma`, producing one grid copy. `grid-react:consumer-smoke` proves strict npm + Bun alias install and peer convergence.
 
 ## `@since` pipeline & version badges
 

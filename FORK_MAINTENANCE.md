@@ -42,6 +42,8 @@ upstream base version changes. The downstream identities and versions live in ea
 graph remains an upstream mirror. Published versions and annotated release tags are immutable.
 
 The React package deliberately keeps imports and its peer dependency named `@toolbox-web/grid`.
+The dist preparation step pins that peer to the exact paired `@etokheim/toolbox-grid` Roma
+prerelease; a stable upstream range such as `^3.0.0` does not admit `3.8.2-roma.0`.
 Consumers preserve the upstream import surface with npm aliases:
 
 ```json
@@ -70,7 +72,8 @@ Alias both packages. This leaves one package installed at the peer name
 
 `.github/workflows/downstream-release.yml` rejects lightweight tags, tags not pointing at the
 current `origin/roma` tip, non-Roma versions, and unexpected package names. It installs once, then
-lint/tests/builds both packages from that tagged commit, runs the alias consumer smoke check, and
+lint/tests/builds both packages from that tagged commit, runs Bun and npm alias consumer smoke
+checks, and
 publishes grid before React using `npm publish --access public --tag roma --provenance`. A rerun
 skips a version already present on npm, allowing recovery if only the first package was published.
 Feature branches have no publishing trigger.
