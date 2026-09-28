@@ -1,0 +1,100 @@
+name: Roma distribution
+
+on:
+  pull_request:
+    branches:
+      - roma
+  push:
+    tags:
+      - 'roma-release-*'
+
+permissions:
+  contents: read
+
+jobs:
+  validate-and-publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+          registry-url: https://registry.npmjs.org
+
+      - name: Verify immutable Roma release tag
+        if: github.event_name == 'push'
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin roma --no-tags
+          test "$(git cat-file -t "refs/tags/${GITHUB_REF_NAME}")" = tag || {
+            echo "Roma releases require an annotated tag." >&2
+            exit 1
+          }
+          TAG_COMMIT=$(git rev-list -n 1 "refs/tags/${GITHUB_REF_NAME}")
+          ROMA_COMMIT=$(git rev-parse origin/roma)
+          test "$TAG_COMMIT" = "$ROMA_COMMIT" || {
+            echo "Release tag must point at the current origin/roma tip." >&2
+            exit 1
+          }
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Verify downstream package identities
+        run: |
+          node <<'NODE'
+          const expected = new Map([
+            ['libs/grid/package.roma.json', ['libs/grid/package.json', '@etokheim/toolbox-grid']],
+            ['libs/grid-react/package.roma.json', ['libs/grid-react/package.json', '@etokheim/toolbox-grid-react']],
+          ]);
+          for (const [path, [sourcePath, name]] of expected) {
+            const source = require(`./${sourcePath}`);
+            const roma = require(`./${path}`);
+            if (roma.name !== name) throw new Error(`${path}: expected ${name}, got ${roma.name}`);
+            if (!roma.version.startsWith(`${source.version}-roma.`)) {
+              throw new Error(`${path}: ${roma.version} does not derive from upstream ${source.version}`);
+            }
+          }
+          NODE
+
+      - name: Lint, test, and build both packages
+        run: bun nx run-many -t lint test build --projects=grid,grid-react
+
+      - name: Verify consumer aliases and peer resolution
+        run: bun nx consumer-smoke grid-react
+
+      - name: Generate grid package metadata
+        run: bun run cem
+
+      - name: Prepare publishable Roma packages
+        run: bun tools/prepare-downstream-packages.ts
+
+      - name: Publish both Roma packages
+        if: github.event_name == 'push'
+        shell: bash
+        run: |
+          set -euo pipefail
+          publish_if_missing() {
+            local directory="$1" package_name="$2"
+            local version
+            version=$(node -p "require('./${directory}/package.json').version")
+            if npm view "${package_name}@${version}" version >/dev/null 2>&1; then
+              echo "npm already has ${package_name}@${version}; skipping."
+              return
+            fi
+            (cd "$directory" && npm publish --access public --tag roma --provenance)
+          }
+
+          publish_if_missing dist/libs/grid @etokheim/toolbox-grid
+          publish_if_missing dist/libs/grid-react @etokheim/toolbox-grid-react
