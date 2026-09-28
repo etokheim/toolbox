@@ -423,6 +423,18 @@ See the [documentation](https://toolboxjs.com/) for complete configuration examp
 
 ---
 
+### Utility Columns
+
+Selection checkboxes, master-detail expanders, and row drag handles are plugin-owned utility
+columns. Their existing insertion rules and default controls are preserved; there is no global
+utility ordering policy. Tree disclosure remains inside its configured data column.
+
+Repeated column processing does not duplicate generated controls. Hidden utility columns retain
+their saved visibility and width, and removing or disabling their producer removes its generated
+columns. Consumer-authored `utility: true` columns are not owned or removed by those plugins.
+Utility columns keep the existing selection, clipboard/export, filtering, and column-chooser
+exclusion rules; explicit export/print options continue to apply.
+
 ## Grid Configuration
 
 ```typescript

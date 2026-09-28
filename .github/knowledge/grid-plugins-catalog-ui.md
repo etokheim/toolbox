@@ -44,7 +44,10 @@ OWNS: selected rows/cells/ranges/columns (`Set<field>`), `activeAxis`, normalize
 
 OWNS: expanded rows, detail height, animation state. HOOKS: processColumns (expander), onCellClick, afterRowRender, getRowHeight, adjustVirtualStart. EVENTS: `master-detail-toggle`.
 
-- SHARED expander util `core/plugin/expander-column.ts`: `EXPANDER_COLUMN_FIELD`, `EXPANDER_COLUMN_WIDTH`, `isExpanderColumn`, `isUtilityColumn`, `findExpanderColumn`, `createExpanderColumnConfig`, `ExpanderColumnRenderer`. DECIDED (Jun 2026): `createExpanderContainer`/`EXPANDER_COLUMN_STYLES` removed (zero consumers) — do not reintroduce.
+- SHARED utility lifecycle `core/plugin/utility-column.ts`: construction, insertion and instance ownership for selection/master-detail/row-drag; retains `EXPANDER_COLUMN_FIELD`, width, predicates and legacy expander metadata. Unused `findExpanderColumn`/`ExpanderColumnRenderer` removed with `expander-column.ts`; no public barrel exports changed. Do not resurrect removed expander DOM/CSS helpers.
+- INVARIANT: default placement remains plugin-order-dependent: selection follows an existing expander (otherwise prepends), master-detail prepends, drag prepends/appends. Existing columns retain saved position/width; Tree still wraps its configured data column.
+- OWNS: an enumerable registry-symbol property carries the producer instance across independent plugin bundles and column spreads/merges; JSON column state excludes it. `utility: true` alone never grants ownership.
+- FLOW: `grid.ts #processColumns` prunes detached owners before splitting hidden columns; hooks upsert visible utilities; a hidden managed column survives only while its owner still produces it, replacing the newly generated visible copy. Consumer utility/reserved-field columns are not adopted or removed. Tests: `utility-column.spec.ts`, integration `utility-columns.spec.ts`.
 - DECIDED (Jul 2026, `#syncDetailRows`): `#collectVisibleRowMap` (prefers the index-aligned `_rowPool`, `querySelectorAll` as fallback) → `#pruneDetachedDetails` (adapter `unmount` BEFORE `remove()`) → per-row `#insertDetailRow`. INVARIANT: the `.tbw-row-expanded` toggle MUST run on the collapsed branch too — recycling otherwise leaks the class onto another row.
 
 ## Reordering

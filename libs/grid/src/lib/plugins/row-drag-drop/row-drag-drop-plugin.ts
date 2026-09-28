@@ -29,6 +29,7 @@ import {
 } from '../../core/internal/drag-drop-registry';
 import { ensureCellVisible } from '../../core/internal/keyboard';
 import { BaseGridPlugin, type GridElement, type PluginManifest } from '../../core/plugin/base-plugin';
+import { createUtilityColumn, removeUtilityColumn, upsertUtilityColumn } from '../../core/plugin/utility-column';
 import type { ColumnConfig, GridHost } from '../../core/types';
 import {
   type AutoScroller,
@@ -311,17 +312,19 @@ export class RowDragDropPlugin<T = unknown> extends BaseGridPlugin<RowDragDropCo
 
   /** @internal */
   override processColumns(columns: readonly ColumnConfig[]): ColumnConfig[] {
-    if (!this.shouldRenderDragHandle()) return [...columns];
+    if (!this.shouldRenderDragHandle()) return removeUtilityColumn(columns, this);
 
-    const dragHandleColumn: ColumnConfig = {
-      field: ROW_DRAG_HANDLE_FIELD,
-      header: '',
-      width: this.config.dragHandleWidth ?? 40,
-      resizable: false,
-      sortable: false,
-      filterable: false,
-      lockPosition: true,
-      utility: true,
+    return upsertUtilityColumn(
+      columns,
+      ROW_DRAG_HANDLE_FIELD,
+      () => this.#createDragHandleColumn(),
+      this.config.dragHandlePosition === 'right' ? 'end' : 'start',
+    );
+  }
+
+  #createDragHandleColumn(): ColumnConfig {
+    return {
+      ...createUtilityColumn(ROW_DRAG_HANDLE_FIELD, this.config.dragHandleWidth ?? 40, this),
       viewRenderer: () => {
         const container = document.createElement('div');
         container.className = 'dg-row-drag-handle';
@@ -341,8 +344,6 @@ export class RowDragDropPlugin<T = unknown> extends BaseGridPlugin<RowDragDropCo
         return container;
       },
     };
-
-    return this.config.dragHandlePosition === 'right' ? [...columns, dragHandleColumn] : [dragHandleColumn, ...columns];
   }
 
   /** @internal */

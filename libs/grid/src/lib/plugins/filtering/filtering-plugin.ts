@@ -9,7 +9,7 @@
 import { announce, getA11yMessage } from '../../core/internal/aria';
 import { resolveCellValue } from '../../core/internal/value-accessor';
 import { BaseGridPlugin, type GridElement, type PluginManifest, type PluginQuery } from '../../core/plugin/base-plugin';
-import { isUtilityColumn } from '../../core/plugin/expander-column';
+import { isUtilityColumn } from '../../core/plugin/utility-column';
 import type { ColumnConfig, ColumnState } from '../../core/types';
 import type { ContextMenuParams, HeaderContextMenuItem } from '../context-menu/types';
 import {
