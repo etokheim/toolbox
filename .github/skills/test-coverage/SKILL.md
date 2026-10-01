@@ -175,3 +175,18 @@ bun nx test <project>
 ```
 
 Then re-run coverage to confirm improvement.
+
+### Focused coverage and static audits
+
+- A filtered run still enforces project-wide coverage thresholds over included source files.
+  Report assertion results separately from threshold failures; never lower thresholds to
+  make a focused diagnostic run look like a passing full-project gate.
+- Fallow's per-function audit needs Istanbul `coverage-final.json`, not `coverage-summary.json`.
+  Enable the `json` coverage reporter in the Vite configuration. With the Nx 23.2 explicit
+  executor, `--coverageReporters=json` and `--coverage.reporter=json` did not produce this
+  report; an ephemeral config passed through `--configFile` and extending the existing
+  project config did. Preserve the original thresholds and remove the temporary config.
+- V8 may report private methods as anonymous functions starting at the method body rather
+  than its declaration. Fallow can consequently still mark an executed method as estimated
+  zero coverage. Inspect the actual `fnMap` locations and `f` hit counts before concluding
+  that the method is untested; do not suppress genuine complexity findings.
