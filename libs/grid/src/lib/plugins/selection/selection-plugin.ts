@@ -11,8 +11,15 @@
 import { GridClasses } from '../../core/constants';
 import { announce, getA11yMessage } from '../../core/internal/aria';
 import { getPrimaryPointer } from '../../core/internal/pointer-modality';
+import { tryResolveRowId } from '../../core/internal/row-manager';
 import { clearCellFocus, getRowIndexFromCell } from '../../core/internal/utils';
-import type { GridElement, HeaderClickEvent, PluginManifest, PluginQuery } from '../../core/plugin/base-plugin';
+import type {
+  AfterCellRenderContext,
+  GridElement,
+  HeaderClickEvent,
+  PluginManifest,
+  PluginQuery,
+} from '../../core/plugin/base-plugin';
 import { BaseGridPlugin, CellClickEvent, CellMouseEvent } from '../../core/plugin/base-plugin';
 import {
   createUtilityColumn,
@@ -35,6 +42,7 @@ import {
   selectableColumnFields,
   type NormalizedModeConfig,
 } from './column-selection';
+import { CheckboxControls } from './checkbox-controls';
 import {
   createRangeFromAnchor,
   getAllCellsInRanges,
@@ -51,6 +59,9 @@ import type {
   SelectionAxis,
   SelectionChangeDetail,
   SelectionConfig,
+  SelectionCheckboxModifiers,
+  SelectionHeaderCheckboxContext,
+  SelectionRowCheckboxContext,
   SelectionMode,
   SelectionResult,
 } from './types';
@@ -256,7 +267,7 @@ function buildSelectionEvent(
  * @see {@link SelectionConfig} for interactive examples in the docs site
  * @since 0.1.1
  */
-export class SelectionPlugin extends BaseGridPlugin<SelectionConfig> {
+export class SelectionPlugin<TRow = unknown> extends BaseGridPlugin<SelectionConfig<TRow>> {
   /**
    * Plugin manifest - declares queries and configuration validation rules.
    * @internal
@@ -301,7 +312,7 @@ export class SelectionPlugin extends BaseGridPlugin<SelectionConfig> {
   override readonly styles = styles;
 
   /** @internal */
-  protected override get defaultConfig(): Partial<SelectionConfig> {
+  protected override get defaultConfig(): Partial<SelectionConfig<TRow>> {
     return {
       mode: 'cell',
       triggerOn: 'click',
@@ -403,6 +414,8 @@ export class SelectionPlugin extends BaseGridPlugin<SelectionConfig> {
 
   /** True when selection was explicitly set (click/keyboard) — prevents #syncSelectionToFocus from overwriting */
   private explicitSelection = false;
+  readonly #rowControls = new CheckboxControls<SelectionRowCheckboxContext<TRow>>();
+  readonly #headerControls = new CheckboxControls<SelectionHeaderCheckboxContext<TRow>>();
 
   // #endregion
 
@@ -582,6 +595,8 @@ export class SelectionPlugin extends BaseGridPlugin<SelectionConfig> {
 
   /** @internal */
   override detach(): void {
+    this.#rowControls.clear();
+    this.#headerControls.clear();
     // Clear aria-multiselectable that we set on the role=grid element.
     // Other lifecycle teardown happens below.
     const rowsBodyEl = this.gridElement?.querySelector('.rows-body');
@@ -945,16 +960,23 @@ export class SelectionPlugin extends BaseGridPlugin<SelectionConfig> {
 
   /** ROW MODE: multi-select with Shift/Ctrl, checkbox toggle, or single select. */
   #clickSelectRow(event: CellClickEvent): boolean {
-    const { rowIndex, originalEvent, column } = event;
+    return this.#selectCheckboxRow(event.rowIndex, event.originalEvent, event.column?.checkboxColumn === true);
+  }
+
+  #selectCheckboxRow(
+    rowIndex: number,
+    modifiers: SelectionCheckboxModifiers,
+    isCheckbox: boolean,
+    checked?: boolean,
+  ): boolean {
     if (!this.isRowSelectable(rowIndex)) return false;
 
     const multiSelect = this.config.multiSelect !== false;
-    const shiftKey = originalEvent.shiftKey && multiSelect;
+    const shiftKey = modifiers.shiftKey && multiSelect;
     // While touch selection mode is active a plain tap toggles, exactly as if
     // Ctrl were held — that is the whole point of the mode. Mouse chords are
     // untouched, so a hybrid device supports both at once.
-    const ctrlKey = (originalEvent.ctrlKey || originalEvent.metaKey || this.#touchActive) && multiSelect;
-    const isCheckbox = column?.checkboxColumn === true;
+    const ctrlKey = (modifiers.ctrlKey || modifiers.metaKey || this.#touchActive) && multiSelect;
 
     if (shiftKey && this.anchor !== null) {
       // Shift+Click: Range select from anchor to clicked row
@@ -965,6 +987,7 @@ export class SelectionPlugin extends BaseGridPlugin<SelectionConfig> {
         if (this.isRowSelectable(i)) this.selected.add(i);
       }
     } else if (ctrlKey || (isCheckbox && multiSelect)) {
+      if (checked !== undefined && this.selected.has(rowIndex) === checked) return false;
       // Ctrl+Click or checkbox click: Toggle individual row
       if (this.selected.has(rowIndex)) this.selected.delete(rowIndex);
       else this.selected.add(rowIndex);
@@ -1437,6 +1460,8 @@ export class SelectionPlugin extends BaseGridPlugin<SelectionConfig> {
         after: EXPANDER_COLUMN_FIELD,
       });
     }
+    this.#rowControls.clear();
+    this.#headerControls.clear();
     return removeUtilityColumn(columns, this);
   }
 
@@ -1447,49 +1472,169 @@ export class SelectionPlugin extends BaseGridPlugin<SelectionConfig> {
     return {
       ...createUtilityColumn(CHECKBOX_COLUMN_FIELD, 32, this),
       checkboxColumn: true,
-      headerRenderer: () => {
-        // A label, not a div: it forwards the pointer to the checkbox natively,
-        // so the target is the whole 32px cell without inflating the box (SC 2.5.8).
-        const container = document.createElement('label');
-        container.className = 'tbw-checkbox-header';
-        // Hide "select all" checkbox in single-select mode
-        if (this.config.multiSelect === false) return container;
-        const checkbox = document.createElement('input');
-        checkbox.type = 'checkbox';
-        checkbox.className = 'tbw-select-all-checkbox';
-        // The wrapping label names the checkbox implicitly AND gives the
-        // otherwise-empty `columnheader` cell screen-reader-visible text.
-        const labelText = document.createElement('span');
-        labelText.className = 'tbw-sr-only';
-        labelText.textContent = getA11yMessage(this.gridElement, 'selectAllRows');
-        checkbox.addEventListener('click', (e) => {
-          e.stopPropagation(); // Prevent header sort
-          if ((e.target as HTMLInputElement).checked) {
-            this.selectAll();
-          } else {
-            this.clearSelection();
-          }
-        });
-        // The label's own click keeps bubbling after it forwards to the
-        // checkbox; stop it so the header cell sees nothing.
-        container.addEventListener('click', (e) => e.stopPropagation());
-        container.append(checkbox, labelText);
-        return container;
+      headerRenderer: (ctx) => {
+        const element = this.#renderHeaderCheckbox(ctx.cellEl);
+        this.#headerControls.commit(ctx.cellEl);
+        return element;
       },
       renderer: (ctx) => {
-        const checkbox = document.createElement('input');
-        checkbox.type = 'checkbox';
-        checkbox.className = 'tbw-select-row-checkbox';
-        // Set initial checked state from current selection
-        const cellEl = ctx.cellEl;
-        const rowIndex = cellEl ? parseInt(cellEl.getAttribute('data-row') ?? '-1', 10) : -1;
-        if (rowIndex >= 0) {
-          checkbox.checked = this.selected.has(rowIndex);
-        }
-        checkbox.setAttribute('aria-label', getA11yMessage(this.gridElement, 'selectRow', Math.max(rowIndex, 0)));
-        return checkbox;
+        if (!ctx.cellEl) throw new Error('Selection checkbox requires a cell host.');
+        return this.#renderRowCheckbox(ctx.cellEl, ctx.row);
       },
     };
+  }
+
+  #defaultHeaderCheckbox(): HTMLElement {
+    // A label, not a div: it forwards the pointer to the checkbox natively,
+    // so the target is the whole 32px cell without inflating the box (SC 2.5.8).
+    const container = document.createElement('label');
+    container.className = 'tbw-checkbox-header';
+    // Hide "select all" checkbox in single-select mode
+    if (this.config.multiSelect === false) return container;
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.className = 'tbw-select-all-checkbox';
+    // The wrapping label names the checkbox implicitly AND gives the
+    // otherwise-empty `columnheader` cell screen-reader-visible text.
+    const labelText = document.createElement('span');
+    labelText.className = 'tbw-sr-only';
+    labelText.textContent = getA11yMessage(this.gridElement, 'selectAllRows');
+    checkbox.addEventListener('click', (e) => {
+      e.stopPropagation(); // Prevent header sort
+      if ((e.target as HTMLInputElement).checked) {
+        this.selectAll();
+      } else {
+        this.clearSelection();
+      }
+    });
+    // The label's own click keeps bubbling after it forwards to the
+    // checkbox; stop it so the header cell sees nothing.
+    container.addEventListener('click', (e) => e.stopPropagation());
+    container.append(checkbox, labelText);
+    return container;
+  }
+
+  #defaultRowCheckbox(cellEl: HTMLElement): HTMLElement {
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.className = 'tbw-select-row-checkbox';
+    // Set initial checked state from current selection
+    const rowIndex = cellEl ? parseInt(cellEl.getAttribute('data-row') ?? '-1', 10) : -1;
+    if (rowIndex >= 0) {
+      checkbox.checked = this.selected.has(rowIndex);
+    }
+    checkbox.setAttribute('aria-label', getA11yMessage(this.gridElement, 'selectRow', Math.max(rowIndex, 0)));
+    return checkbox;
+  }
+
+  #renderRowCheckbox(cell: HTMLElement, row: TRow): HTMLElement {
+    const rowIndex = getRowIndexFromCell(cell);
+    const rowId = tryResolveRowId(row, this.grid.effectiveConfig.getRowId);
+    const identity = rowId ?? row;
+    return this.#rowControls.render(
+      this.grid,
+      cell,
+      identity,
+      this.config.rowCheckboxRenderer,
+      (host, active): SelectionRowCheckboxContext<TRow> => ({
+        grid: this.grid,
+        host,
+        row,
+        rowId,
+        rowIndex,
+        ariaLabel: getA11yMessage(this.gridElement, 'selectRow', Math.max(rowIndex, 0)),
+        checked: this.selected.has(rowIndex),
+        selectable: this.isRowSelectable(rowIndex),
+        disabled: !this.isSelectionEnabled() || !this.isRowSelectable(rowIndex),
+        setChecked: (checked, modifiers = {}) => {
+          const index = getRowIndexFromCell(cell);
+          const current = this.rows[index];
+          if (
+            !active() ||
+            current === undefined ||
+            (tryResolveRowId(current, this.grid.effectiveConfig.getRowId) ?? current) !== identity
+          )
+            return;
+          if (this.isSelectionEnabled()) this.#selectCheckboxRow(index, modifiers, true, checked);
+        },
+      }),
+      () => this.#defaultRowCheckbox(cell),
+    );
+  }
+
+  #renderHeaderCheckbox(cell: HTMLElement): HTMLElement {
+    return this.#headerControls.render(
+      this.grid,
+      cell,
+      this,
+      this.config.multiSelect === false ? undefined : this.config.headerCheckboxRenderer,
+      (host, active): SelectionHeaderCheckboxContext<TRow> => {
+        const selectableCount = this.#selectableRowCount();
+        const checked = selectableCount > 0 && this.selected.size >= selectableCount;
+        return {
+          grid: this.grid,
+          host,
+          ariaLabel: getA11yMessage(this.gridElement, 'selectAllRows'),
+          checked,
+          indeterminate: this.selected.size > 0 && !checked,
+          disabled: !this.isSelectionEnabled() || selectableCount === 0,
+          setChecked: (value) => {
+            if (!active() || !this.isSelectionEnabled() || this.config.multiSelect === false) return;
+            const count = this.#selectableRowCount();
+            if (!count || (value ? this.selected.size >= count : this.selected.size === 0)) return;
+            if (value) this.selectAll();
+            else this.clearSelection();
+          },
+        };
+      },
+      () => this.#defaultHeaderCheckbox(),
+    );
+  }
+
+  #selectableRowCount(): number {
+    if (!this.config.isSelectable) return this.rows.length;
+    let count = 0;
+    for (let i = 0; i < this.rows.length; i++) if (this.isRowSelectable(i)) count++;
+    return count;
+  }
+
+  /** @internal Renderer-only updates preserve canonical selection and columns. */
+  setCheckboxRenderers(renderers: Pick<SelectionConfig<TRow>, 'rowCheckboxRenderer' | 'headerCheckboxRenderer'>): void {
+    if (
+      this.config.rowCheckboxRenderer === renderers.rowCheckboxRenderer &&
+      this.config.headerCheckboxRenderer === renderers.headerCheckboxRenderer
+    )
+      return;
+    Object.assign(this.userConfig, renderers);
+    Object.assign(this.config, renderers);
+    this.requestAfterRender();
+  }
+
+  /** @internal */
+  override afterCellRender(context: AfterCellRenderContext): void {
+    if (context.column.checkboxColumn) this.#rowControls.commit(context.cellElement);
+  }
+
+  #refreshCheckboxControls(): void {
+    for (const cell of Array.from(this.#rowControls.records.keys())) {
+      const row = this.rows[getRowIndexFromCell(cell)];
+      if (row === undefined || !this.grid.contains(cell)) {
+        this.#rowControls.release(cell);
+        continue;
+      }
+      const element = this.#renderRowCheckbox(cell, row);
+      if (element.parentElement !== cell) cell.replaceChildren(element);
+      this.#rowControls.commit(cell);
+    }
+    for (const cell of Array.from(this.#headerControls.records.keys())) {
+      if (!this.grid.contains(cell)) {
+        this.#headerControls.release(cell);
+        continue;
+      }
+      const element = this.#renderHeaderCheckbox(cell);
+      if (element.parentElement !== cell) cell.replaceChildren(element);
+      this.#headerControls.commit(cell);
+    }
   }
 
   /**
@@ -1497,6 +1642,7 @@ export class SelectionPlugin extends BaseGridPlugin<SelectionConfig> {
    * Called from #applySelectionClasses.
    */
   #updateCheckboxStates(gridEl: HTMLElement): void {
+    this.#refreshCheckboxControls();
     // Update row checkboxes
     const rowCheckboxes = gridEl.querySelectorAll('.tbw-select-row-checkbox') as NodeListOf<HTMLInputElement>;
     rowCheckboxes.forEach((checkbox) => {
@@ -1510,15 +1656,7 @@ export class SelectionPlugin extends BaseGridPlugin<SelectionConfig> {
     // Update header select-all checkbox
     const headerCheckbox = gridEl.querySelector('.tbw-select-all-checkbox') as HTMLInputElement | null;
     if (headerCheckbox) {
-      const rowCount = this.rows.length;
-      let selectableCount = 0;
-      if (this.config.isSelectable) {
-        for (let i = 0; i < rowCount; i++) {
-          if (this.isRowSelectable(i)) selectableCount++;
-        }
-      } else {
-        selectableCount = rowCount;
-      }
+      const selectableCount = this.#selectableRowCount();
       const allSelected = selectableCount > 0 && this.selected.size >= selectableCount;
       const someSelected = this.selected.size > 0;
       headerCheckbox.checked = allSelected;
@@ -1806,7 +1944,10 @@ export class SelectionPlugin extends BaseGridPlugin<SelectionConfig> {
   /** @internal */
   override afterRender(): void {
     // Skip rendering selection if disabled at grid level or plugin level
-    if (!this.isSelectionEnabled()) return;
+    if (!this.isSelectionEnabled()) {
+      this.#refreshCheckboxControls();
+      return;
+    }
 
     const gridEl = this.gridElement;
     if (!gridEl) return;
@@ -1895,7 +2036,10 @@ export class SelectionPlugin extends BaseGridPlugin<SelectionConfig> {
    */
   override onScrollRender(): void {
     // Skip rendering selection classes if disabled
-    if (!this.isSelectionEnabled()) return;
+    if (!this.isSelectionEnabled()) {
+      this.#refreshCheckboxControls();
+      return;
+    }
 
     this.#applySelectionClasses();
   }

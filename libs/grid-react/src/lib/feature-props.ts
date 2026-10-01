@@ -37,7 +37,7 @@ import type {
   PrintConfig,
   ReorderConfig,
   RowDragDropConfig,
-  SelectionConfig,
+  SelectionConfig as CoreSelectionConfig,
   ServerSideConfig,
   StickyRowsConfig,
   TooltipConfig,
@@ -52,6 +52,21 @@ import type { GroupRowRenderParams } from '@toolbox-web/grid/plugins/grouping-ro
 import type { AggregationSlot, PanelZone, PinnedRowsContext } from '@toolbox-web/grid/plugins/pinned-rows';
 import type { ShellConfig } from '@toolbox-web/grid/plugins/shell';
 import type { ReactNode } from 'react';
+import type { ControlView } from '@toolbox-web/grid';
+import type { SelectionHeaderCheckboxContext, SelectionRowCheckboxContext } from '@toolbox-web/grid/plugins/selection';
+
+/** Selection controls rendered through the owning DataGrid's React providers. @since 2.7.0 */
+export interface SelectionConfig<TRow = unknown> extends Omit<
+  CoreSelectionConfig<TRow>,
+  'rowCheckboxRenderer' | 'headerCheckboxRenderer'
+> {
+  rowCheckboxRenderer?: (
+    context: SelectionRowCheckboxContext<TRow>,
+  ) => Exclude<ReactNode, undefined> | HTMLElement | ControlView<SelectionRowCheckboxContext<TRow>>;
+  headerCheckboxRenderer?: (
+    context: SelectionHeaderCheckboxContext<TRow>,
+  ) => Exclude<ReactNode, undefined> | HTMLElement | ControlView<SelectionHeaderCheckboxContext<TRow>>;
+}
 
 // #region React-specific Config Overrides
 //

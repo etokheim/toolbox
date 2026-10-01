@@ -127,7 +127,8 @@ function createMockGrid(overrides = {}) {
 
 #### React Adapter (`libs/grid-react/`)
 
-- Use `@testing-library/react` with `render()` for component tests
+- Use existing `react-dom/client.createRoot` + React `act` fixtures; the workspace does not install `@testing-library/react`.
+- Finish `await act(() => root.render(...))` before polling for the new DOM in another `act`. Polling inside the render's uncompleted `act` can prevent React from committing and time out.
 - Mock grid element with `vi.fn()` for hooks and adapter tests
 
 #### Vue Adapter (`libs/grid-vue/`)
@@ -142,7 +143,7 @@ function createMockGrid(overrides = {}) {
 2. **Always `await waitUpgrade(grid)`** after creating grid elements
 3. **Use `await nextFrame()`** after data changes to wait for rendering
 4. **Mock `document.execCommand`** when testing clipboard (not in happy-dom)
-5. **Run tests through Nx**: `bun nx test grid --testFile=path/to/spec.ts`
+5. **Run tests through Nx**: core/React's `@nx/vitest:test` executor accepts `--testFiles=path1,path2`. Confirm the reported file count; positional paths can run the whole suite. Inferred Vitest targets instead use normal CLI positional filters.
 6. **Never use `npx vitest`** directly — always use `bun nx test <project>`
 
 ### happy-dom gotchas (layout, timers, plugin identity)
@@ -162,10 +163,8 @@ unreachable through the integration suite**. Test it as a unit with a hand-built
   `vi.useFakeTimers()`. Pre-existing specs that asserted the old synchronous path must be updated
   to the `0` form rather than deleted.
 
-**Diagnosing failures:** the repo's Nx test reporter suppresses assertion diffs. When a spec fails
-with no useful message, re-run it through the `runTests` VS Code tool to get the real
-expected/received output. Filtering with `--testPathPattern=` is **not** honoured — pass positional
-patterns instead: `bun nx test grid -- <pattern1> <pattern2>`.
+**Diagnosing failures:** use `--output-style=static` for full failure output. Do not use
+`--testPathPattern`; use the executor-appropriate filter above.
 
 ## Step 4: Verify
 

@@ -1,5 +1,6 @@
 import { FOCUSABLE_EDITOR_SELECTOR, GridClasses } from '../constants';
 import type { ColumnInternal, ColumnViewRenderer, GridHost, InternalGrid, RowElementInternal } from '../types';
+import { isControlEvent, releaseCell } from './control-lifecycle';
 import {
   CELL_CLASS_ERROR,
   FORMAT_ERROR,
@@ -246,17 +247,14 @@ function syncRowPool(grid: GridHost, needed: number, bodyEl: HTMLElement | null)
   if (grid._rowPool.length <= needed) return;
 
   const adapter = grid.__frameworkAdapter;
-  const release = adapter?.releaseCell;
   adapter?.beginBatch?.(grid);
   try {
     for (let i = needed; i < grid._rowPool.length; i++) {
       const el = grid._rowPool[i];
-      if (release) {
-        const cells = el.children;
-        for (let c = 0; c < cells.length; c++) {
-          const cell = cells[c] as HTMLElement;
-          if (cell.firstElementChild) release.call(adapter, cell);
-        }
+      const cells = el.children;
+      for (let c = 0; c < cells.length; c++) {
+        const cell = cells[c] as HTMLElement;
+        if (cell.firstElementChild) releaseCell(grid, cell);
       }
       if (el.parentNode === bodyEl) el.remove();
     }
@@ -596,7 +594,7 @@ function patchPlainCells(
 
     // Release editor views if cell has element children (indicating prior editor/renderer DOM).
     // Plain text cells (textContent-only) have no element children, so this is a fast O(1) skip.
-    if (cell.firstElementChild) grid.__frameworkAdapter?.releaseCell?.(cell);
+    if (cell.firstElementChild) releaseCell(grid, cell);
 
     const col = columns[i];
     const value = resolveCellValue(rowData, col, rowIndex);
@@ -641,19 +639,19 @@ function applyRendererOutput(
   });
   if (typeof produced === 'string') {
     // Release editor views before wiping cell content
-    grid.__frameworkAdapter?.releaseCell?.(cell);
+    releaseCell(grid, cell);
     setSanitizedHTML(cell, produced);
   } else if (produced instanceof Node) {
     // Skip when the container is already a child of the cell — the framework
     // adapter reused it and re-rendered in place.
     if (produced.parentElement !== cell) {
-      grid.__frameworkAdapter?.releaseCell?.(cell);
+      releaseCell(grid, cell);
       cell.innerHTML = '';
       cell.appendChild(produced);
     }
   } else if (produced == null) {
     // Renderer returned null/undefined - show raw value
-    grid.__frameworkAdapter?.releaseCell?.(cell);
+    releaseCell(grid, cell);
     cell.textContent = value == null ? '' : String(value);
   }
   // If produced is truthy but not a string or Node, the framework handles it
@@ -672,7 +670,7 @@ function applyTemplateOutput(grid: GridHost, cell: HTMLElement, html: string | n
     return;
   }
   // Release any framework views before replacing innerHTML
-  if (cell.firstElementChild) grid.__frameworkAdapter?.releaseCell?.(cell);
+  if (cell.firstElementChild) releaseCell(grid, cell);
   setSanitizedHTML(cell, html);
   finalCellScrub(cell);
 }
@@ -685,7 +683,7 @@ function applyTemplateOutput(grid: GridHost, cell: HTMLElement, html: string | n
 function applyFormattedValue(grid: GridHost, cell: HTMLElement, col: ColumnInternal, rowData: any, value: unknown) {
   // Release editor views if cell has element children (indicating prior editor/renderer DOM).
   // Plain text cells (textContent-only) have no element children, so this is a fast O(1) skip.
-  if (cell.firstElementChild) grid.__frameworkAdapter?.releaseCell?.(cell);
+  if (cell.firstElementChild) releaseCell(grid, cell);
 
   const formatFn = resolveFormat(grid, col);
   if (formatFn) {
@@ -836,19 +834,15 @@ function clearRowForRebuild(grid: GridHost, rowEl: HTMLElement): void {
   rowEl.removeAttribute('aria-busy');
 
   const adapter = grid.__frameworkAdapter;
-  if (!adapter?.releaseCell) {
-    rowEl.innerHTML = '';
-    return;
-  }
-  adapter.beginBatch?.(grid);
+  adapter?.beginBatch?.(grid);
   try {
     const children = rowEl.children;
     for (let i = children.length - 1; i >= 0; i--) {
-      adapter.releaseCell(children[i] as HTMLElement);
+      releaseCell(grid, children[i] as HTMLElement);
     }
     rowEl.innerHTML = '';
   } finally {
-    adapter.endBatch?.(grid);
+    adapter?.endBatch?.(grid);
   }
 }
 
@@ -1111,6 +1105,7 @@ export function renderInlineRow(grid: GridHost, rowEl: HTMLElement, rowData: any
  * Edit triggering is handled by EditingPlugin via onCellClick hook.
  */
 export function handleRowClick(grid: GridHost, e: MouseEvent, rowEl: HTMLElement): void {
+  if (isControlEvent(e, grid)) return;
   if ((e.target as HTMLElement)?.closest('.resize-handle')) return;
   const firstCell = rowEl.querySelector('.cell[data-row]') as HTMLElement | null;
   const rowIndex = getRowIndexFromCell(firstCell);

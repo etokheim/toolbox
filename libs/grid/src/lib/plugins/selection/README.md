@@ -35,6 +35,20 @@ grid.gridConfig = {
 
 ## Selection Modes
 
+### Custom checkbox controls
+
+In row checkbox mode, `rowCheckboxRenderer` and `headerCheckboxRenderer` accept
+typed contexts and return an `HTMLElement`, `ControlView<Context>` or `null` (empty).
+Omitting either hook keeps the native control. Persistent views initialise from
+the first context, then receive `update(context)` without remounting; `dispose()`
+runs on replacement/recycling/teardown. Plain elements use replacement semantics.
+Use `context.setChecked(value, { shiftKey, ctrlKey, metaKey })`, not a separate
+selection model. The row's processed index is not its optional stable `rowId`.
+
+React feature props and `gridConfig.features.selection` additionally accept JSX
+through the React adapter's shared portals. Manually instantiated plugins remain
+DOM-only. See the [custom controls example and lifecycle guide](https://toolboxjs.com/grid/plugins/selection/#custom-checkbox-controls).
+
 ### Cell Mode (`'cell'`)
 
 Single cell selection. Clicking a cell focuses and selects it.
@@ -59,6 +73,11 @@ Rectangular range selection like Excel.
 - **Ctrl+Click**: Start new range while keeping existing
 
 ## Accessibility
+
+Custom checkbox controls must apply the context's localised label, checked/mixed
+state and disabled state, provide keyboard activation and visible focus, and meet
+[SC 2.5.8 Target Size](https://www.w3.org/WAI/WCAG22/Understanding/target-size-minimum.html).
+Use one activation handler; grid shortcuts do not run inside custom controls.
 
 Range selection is a drag, so WCAG 2.2 [SC 2.5.7 Dragging Movements](https://www.w3.org/WAI/WCAG22/Understanding/dragging-movements.html) requires a single-pointer alternative. Two are provided: click the first cell and pick **Extend selection to here** from the context menu on the opposite corner (right-click, long-press, or `Shift+F10`), or **tap** a range corner handle to arm it and tap the cell that corner should move to. Neither reserves extra chrome — both reuse affordances that already exist. When the `ContextMenuPlugin` is installed the action joins the normal menu; otherwise the plugin hosts a minimal `role="group"` menu of its own. Keyboard users can also extend a range with `Shift+Arrow`, but keyboard equivalence alone does not satisfy SC 2.5.7.
 

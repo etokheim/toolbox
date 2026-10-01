@@ -19,6 +19,7 @@
 import { createPluginsFromFeatures as coreCreatePlugins } from '@toolbox-web/grid/features/registry';
 import type { AllFeatureProps } from './feature-props';
 import { isFeatureRegistered, type FeatureName } from './feature-registry';
+import { normalizeFeatureRenderers } from './feature-renderers';
 
 /**
  * Plugin dependency declarations.
@@ -69,7 +70,7 @@ export function createPluginsFromFeatures<TRow = unknown>(featureProps: Partial<
   validateFeatureDependencies(enabledFeatures);
 
   // Delegate to core registry (handles alias resolution, ordering, instantiation)
-  return coreCreatePlugins(featureProps as Record<string, unknown>);
+  return coreCreatePlugins(normalizeFeatureRenderers(featureProps as Record<string, unknown>));
 }
 
 /**

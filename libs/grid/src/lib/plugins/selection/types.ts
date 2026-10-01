@@ -4,8 +4,42 @@
  * Type definitions for the selection feature.
  */
 
-import type { ColumnConfig } from '../../core/types';
+import type { ColumnConfig, ControlRenderer, PublicGrid } from '../../core/types';
 import type { TouchSelectionMode } from './touch-selection';
+
+/** Keyboard modifiers for a checkbox action, independent of native/framework events. @since 3.9.0 */
+export interface SelectionCheckboxModifiers {
+  shiftKey?: boolean;
+  ctrlKey?: boolean;
+  metaKey?: boolean;
+}
+
+/** State and action for a select-all control. @since 3.9.0 */
+export interface SelectionHeaderCheckboxContext<T = unknown> {
+  grid: PublicGrid<T> & HTMLElement;
+  host: HTMLElement;
+  ariaLabel: string;
+  checked: boolean;
+  indeterminate: boolean;
+  disabled: boolean;
+  setChecked(checked: boolean): void;
+}
+
+/** State and action for a processed row's checkbox. @since 3.9.0 */
+export interface SelectionRowCheckboxContext<T = unknown> {
+  grid: PublicGrid<T> & HTMLElement;
+  host: HTMLElement;
+  row: T;
+  /** Existing getRowId / id / _id contract; undefined for rows without identity. */
+  rowId: string | undefined;
+  /** Current processed position, not a durable identity. */
+  rowIndex: number;
+  ariaLabel: string;
+  checked: boolean;
+  selectable: boolean;
+  disabled: boolean;
+  setChecked(checked: boolean, modifiers?: SelectionCheckboxModifiers): void;
+}
 
 // #region Module Augmentation
 // When this plugin is imported, GridConfig is augmented with selection-specific properties
@@ -164,6 +198,18 @@ export type SelectableCallback<T = unknown> = (
  * @since 0.1.1
  */
 export interface SelectionConfig<T = unknown> {
+  /**
+   * Custom row checkbox UI; omitted uses the native checkbox.
+   * Own the control's accessibility and call context.setChecked to select.
+   * @since 3.9.0
+   */
+  rowCheckboxRenderer?: ControlRenderer<SelectionRowCheckboxContext<T>>;
+
+  /**
+   * Custom select-all UI. Not invoked in single-select mode.
+   * @since 3.9.0
+   */
+  headerCheckboxRenderer?: ControlRenderer<SelectionHeaderCheckboxContext<T>>;
   /**
    * Selection mode (default: `'cell'`).
    *

@@ -29,6 +29,7 @@ describe('SelectionPlugin', () => {
       columns,
       _visibleColumns: columns.filter((c: any) => !c.hidden),
       gridConfig: {},
+      effectiveConfig: {},
       focusRow: 0,
       focusCol: 0,
       disconnectSignal: new AbortController().signal,
@@ -320,7 +321,7 @@ describe('SelectionPlugin', () => {
       plugin.attach(mockGrid);
 
       const [checkboxColumn] = plugin.processColumns(columns);
-      const header = checkboxColumn.headerRenderer?.({} as never) as HTMLElement;
+      const header = checkboxColumn.headerRenderer?.({ cellEl: document.createElement('div') } as never) as HTMLElement;
 
       // A label forwards the pointer to the checkbox natively, which is what
       // gives the control a 24px target without inflating the box (SC 2.5.8).
@@ -335,7 +336,7 @@ describe('SelectionPlugin', () => {
       plugin.attach(mockGrid);
 
       const [checkboxColumn] = plugin.processColumns(columns);
-      const header = checkboxColumn.headerRenderer?.({} as never) as HTMLElement;
+      const header = checkboxColumn.headerRenderer?.({ cellEl: document.createElement('div') } as never) as HTMLElement;
 
       // Doubles as the columnheader's screen-reader text (axe `empty-table-header`).
       const srText = header.querySelector('.tbw-sr-only');
@@ -351,7 +352,7 @@ describe('SelectionPlugin', () => {
       const [checkboxColumn] = plugin.processColumns(columns);
       const cellEl = document.createElement('div');
       cellEl.setAttribute('data-row', '4');
-      const checkbox = checkboxColumn.renderer?.({ cellEl } as never) as HTMLElement;
+      const checkbox = checkboxColumn.renderer?.({ cellEl, row: mockGrid.rows[0] } as never) as HTMLElement;
 
       expect(checkbox.getAttribute('aria-label')).toBe('Select row 5');
     });
@@ -1974,7 +1975,7 @@ describe('SelectionPlugin', () => {
         const checkboxCol = result.find((c: any) => c.field === '__tbw_checkbox');
 
         // Header renderer should return a container with no checkbox inside
-        const headerEl = checkboxCol!.headerRenderer!({} as any);
+        const headerEl = checkboxCol!.headerRenderer!({ cellEl: document.createElement('div') } as any);
         expect(headerEl.querySelector('input')).toBeNull();
       });
     });

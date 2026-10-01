@@ -175,6 +175,8 @@ export type {
   FitMode,
   // Framework adapter interface
   FrameworkAdapter,
+  ControlRenderer,
+  ControlView,
   GridColumnState,
   // Core configuration types
   GridConfig,
