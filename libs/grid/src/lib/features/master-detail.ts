@@ -13,9 +13,9 @@ import { MasterDetailPlugin, type MasterDetailConfig } from '../plugins/master-d
 import { registerFeature } from './registry';
 
 declare module '../core/types' {
-  interface FeatureConfig {
+  interface FeatureConfig<TRow> {
     /** Enable master-detail rows with expandable detail panels. */
-    masterDetail?: MasterDetailConfig;
+    masterDetail?: MasterDetailConfig<TRow>;
   }
 }
 

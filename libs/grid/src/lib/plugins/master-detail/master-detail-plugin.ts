@@ -6,7 +6,20 @@
  */
 
 import { evalTemplateString, sanitizeHTML } from '../../core/internal/sanitize';
-import { BaseGridPlugin, CellClickEvent, GridElement, RowClickEvent } from '../../core/plugin/base-plugin';
+import {
+  markDisclosureBoundary,
+  registerControlCleanup,
+  unregisterControlCleanup,
+} from '../../core/internal/control-lifecycle';
+import { getRowIndexFromCell } from '../../core/internal/utils';
+import {
+  BaseGridPlugin,
+  CellClickEvent,
+  GridElement,
+  RowClickEvent,
+  type AfterCellRenderContext,
+} from '../../core/plugin/base-plugin';
+import { ControlSlot } from '../../core/plugin/control-view';
 import {
   createExpanderColumnConfig,
   EXPANDER_COLUMN_FIELD,
@@ -14,7 +27,7 @@ import {
   removeUtilityColumn,
   upsertUtilityColumn,
 } from '../../core/plugin/utility-column';
-import type { ColumnConfig, GridHost } from '../../core/types';
+import type { ColumnConfig, GridHost, PublicGrid } from '../../core/types';
 import type { DataSourceChildrenDetail, FetchChildrenQuery } from '../server-side/datasource-types';
 import {
   collapseDetailRow,
@@ -24,7 +37,16 @@ import {
   toggleDetailRow,
 } from './master-detail';
 import styles from './master-detail.css?inline';
-import type { DetailExpandDetail, ExpandCollapseAnimation, MasterDetailConfig } from './types';
+import type {
+  DetailExpandDetail,
+  ExpandCollapseAnimation,
+  MasterDetailConfig,
+  MasterDetailDisclosureContext,
+} from './types';
+
+function disclosureLabel(expanded: boolean): string {
+  return expanded ? 'Collapse details' : 'Expand details';
+}
 
 /**
  * Master-Detail Plugin for tbw-grid
@@ -91,7 +113,7 @@ import type { DetailExpandDetail, ExpandCollapseAnimation, MasterDetailConfig } 
  * @internal Extends BaseGridPlugin
  * @since 0.1.1
  */
-export class MasterDetailPlugin extends BaseGridPlugin<MasterDetailConfig> {
+export class MasterDetailPlugin<TRow = unknown> extends BaseGridPlugin<MasterDetailConfig<TRow>> {
   /** @internal */
   readonly name = 'masterDetail';
   /** @internal */
@@ -111,7 +133,7 @@ export class MasterDetailPlugin extends BaseGridPlugin<MasterDetailConfig> {
   }
 
   /** @internal */
-  protected override get defaultConfig(): Partial<MasterDetailConfig> {
+  protected override get defaultConfig(): Partial<MasterDetailConfig<TRow>> {
     return {
       detailHeight: 'auto',
       expandOnRowClick: false,
@@ -146,6 +168,7 @@ export class MasterDetailPlugin extends BaseGridPlugin<MasterDetailConfig> {
         // Re-render: remove existing detail element so #syncDetailRows recreates it
         const existingDetail = this.detailElements.get(row);
         if (existingDetail) {
+          this.#internalGrid.__frameworkAdapter?.unmount?.(existingDetail);
           existingDetail.remove();
           this.detailElements.delete(row);
           this.measuredDetailHeights.delete(row);
@@ -200,7 +223,7 @@ export class MasterDetailPlugin extends BaseGridPlugin<MasterDetailConfig> {
     const expandOnRowClick = detailEl.getAttribute('expand-on-row-click');
     const heightAttr = detailEl.getAttribute('height');
 
-    const configUpdates: Partial<MasterDetailConfig> = {};
+    const configUpdates: Partial<MasterDetailConfig<TRow>> = {};
 
     if (animation !== null) {
       configUpdates.animation = animation === 'false' ? false : (animation as 'slide' | 'fade');
@@ -328,6 +351,14 @@ export class MasterDetailPlugin extends BaseGridPlugin<MasterDetailConfig> {
   private rowsToAnimate: Set<any> = new Set();
   /** Rows currently waiting for datasource:children response. */
   private loadingDetails: Set<any> = new Set();
+  #controls = new Map<
+    HTMLElement,
+    {
+      row: object;
+      element: HTMLElement;
+      slot?: ControlSlot<MasterDetailDisclosureContext<TRow>>;
+    }
+  >();
   /** Child rows received via datasource:children, keyed by parent row reference. */
   private detailDataMap: Map<any, unknown[]> = new Map();
 
@@ -406,6 +437,11 @@ export class MasterDetailPlugin extends BaseGridPlugin<MasterDetailConfig> {
 
   /** @internal */
   override detach(): void {
+    for (const cell of this.#controls.keys()) this.#releaseDisclosure(cell);
+    for (const detail of this.detailElements.values()) {
+      this.#internalGrid.__frameworkAdapter?.unmount?.(detail);
+      detail.remove();
+    }
     this.expandedRows.clear();
     this.detailElements.clear();
     this.measuredDetailHeights.clear();
@@ -439,7 +475,8 @@ export class MasterDetailPlugin extends BaseGridPlugin<MasterDetailConfig> {
   #createExpanderColumn(): ColumnConfig {
     const expanderCol = createExpanderColumnConfig(this);
     expanderCol.viewRenderer = (renderCtx) => {
-      const { row } = renderCtx;
+      const { row, cellEl } = renderCtx;
+      if (cellEl) return this.#renderDisclosure(cellEl, row as object);
       const isExpanded = this.expandedRows.has(row as object);
 
       const container = document.createElement('span');
@@ -454,13 +491,116 @@ export class MasterDetailPlugin extends BaseGridPlugin<MasterDetailConfig> {
       toggle.setAttribute('role', 'button');
       toggle.setAttribute('tabindex', '0');
       toggle.setAttribute('aria-expanded', String(isExpanded));
-      toggle.setAttribute('aria-label', isExpanded ? 'Collapse details' : 'Expand details');
+      toggle.setAttribute('aria-label', disclosureLabel(isExpanded));
       container.appendChild(toggle);
 
       return container;
     };
 
     return expanderCol;
+  }
+
+  #renderDisclosure(cell: HTMLElement, row: object): HTMLElement {
+    let record = this.#controls.get(cell);
+    if (record && (record.row !== row || record.element.closest('.cell') !== cell)) {
+      this.#releaseDisclosure(cell);
+      record = undefined;
+    }
+    if (!record) {
+      const element = document.createElement('span');
+      element.className = 'master-detail-expander expander-cell';
+      record = { row, element };
+      this.#controls.set(cell, record);
+    }
+    const renderer = this.config.disclosureRenderer;
+    const expanded = this.expandedRows.has(row);
+    if (!renderer) {
+      record.slot?.dispose();
+      record.slot = undefined;
+      const toggle = document.createElement('span');
+      toggle.className = `master-detail-toggle${expanded ? ' expanded' : ''}`;
+      this.setIcon(toggle, expanded ? 'collapse' : 'expand');
+      toggle.setAttribute('role', 'button');
+      toggle.setAttribute('tabindex', '0');
+      toggle.setAttribute('aria-expanded', String(expanded));
+      toggle.setAttribute('aria-label', disclosureLabel(expanded));
+      record.element.replaceChildren(toggle);
+    } else {
+      if (record.slot?.renderer !== renderer) {
+        record.slot?.dispose();
+        const host = document.createElement('span');
+        host.style.display = 'contents';
+        markDisclosureBoundary(host, this.gridElement);
+        record.element.replaceChildren(host);
+        record.slot = new ControlSlot(host, renderer, this.gridElement);
+      }
+      const current = record;
+      const slot = record.slot;
+      slot.update({
+        grid: this.grid as PublicGrid<TRow> & HTMLElement,
+        host: slot.host,
+        row: row as TRow,
+        rowIndex: getRowIndexFromCell(cell),
+        ariaLabel: disclosureLabel(expanded),
+        expanded,
+        loading: this.loadingDetails.has(row),
+        disabled: '__isGroupRow' in row && !!row.__isGroupRow,
+        setExpanded: (value) => {
+          const rowIndex = getRowIndexFromCell(cell);
+          if (
+            !slot.active ||
+            this.#controls.get(cell) !== current ||
+            current.slot !== slot ||
+            !this.gridElement.isConnected ||
+            !this.grid.contains(cell) ||
+            current.element.closest('.cell') !== cell ||
+            !current.element.contains(slot.host) ||
+            this.rows[rowIndex] !== row ||
+            this.config.disclosureRenderer !== renderer ||
+            this.config.showExpandColumn === false ||
+            this.expandedRows.has(row) === value
+          )
+            return;
+          this.toggleAndEmit(row, rowIndex);
+        },
+      });
+    }
+    return record.element;
+  }
+
+  #releaseDisclosure(cell: HTMLElement): void {
+    const record = this.#controls.get(cell);
+    if (!record) return;
+    this.#controls.delete(cell);
+    unregisterControlCleanup(cell, this);
+    record.slot?.dispose();
+  }
+
+  /** @internal */
+  override afterCellRender(context: AfterCellRenderContext): void {
+    const cell = context.cellElement;
+    if (this.#controls.has(cell)) registerControlCleanup(cell, () => this.#releaseDisclosure(cell), this);
+  }
+
+  /** Replace only disclosure controls, preserving expanded details. @since 3.9.0 */
+  setDisclosureRenderer(renderer: MasterDetailConfig<TRow>['disclosureRenderer']): void {
+    if (this.config.disclosureRenderer === renderer) return;
+    this.config.disclosureRenderer = this.userConfig.disclosureRenderer = renderer;
+    this.requestAfterRender();
+  }
+
+  #refreshDisclosures(): void {
+    for (const [cell, record] of this.#controls) {
+      if (
+        !this.grid.contains(cell) ||
+        record.element.closest('.cell') !== cell ||
+        this.rows[getRowIndexFromCell(cell)] !== record.row
+      ) {
+        this.#releaseDisclosure(cell);
+      } else if (this.config.disclosureRenderer || record.slot) {
+        this.#renderDisclosure(cell, record.row);
+      }
+    }
   }
 
   /** @internal */
@@ -513,6 +653,7 @@ export class MasterDetailPlugin extends BaseGridPlugin<MasterDetailConfig> {
 
   /** @internal */
   override afterRender(): void {
+    this.#refreshDisclosures();
     this.#fixExpanderHeaderSpan();
     this.#syncDetailRows();
   }

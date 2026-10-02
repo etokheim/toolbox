@@ -30,6 +30,23 @@ grid.gridConfig = {
 };
 ```
 
+## Custom disclosures
+
+`MasterDetailConfig<T>.disclosureRenderer` replaces the standalone expander control only.
+Return an `HTMLElement`, persistent `ControlView<MasterDetailDisclosureContext<T>>`, or `null`.
+The context exposes `ariaLabel`, expanded/loading/disabled state and guarded `setExpanded(boolean)`;
+the plugin retains expansion ownership, cancellation and events. `detailRenderer` is unchanged.
+See the [core and React guidance](https://toolboxjs.com/grid/plugins/master-detail/#custom-disclosure-controls).
+Inline placement and Vue/Angular template bridges are not included.
+
+## Accessibility
+
+Use a native button with `aria-label`, `aria-expanded`, and `disabled` from the context
+([WCAG 4.1.2](https://www.w3.org/WAI/WCAG22/Understanding/name-role-value.html)).
+The default name source remains "Expand details" / "Collapse details"; custom controls can localize it.
+Call `setExpanded` from click only, not from additional Space/Enter handlers. Prefer `ControlView`
+for focus-preserving state updates. The grid owns cell navigation.
+
 ## Configuration
 
 | Option             | Type                                                                        | Default   | Description                 |

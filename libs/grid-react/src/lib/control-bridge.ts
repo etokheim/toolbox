@@ -22,7 +22,7 @@ export function createControlBridge<T extends { grid: HTMLElement }>(
     };
     const render = (context: T) => {
       const output = renderer(context);
-      if (output === undefined) throw new TypeError('Checkbox renderer must return a control or null, not undefined.');
+      if (output === undefined) throw new TypeError('Control renderer must return a control or null, not undefined.');
       if (output instanceof HTMLElement) {
         clearPortal();
         if (output.parentElement !== element) element.replaceChildren(output);
@@ -35,7 +35,7 @@ export function createControlBridge<T extends { grid: HTMLElement }>(
           typeof output.update !== 'function' ||
           (output.dispose !== undefined && typeof output.dispose !== 'function')
         ) {
-          throw new TypeError('Invalid checkbox ControlView.');
+          throw new TypeError('Invalid ControlView.');
         }
         view = output;
         element.replaceChildren(output.element);
@@ -46,7 +46,7 @@ export function createControlBridge<T extends { grid: HTMLElement }>(
         element.replaceChildren();
         return;
       }
-      if (!getPortalManager(context.grid)) throw new Error('Checkbox JSX requires an owning DataGrid PortalManager.');
+      if (!getPortalManager(context.grid)) throw new Error('Control JSX requires an owning DataGrid PortalManager.');
       if (!portalHost) {
         portalHost = document.createElement('span');
         portalHost.style.display = 'contents';

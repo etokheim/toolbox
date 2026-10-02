@@ -44,6 +44,11 @@ setup hooks only for immutable fixture construction). Mirror the style of existi
   the operation under test requires invalidation, mutation, or cloning, include only the minimum
   reset that preserves a real operation on every invocation.
 
+- **Validate the measured result, not the exit code.** Vitest can emit a benchmark entry without
+  timings after an async callback fails. Require positive `sampleCount` and finite `mean` in JSON
+  (`samples` may intentionally be empty). DOM benchmarks must assert actual mounted row/portal
+  counts after scheduled rendering; a 30-child fixture can virtualize to two children in happy-dom.
+
 ## Two ways to run
 
 | Mode                        | Command                                                | Compares                                            | Use when                                                        |
@@ -100,6 +105,11 @@ threshold (default `0.30` for vs-tag). When asked for a report, produce:
   implementation and lockfile are identical but fixture generation, lookup order, or measured work
   changed, classify the row as non-comparable benchmark drift rather than a code regression. Confirm
   with `--iterations 3`; do not optimize unchanged production code to compensate for fixture noise.
+
+- **Isolate process variance on unchanged paths.** If repeated separate-process runs still flag
+  unchanged code, temporarily measure baseline and candidate implementations with identical fixtures
+  in one benchmark process. Preserve and report both results; a passing paired control does not erase
+  the earlier flag. Remove the diagnostic imports/wrappers and verify the fixture has no diff.
 
 - **Verdict** — one line: Faster / Slower / Mixed vs the named baseline, with the headline delta.
 - **Per-suite table** — `Suite | Baseline mean | Current mean | Δ | Regression?`, sorted by |Δ%|.

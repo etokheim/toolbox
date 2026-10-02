@@ -1,8 +1,11 @@
 import type { DataGridElement } from '@toolbox-web/grid';
+import { removeFromContainer } from './portal-bridge';
+
+export type GridOwner = () => HTMLElement | null;
 
 interface FeatureRendererBridge {
   keys: readonly string[];
-  normalize(config: Record<string, unknown>): Record<string, unknown>;
+  normalize(config: Record<string, unknown>, owner?: GridOwner): Record<string, unknown>;
   update(grid: DataGridElement, config: Record<string, unknown>): void;
 }
 
@@ -13,13 +16,35 @@ export function registerFeatureRendererBridge(name: string, bridge: FeatureRende
   bridges.set(name, bridge);
 }
 
-export function normalizeFeatureRenderers(features: Record<string, unknown>): Record<string, unknown> {
+export function normalizeFeatureRenderers(
+  features: Record<string, unknown>,
+  owner?: GridOwner,
+): Record<string, unknown> {
   const result = { ...features };
   for (const [name, bridge] of bridges) {
     const config = features[name];
-    if (config && typeof config === 'object') result[name] = bridge.normalize(config as Record<string, unknown>);
+    if (config && typeof config === 'object') result[name] = bridge.normalize(config as Record<string, unknown>, owner);
   }
   return result;
+}
+
+const featurePortals = new WeakMap<HTMLElement, string>();
+
+/** Feature content is released before the plugin removes its enclosing row. */
+export function trackFeaturePortal(container: HTMLElement, key: string): void {
+  container.dataset['reactFeaturePortal'] = '';
+  featurePortals.set(container, key);
+}
+
+export function releaseFeaturePortals(container: HTMLElement): void {
+  const release = (element: HTMLElement) => {
+    const key = featurePortals.get(element);
+    if (!key) return;
+    featurePortals.delete(element);
+    removeFromContainer(key);
+  };
+  release(container);
+  container.querySelectorAll<HTMLElement>('[data-react-feature-portal]').forEach(release);
 }
 
 export function updateFeatureRenderers(grid: DataGridElement, features: Record<string, unknown>): void {

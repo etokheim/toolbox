@@ -4,7 +4,9 @@
  * Pure functions for tree flattening, expansion, and traversal.
  */
 
-import type { FlattenedTreeRow, TreeConfig, TreeRow } from './types';
+import type { FlattenedTreeRow, TreeConfig as FullTreeConfig, TreeRow } from './types';
+
+type TreeConfig = Omit<FullTreeConfig, 'disclosureRenderer'>;
 
 /**
  * Generates a unique key for a row.

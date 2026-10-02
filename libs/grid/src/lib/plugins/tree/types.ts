@@ -4,7 +4,7 @@
  * Type definitions for hierarchical tree data with expand/collapse functionality.
  */
 
-import type { ExpandCollapseAnimation } from '../../core/types';
+import type { ControlRenderer, ExpandCollapseAnimation, PublicGrid } from '../../core/types';
 import type { Subscribable } from '../server-side/datasource-types';
 export type { ExpandCollapseAnimation } from '../../core/types';
 
@@ -54,7 +54,9 @@ export interface TreeLoadChildrenParams<T = TreeRow> {
  * ```
  * @since 0.1.1
  */
-export interface TreeConfig {
+export interface TreeConfig<T = unknown> {
+  /** Custom disclosure inside the tree column; omitted preserves the default. @since 3.9.0 */
+  disclosureRenderer?: ControlRenderer<TreeDisclosureContext<T>>;
   /** Field name containing child rows (default: 'children') */
   childrenField?: string;
   /** Auto-detect tree structure from data (default: true) */
@@ -124,6 +126,22 @@ export interface TreeConfig {
    * @since 3.4.0
    */
   hasChildren?: (row: TreeRow) => boolean;
+}
+
+/** State and guarded action for a tree node's disclosure. @since 3.9.0 */
+export interface TreeDisclosureContext<T = unknown> {
+  grid: PublicGrid<T> & HTMLElement;
+  host: HTMLElement;
+  row: T;
+  /** Current processed position, not a durable identity. */
+  rowIndex: number;
+  key: string;
+  depth: number;
+  hasChildren: boolean;
+  expanded: boolean;
+  loading: boolean;
+  disabled: boolean;
+  setExpanded(expanded: boolean): void;
 }
 
 /** Internal state managed by the tree plugin */

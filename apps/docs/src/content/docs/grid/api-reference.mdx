@@ -975,6 +975,12 @@ The patterns that show how to *use* the configuration API live with their respec
 
 ## Accessibility & Keyboard
 
+Tree and MasterDetail support full-control `disclosureRenderer` hooks with separate
+typed contexts and guarded expansion actions. See
+[Tree disclosure controls](/grid/plugins/tree/#custom-disclosure-controls) and
+[MasterDetail disclosure controls](/grid/plugins/master-detail/#custom-disclosure-controls)
+for control lifecycle, naming and native activation responsibilities.
+
 The grid implements the [W3C WAI-ARIA Grid Pattern](https://www.w3.org/WAI/ARIA/apg/patterns/grid/) out of the box — ARIA roles (`grid` / `row` / `gridcell` / `columnheader`), `aria-rowindex` / `aria-colindex` / `aria-rowcount` / `aria-colcount`, `aria-sort`, `aria-selected`, `aria-readonly`, and `aria-checked` are applied automatically.
 
 Configure accessible naming via `gridAriaLabel` / `gridAriaDescribedBy` on [`GridConfig`](/grid/api/core/interfaces/gridconfig/). Customise screen-reader announcements via [`A11yConfig`](/grid/api/core/interfaces/a11yconfig/).

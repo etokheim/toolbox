@@ -36,6 +36,26 @@ grid.gridConfig = {
 grid.rows = data;
 ```
 
+## Custom disclosures
+
+`TreeConfig<T>.disclosureRenderer` receives `TreeDisclosureContext<T>` and returns an
+`HTMLElement`, a persistent `ControlView<TreeDisclosureContext<T>>`, or `null`. Call its
+guarded `setExpanded(boolean)` action instead of mutating expansion state. The disclosure
+occupies a separate slot beside the Tree column's data renderer; leaves and hidden icons
+do not create controls. Keep the default toggle unless you need a full application control.
+See the [DOM and React demo](https://toolboxjs.com/grid/plugins/tree/#custom-disclosure-controls).
+
+Set `treeColumn: 'name'` to target the Name cell explicitly. Without it, Tree uses the first
+column at its plugin hook, which may be MasterDetail's utility column; both disclosures
+retain independent expansion and cleanup.
+
+## Accessibility
+
+Custom controls provide a localized name, `aria-expanded`, disabled state and native button
+activation ([WCAG 4.1.2](https://www.w3.org/WAI/WCAG22/Understanding/name-role-value.html)).
+Use click only to call `setExpanded`; a native button supplies Space/Enter activation.
+Return a `ControlView` to preserve focus across state updates. The grid owns cell navigation.
+
 ## Configuration
 
 | Option            | Type                                                  | Default      | Description                                 |

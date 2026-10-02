@@ -46,6 +46,11 @@ NEW (1):
 
 ## Requirements and caveats
 
+- If the script reports zero warnings but normal lint reports warnings, the stylish parser did
+  not recognize Nx's output; zero is not a valid delta. Capture each side with
+  `bun nx lint <project> --format=json --output-file=<absolute-path> --output-style=static`
+  and compare messages by repo-relative file + rule + message (not line numbers).
+
 - **The working tree must be dirty** — the script compares your uncommitted changes against `HEAD`. It exits early on a clean tree. To check work that is already committed, compare against the parent commit manually.
 - **It runs `git stash push --include-untracked`.** Restoration is in a `finally` block, and if `git stash pop` ever fails the script prints loud recovery instructions and exits 1 — run `git stash pop` yourself in that case. Do not run it mid-rebase or mid-merge.
 - Lint runs with `--skip-nx-cache` on both passes so the baseline is genuinely re-measured.

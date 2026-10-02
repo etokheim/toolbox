@@ -19,7 +19,7 @@
 import { createPluginsFromFeatures as coreCreatePlugins } from '@toolbox-web/grid/features/registry';
 import type { AllFeatureProps } from './feature-props';
 import { isFeatureRegistered, type FeatureName } from './feature-registry';
-import { normalizeFeatureRenderers } from './feature-renderers';
+import { normalizeFeatureRenderers, type GridOwner } from './feature-renderers';
 
 /**
  * Plugin dependency declarations.
@@ -60,7 +60,10 @@ export function validateFeatureDependencies(featureNames: FeatureName[]): void {
  * @param featureProps - The feature props from DataGrid
  * @returns Array of plugin instances
  */
-export function createPluginsFromFeatures<TRow = unknown>(featureProps: Partial<AllFeatureProps<TRow>>): unknown[] {
+export function createPluginsFromFeatures<TRow = unknown>(
+  featureProps: Partial<AllFeatureProps<TRow>>,
+  owner?: GridOwner,
+): unknown[] {
   // Validate dependencies before delegating
   const enabledFeatures: FeatureName[] = [];
   for (const [key, value] of Object.entries(featureProps)) {
@@ -70,7 +73,7 @@ export function createPluginsFromFeatures<TRow = unknown>(featureProps: Partial<
   validateFeatureDependencies(enabledFeatures);
 
   // Delegate to core registry (handles alias resolution, ordering, instantiation)
-  return coreCreatePlugins(normalizeFeatureRenderers(featureProps as Record<string, unknown>));
+  return coreCreatePlugins(normalizeFeatureRenderers(featureProps as Record<string, unknown>, owner));
 }
 
 /**

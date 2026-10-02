@@ -13,9 +13,9 @@ import { TreePlugin, type TreeConfig } from '../plugins/tree';
 import { registerFeature } from './registry';
 
 declare module '../core/types' {
-  interface FeatureConfig {
+  interface FeatureConfig<TRow> {
     /** Enable tree (hierarchical) data display with expand/collapse. */
-    tree?: boolean | TreeConfig;
+    tree?: boolean | TreeConfig<TRow>;
   }
 }
 

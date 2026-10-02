@@ -39,6 +39,13 @@ related: [adapters, adapters-vue, adapters-angular, grid-core, grid-features]
 - INVARIANT: stable non-renderer config identity gates memo invalidation, not its payload. `processedGridConfig` rebuilds from the latest config ref; otherwise a later `sortable`/icons change restores old callbacks after the renderer-sync layout effect. `selection-controls.spec.tsx` covers passive-effect ordering outside React `act`.
 - TESTS: `selection-controls.spec.tsx` (both surfaces, providers, focus, isolated grids, header teardown); `control-bridge.spec.tsx` (mixed outputs); `selection-types.spec.tsx` (JSX vs core DOM contract, unrelated feature keys).
 
+## disclosure-control-bridge
+
+- OWNS: `features/{tree,master-detail}.ts` adapter-local normalization; canonical generic configs widen both feature props and `GridConfig.features`. Callback-only setters preserve expansion; core plugins remain DOM-only. Vue/Angular template bridges deferred.
+- FLOW: DataGrid stable owner getter → `processGridConfig` → `wrapReactRenderer` and MD detail normalization → owning PortalManager. INVARIANT: new/recycled Name containers are detached; DOM traversal or single-manager fallback cannot bind them with two grids. Pre-existing fallback-root weakness surfaced by Tree + Name composition; unit regression spies `createRoot` with a DOM grid and two providers.
+- INVARIANT: MD JSX detail hosts use `trackFeaturePortal` → adapter `unmount` → `releaseFeaturePortals`; no shared core-factory override or new React roots. Strings/HTMLElement pass through; `GridDetailPanel` retains precedence.
+- INVARIANT: renderer-stable config identity gates memo rebuilds, but payload comes from `latestGridConfig.current`. Normal-effect A→B→sortable regression MUST run outside `act`; layout/passive ordering otherwise masks stale callback restoration.
+
 ## react-overlay-editors (`useGridOverlay`)
 
 - OWNS: nothing — pure hook. Delegates to `grid.registerExternalFocusContainer(panel)` / `unregisterExternalFocusContainer(panel)`.
