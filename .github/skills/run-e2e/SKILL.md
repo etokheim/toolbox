@@ -217,3 +217,15 @@ The `playwright-report` artifact covers **both** suites (root `playwright-report
 plus `apps/docs-e2e/playwright-report/` and both `test-results/` dirs) — keep all
 four paths in `.github/workflows/ci.yml`, otherwise a `docs-e2e` failure ships no
 traces or screenshots.
+
+For Vite `504 (Outdated Optimize Dep)` or stale dynamic-import URLs, inspect
+`DEBUG=vite:deps` on a **fresh, isolated `vite.cacheDir`** while smoke and affected
+demo tests run concurrently. Do not delete shared caches or filter console errors.
+Prebundle imports identified by `new dependencies found` in the owning Astro
+config; verify startup optimization finishes without later rediscovery. A
+warm-cache rerun cannot establish that.
+
+Artifact-only config wrappers can preserve the repo's configuration while changing
+the cache and test port: use `.mts` for a Playwright wrapper importing ESM configs,
+and pass Astro `--config` a path **relative to the Astro app root** (its resolver
+uses `path.join(root, configFile)`, not absolute-path-aware `resolve`).

@@ -39,6 +39,11 @@ function gridAliases() {
 
 export default defineConfig({
   vite: {
+    optimizeDeps: {
+      // Demos live outside this app's scan root; discover their React imports before
+      // parallel page loads can invalidate already-served optimized dependency URLs.
+      include: ['react', 'react-dom', 'react-dom/client', 'react/jsx-dev-runtime'],
+    },
     resolve: {
       alias: {
         ...gridAliases(),
