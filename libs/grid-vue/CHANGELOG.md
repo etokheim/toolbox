@@ -1,5 +1,15 @@
 # Changelog
 
+## [2.7.0](https://github.com/etokheim/toolbox/compare/grid-vue-2.6.0...grid-vue-2.7.0) (2026-10-02)
+
+
+### Features
+
+* **cell-entry/editing:** add opt-in cell entry and Tab continuation ([adb893f](https://github.com/etokheim/toolbox/commit/adb893fc77c9435769caf7d3e82c29fadb19ca2c))
+* **cell-entry/editing:** publish opt-in cell entry and integration proof ([fee4053](https://github.com/etokheim/toolbox/commit/fee40535c48dd62e8799056f273b4741b944c6c2))
+* **grid/selection/grid-react:** add embedded row checkbox bindings ([b35b17b](https://github.com/etokheim/toolbox/commit/b35b17bb8a2a29655e4029fde43182512b1219df))
+* **grid/selection/grid-react:** add embedded row checkbox bindings ([42a48e6](https://github.com/etokheim/toolbox/commit/42a48e600de5fa709df22f10bad1624cd0d5f11c))
+
 ## [2.6.0](https://github.com/OysteinAmundsen/toolbox/compare/grid-vue-2.5.0...grid-vue-2.6.0) (2026-09-09)
 
 

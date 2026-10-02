@@ -1,5 +1,21 @@
 # Changelog
 
+## [3.9.0](https://github.com/etokheim/toolbox/compare/grid-3.8.2...grid-3.9.0) (2026-10-02)
+
+
+### Features
+
+* **cell-entry/editing:** add opt-in cell entry and Tab continuation ([adb893f](https://github.com/etokheim/toolbox/commit/adb893fc77c9435769caf7d3e82c29fadb19ca2c))
+* **cell-entry/editing:** publish opt-in cell entry and integration proof ([fee4053](https://github.com/etokheim/toolbox/commit/fee40535c48dd62e8799056f273b4741b944c6c2))
+* **grid/selection/grid-react:** add embedded row checkbox bindings ([b35b17b](https://github.com/etokheim/toolbox/commit/b35b17bb8a2a29655e4029fde43182512b1219df))
+* **grid/selection/grid-react:** add embedded row checkbox bindings ([42a48e6](https://github.com/etokheim/toolbox/commit/42a48e600de5fa709df22f10bad1624cd0d5f11c))
+* **grid/selection/grid-react:** add typed selection checkbox renderers ([b687ca9](https://github.com/etokheim/toolbox/commit/b687ca9b57b56fd07143cd4902899c67e72700e6))
+* **grid/selection/grid-react:** add typed selection checkbox renderers ([6c2f78d](https://github.com/etokheim/toolbox/commit/6c2f78d2b1b84e1ba20494a4631fe9d496e34dba))
+* **master-detail/tree:** add typed disclosure controls ([7f5b87d](https://github.com/etokheim/toolbox/commit/7f5b87d9ea6dfa49ad9c2479b560f03dcffde1f6))
+* **row-drag-drop/grid-react:** add typed drag handle renderers ([e1c38f1](https://github.com/etokheim/toolbox/commit/e1c38f1f0de7ca44e56764160aa754ae2355c082))
+* **row-drag-drop/grid-react:** add typed drag handle renderers ([93d3a97](https://github.com/etokheim/toolbox/commit/93d3a97539c909466981867a94222949d28bd252))
+* **tree/master-detail/grid-react:** add typed disclosure controls ([a73ec4c](https://github.com/etokheim/toolbox/commit/a73ec4cc09f72c0f9a847b33c23f1afa9073bf60))
+
 ## [3.8.2](https://github.com/OysteinAmundsen/toolbox/compare/grid-3.8.1...grid-3.8.2) (2026-09-18)
 
 
