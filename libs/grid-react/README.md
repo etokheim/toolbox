@@ -95,6 +95,16 @@ to grid props such as `sortable` retain the latest callbacks. Manually
 constructed core plugins remain DOM-only; omit the hooks for native checkboxes.
 See the [typed contexts, accessibility and lifecycle guide](https://toolboxjs.com/grid/plugins/selection/#react-checkbox-renderers).
 
+For a checkbox **inside an existing Name renderer**, import `SelectionCheckbox`
+from `@toolbox-web/grid-react/features/selection` and forward the renderer's full
+context: `<SelectionCheckbox context={context}>{state => ...}</SelectionCheckbox>`.
+Configure the JSX renderer through `gridConfig.columns`, with row-mode Selection
+and `checkbox: false`. Children keep Name-local providers and focused DOM across
+state updates. Forward native click modifiers to `state.setChecked`, apply its
+localised label/checked/disabled state, and keep Name links outside the control.
+The initial host is empty until its post-commit subscription publishes state;
+unmount revokes the binding. See the [embedded example](https://toolboxjs.com/grid/plugins/selection/#react-embedded-checkbox).
+
 Features are enabled using **declarative props** with **side-effect imports**. This gives you the best of both worlds: clean, intuitive JSX and tree-shakeable bundles.
 
 ### How It Works

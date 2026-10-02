@@ -10,6 +10,7 @@
 
 import { GridClasses } from '../../core/constants';
 import { announce, getA11yMessage } from '../../core/internal/aria';
+import { CONTROL_RENDER_ERROR, throwDiagnostic } from '../../core/internal/diagnostics';
 import { getPrimaryPointer } from '../../core/internal/pointer-modality';
 import { tryResolveRowId } from '../../core/internal/row-manager';
 import { clearCellFocus, getRowIndexFromCell } from '../../core/internal/utils';
@@ -28,7 +29,7 @@ import {
   removeUtilityColumn,
   upsertUtilityColumn,
 } from '../../core/plugin/utility-column';
-import type { ColumnConfig } from '../../core/types';
+import type { CellRenderContext, ColumnConfig } from '../../core/types';
 import type { ContextMenuParams, HeaderContextMenuItem } from '../context-menu/types';
 import {
   createDragAlternativeMenu,
@@ -43,6 +44,7 @@ import {
   type NormalizedModeConfig,
 } from './column-selection';
 import { CheckboxControls } from './checkbox-controls';
+import { EmbeddedCheckboxes } from './embedded-checkbox';
 import {
   createRangeFromAnchor,
   getAllCellsInRanges,
@@ -62,6 +64,7 @@ import type {
   SelectionCheckboxModifiers,
   SelectionHeaderCheckboxContext,
   SelectionRowCheckboxContext,
+  SelectionRowCheckboxBinding,
   SelectionMode,
   SelectionResult,
 } from './types';
@@ -416,6 +419,8 @@ export class SelectionPlugin<TRow = unknown> extends BaseGridPlugin<SelectionCon
   private explicitSelection = false;
   readonly #rowControls = new CheckboxControls<SelectionRowCheckboxContext<TRow>>();
   readonly #headerControls = new CheckboxControls<SelectionHeaderCheckboxContext<TRow>>();
+  #embeddedCheckboxes?: EmbeddedCheckboxes<TRow>;
+  #checkboxAttached = false;
 
   // #endregion
 
@@ -473,6 +478,7 @@ export class SelectionPlugin<TRow = unknown> extends BaseGridPlugin<SelectionCon
   /** @internal */
   override attach(grid: GridElement): void {
     super.attach(grid);
+    this.#checkboxAttached = true;
 
     // Resolve the user-supplied mode (string OR array) into a single normalized
     // shape. Throws on invalid combinations (e.g. ['row', 'cell']).
@@ -595,6 +601,9 @@ export class SelectionPlugin<TRow = unknown> extends BaseGridPlugin<SelectionCon
 
   /** @internal */
   override detach(): void {
+    this.#checkboxAttached = false;
+    this.#embeddedCheckboxes?.clear();
+    this.#embeddedCheckboxes = undefined;
     this.#rowControls.clear();
     this.#headerControls.clear();
     // Clear aria-multiselectable that we set on the role=grid element.
@@ -1528,38 +1537,78 @@ export class SelectionPlugin<TRow = unknown> extends BaseGridPlugin<SelectionCon
   }
 
   #renderRowCheckbox(cell: HTMLElement, row: TRow): HTMLElement {
-    const rowIndex = getRowIndexFromCell(cell);
-    const rowId = tryResolveRowId(row, this.grid.effectiveConfig.getRowId);
-    const identity = rowId ?? row;
     return this.#rowControls.render(
       this.grid,
       cell,
-      identity,
+      this.#checkboxIdentity(row),
       this.config.rowCheckboxRenderer,
-      (host, active): SelectionRowCheckboxContext<TRow> => ({
-        grid: this.grid,
-        host,
-        row,
-        rowId,
-        rowIndex,
-        ariaLabel: getA11yMessage(this.gridElement, 'selectRow', Math.max(rowIndex, 0)),
-        checked: this.selected.has(rowIndex),
-        selectable: this.isRowSelectable(rowIndex),
-        disabled: !this.isSelectionEnabled() || !this.isRowSelectable(rowIndex),
-        setChecked: (checked, modifiers = {}) => {
-          const index = getRowIndexFromCell(cell);
-          const current = this.rows[index];
-          if (
-            !active() ||
-            current === undefined ||
-            (tryResolveRowId(current, this.grid.effectiveConfig.getRowId) ?? current) !== identity
-          )
-            return;
-          if (this.isSelectionEnabled()) this.#selectCheckboxRow(index, modifiers, true, checked);
-        },
-      }),
+      (host, active) => this.#rowCheckboxContext(cell, row, host, active),
       () => this.#defaultRowCheckbox(cell),
     );
+  }
+
+  #checkboxIdentity(row: TRow): string | TRow {
+    return tryResolveRowId(row, this.grid.effectiveConfig.getRowId) ?? row;
+  }
+
+  #rowCheckboxContext(
+    cell: HTMLElement,
+    row: TRow,
+    host: HTMLElement,
+    active: () => boolean,
+  ): SelectionRowCheckboxContext<TRow> {
+    const rowIndex = getRowIndexFromCell(cell);
+    const rowId = tryResolveRowId(row, this.grid.effectiveConfig.getRowId);
+    const identity = rowId ?? row;
+    const selectable = this.isRowSelectable(rowIndex);
+    return {
+      grid: this.grid,
+      host,
+      row,
+      rowId,
+      rowIndex,
+      ariaLabel: getA11yMessage(this.gridElement, 'selectRow', Math.max(rowIndex, 0)),
+      checked: this.selected.has(rowIndex),
+      selectable,
+      disabled: !this.isSelectionEnabled() || !selectable,
+      setChecked: (checked, modifiers = {}) => {
+        const index = getRowIndexFromCell(cell);
+        const current = this.rows[index];
+        if (!active() || current === undefined || this.#checkboxIdentity(current) !== identity) return;
+        if (this.isSelectionEnabled()) this.#selectCheckboxRow(index, modifiers, true, checked);
+      },
+    };
+  }
+
+  /**
+   * Bind a dedicated checkbox host anywhere inside an existing body-cell renderer.
+   * Forward its full renderer context; the grid owns cell identity and lifecycle.
+   * Requires row mode, independently of `checkbox`. Does not insert a column or
+   * render DOM. Keep Name links and other controls outside the dedicated host.
+   * Notifications are deferred until commit; initialize native controls disabled
+   * until the first context. Native click (including Space/button Enter) is the
+   * only activation path; forward its modifiers to `setChecked`.
+   * @since 3.9.0
+   */
+  bindRowCheckbox(
+    context: CellRenderContext<TRow>,
+    host: HTMLElement,
+    onContext: (context: SelectionRowCheckboxContext<TRow> | null) => void,
+  ): SelectionRowCheckboxBinding<TRow> {
+    if (!this.#checkboxAttached || this.#mode.primary !== 'row') {
+      throwDiagnostic(CONTROL_RENDER_ERROR, 'Embedded checkboxes require an attached row-mode Selection plugin.');
+    }
+    this.#embeddedCheckboxes ??= new EmbeddedCheckboxes(
+      this.grid,
+      (row) => this.#checkboxIdentity(row),
+      (cell, identity, element, active) => {
+        const row = this.rows[getRowIndexFromCell(cell)];
+        return row !== undefined && this.#checkboxIdentity(row) === identity
+          ? this.#rowCheckboxContext(cell, row, element, active)
+          : null;
+      },
+    );
+    return this.#embeddedCheckboxes.bind(context, host, onContext);
   }
 
   #renderHeaderCheckbox(cell: HTMLElement): HTMLElement {
@@ -1612,6 +1661,7 @@ export class SelectionPlugin<TRow = unknown> extends BaseGridPlugin<SelectionCon
 
   /** @internal */
   override afterCellRender(context: AfterCellRenderContext): void {
+    this.#embeddedCheckboxes?.commit(context.cellElement);
     if (context.column.checkboxColumn) this.#rowControls.commit(context.cellElement);
   }
 
@@ -1750,6 +1800,7 @@ export class SelectionPlugin<TRow = unknown> extends BaseGridPlugin<SelectionCon
    * Shared by afterRender and onScrollRender.
    */
   #applySelectionClasses(): void {
+    this.#embeddedCheckboxes?.refresh();
     const gridEl = this.gridElement;
     if (!gridEl) return;
 
@@ -1945,6 +1996,7 @@ export class SelectionPlugin<TRow = unknown> extends BaseGridPlugin<SelectionCon
   override afterRender(): void {
     // Skip rendering selection if disabled at grid level or plugin level
     if (!this.isSelectionEnabled()) {
+      this.#embeddedCheckboxes?.refresh();
       this.#refreshCheckboxControls();
       return;
     }
@@ -2037,6 +2089,7 @@ export class SelectionPlugin<TRow = unknown> extends BaseGridPlugin<SelectionCon
   override onScrollRender(): void {
     // Skip rendering selection classes if disabled
     if (!this.isSelectionEnabled()) {
+      this.#embeddedCheckboxes?.refresh();
       this.#refreshCheckboxControls();
       return;
     }

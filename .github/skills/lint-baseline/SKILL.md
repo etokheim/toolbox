@@ -52,6 +52,7 @@ NEW (1):
   and compare messages by repo-relative file + rule + message (not line numbers).
 
 - **The working tree must be dirty** — the script compares your uncommitted changes against `HEAD`. It exits early on a clean tree. To check work that is already committed, compare against the parent commit manually.
+- **Imported prerequisites / immutable tree baseline:** do not stash and compare against HEAD when the approved baseline is a different tree. Materialize that exact tree with `git archive` in a session-artifact directory, link existing dependencies, and capture baseline/current Nx lint JSON separately. Compare repo-relative file + rule + message counts; never run baseline adapter `link-grid-dist` against shared dependencies (it would repoint the live workspace's package links).
 - **It runs `git stash push --include-untracked`.** Restoration is in a `finally` block, and if `git stash pop` ever fails the script prints loud recovery instructions and exits 1 — run `git stash pop` yourself in that case. Do not run it mid-rebase or mid-merge.
 - Lint runs with `--skip-nx-cache` on both passes so the baseline is genuinely re-measured.
 

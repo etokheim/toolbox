@@ -1,10 +1,10 @@
-import type { ControlRenderer, ControlView } from '@toolbox-web/grid';
+import type { CellRenderContext, ControlRenderer, ControlView } from '@toolbox-web/grid';
 import type {
   SelectionConfig as DOMSelectionConfig,
   SelectionRowCheckboxContext,
 } from '@toolbox-web/grid/plugins/selection';
 import { expectTypeOf, it } from 'vitest';
-import type { SelectionConfig } from './selection';
+import { SelectionCheckbox, type SelectionConfig } from './selection';
 import type { DataGridProps } from '../lib/data-grid';
 import type { GridConfig } from '../lib/react-column-config';
 
@@ -46,4 +46,28 @@ it('types both React config surfaces while keeping manual plugins DOM-only', () 
     }) satisfies ControlView<SelectionRowCheckboxContext<Row>>;
   const compatible: SelectionConfig<Row> = { mode: 'row', rowCheckboxRenderer: persistent };
   expectTypeOf(compatible).toExtend<SelectionConfig<Row>>();
+});
+
+it('infers embedded rows from the renderer context and rejects DOM-only children', () => {
+  const render = (context: CellRenderContext<Row>) => (
+    <SelectionCheckbox context={context}>
+      {(state) => {
+        expectTypeOf(state.row).toEqualTypeOf<Row>();
+        // @ts-expect-error Row inference must not become any.
+        void state.row.missing;
+        state.setChecked(true, { ctrlKey: true });
+        // @ts-expect-error Modifiers remain narrow.
+        state.setChecked(true, { altKey: true });
+        return <input aria-label={state.ariaLabel} />;
+      }}
+    </SelectionCheckbox>
+  );
+  expectTypeOf(render).toBeFunction();
+  const invalid = (context: CellRenderContext<Row>) => (
+    <SelectionCheckbox context={context}>
+      {/* @ts-expect-error React children are not DOM control outputs. */}
+      {() => document.createElement('input')}
+    </SelectionCheckbox>
+  );
+  expectTypeOf(invalid).toBeFunction();
 });

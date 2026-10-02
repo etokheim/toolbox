@@ -14,6 +14,7 @@ export type {
   SelectionCheckboxModifiers,
   SelectionHeaderCheckboxContext,
   SelectionRowCheckboxContext,
+  SelectionRowCheckboxBinding,
   SelectionMode,
   SelectionResult,
   SelectionTrigger,

@@ -49,6 +49,35 @@ React feature props and `gridConfig.features.selection` additionally accept JSX
 through the React adapter's shared portals. Manually instantiated plugins remain
 DOM-only. See the [custom controls example and lifecycle guide](https://toolboxjs.com/grid/plugins/selection/#custom-checkbox-controls).
 
+### Checkbox inside an existing column
+
+Use `selection.bindRowCheckbox(rendererContext, dedicatedHost, onContext)` inside a
+body-cell renderer with `mode: 'row'`; `checkbox: false` is supported. The returned
+binding has `update(nextRendererContext)` and `dispose()`. Update returns false
+after retirement; a reused host needs a new binding. Selection owns state,
+eligibility, stable row identity, modifiers and mutations; the consumer owns DOM
+and presentation. Keep Name links and other controls outside the dedicated host.
+
+Pending hosts are inert. Notifications are microtask-batched after commit; retirement
+publishes one `null`. Initialise controls disabled, apply each context's localised
+label/checked/disabled state, and disable/remove them on null. Update/disposal revoke
+old actions synchronously, including same-ID refresh. Throwing listeners report
+`TBW065` and retire without another call. Cell teardown cleans up automatically.
+Active actions republish canonical state even when unchanged (for example, Shift
+on an already selected row). Apply checked/disabled on every notification; do not
+deduplicate only by selection value. Disposal during `selection-change` revokes
+actions immediately without reinterpreting that same click as a Name-cell click.
+Later clicks on the released host are ordinary cell interactions.
+
+React exposes `<SelectionCheckbox context={rendererContext}>` with a typed
+render-prop child from `@toolbox-web/grid-react/features/selection`. It stays inside
+the existing cell portal, preserving Name-local providers. Vue/Angular may use the
+core DOM API (Vue: `viewRenderer`); template facades are not included. Row mode remains mandatory.
+Use one native click handler, forward Shift/Ctrl/Meta, and retain accessible
+focus/touch access when replacing icons on hover.
+
+See the [embedded example and lifecycle contract](https://toolboxjs.com/grid/plugins/selection/#checkbox-inside-an-existing-column).
+
 ### Cell Mode (`'cell'`)
 
 Single cell selection. Clicking a cell focuses and selects it.

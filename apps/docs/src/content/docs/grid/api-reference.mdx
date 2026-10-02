@@ -486,6 +486,16 @@ if (selection) {
 }
 ```
 
+### Embedded Selection Controls
+
+Selection exposes `bindRowCheckbox(context, host, onContext)` for a checkbox nested
+inside an existing body-cell renderer. Pass its full `CellRenderContext`; the result
+is a `SelectionRowCheckboxBinding` with `update(context)` and `dispose()`. Notifications
+provide `SelectionRowCheckboxContext` after commit and terminal `null` at retirement.
+Requires row mode but not a generated checkbox column. React's
+`SelectionCheckbox` is exported from `@toolbox-web/grid-react/features/selection`.
+See the [embedded checkbox lifecycle and accessibility contract](/grid/plugins/selection/#checkbox-inside-an-existing-column).
+
 ### Custom Styles API
 
 The grid uses **light DOM** — standard CSS targeting elements inside `<tbw-grid>` works normally (global stylesheets, `<style>` in `<head>`, external CSS files).

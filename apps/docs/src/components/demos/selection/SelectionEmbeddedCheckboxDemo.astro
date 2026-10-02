@@ -1,0 +1,133 @@
+---
+---
+
+<div id="selection-embedded-checkbox-demo" class="not-content">
+  <label><input type="checkbox" data-select-mode /> Keep selection controls visible (app state)</label>
+  <p>Native input inside the Name renderer</p>
+  <tbw-grid id="embedded-checkbox-dom" aria-label="Embedded native selection"></tbw-grid>
+  <p>React button inside the Name renderer, with a Name-local provider</p>
+  <div id="embedded-checkbox-react"></div>
+  <output aria-live="polite" data-event-log>0 selection changes</output>
+</div>
+
+<script>
+  import { queryGrid, type CellRenderContext } from '@toolbox-web/grid';
+  import { SelectionPlugin, type SelectionRowCheckboxContext } from '@toolbox-web/grid/plugins/selection';
+  import { DataGrid, type ColumnConfig } from '@toolbox-web/grid-react';
+  import { SelectionCheckbox } from '@toolbox-web/grid-react/features/selection';
+  import { createContext, createElement, useContext } from 'react';
+  import { createRoot } from 'react-dom/client';
+
+  type Row = { id: string; name: string; locked?: boolean };
+  const rows: Row[] = [
+    { id: 'a', name: 'Alice' },
+    { id: 'b', name: 'Bob (locked)', locked: true },
+    { id: 'c', name: 'Carol' },
+    { id: 'd', name: 'Dora' },
+  ];
+  const selection = new SelectionPlugin<Row>({ mode: 'row', checkbox: false, isSelectable: (row) => !row.locked });
+  const grid = queryGrid<Row>('#embedded-checkbox-dom');
+  grid.gridConfig = {
+    columns: [{
+      field: 'name',
+      header: 'Name',
+      renderer(context) {
+        const name = document.createElement('span');
+        name.className = 'embedded-name';
+        const slot = document.createElement('span');
+        slot.className = 'embedded-icon-slot';
+        const icon = document.createElement('span');
+        icon.className = 'embedded-icon';
+        icon.textContent = '@';
+        icon.setAttribute('aria-hidden', 'true');
+        const host = document.createElement('span');
+        host.className = 'embedded-action';
+        const input = document.createElement('input');
+        input.type = 'checkbox';
+        input.disabled = true;
+        host.append(input);
+        let state: SelectionRowCheckboxContext<Row> | null = null;
+        selection.bindRowCheckbox(context, host, (next) => {
+          state = next;
+          input.disabled = !next || next.disabled;
+          input.checked = next?.checked ?? false;
+          if (next) input.setAttribute('aria-label', next.ariaLabel);
+        });
+        input.onclick = (event) => {
+          if (!event.defaultPrevented) state?.setChecked(input.checked, event);
+        };
+        const link = document.createElement('a');
+        link.href = `#${context.row.id}`;
+        link.textContent = context.row.name;
+        slot.append(icon, host);
+        name.append(slot, link);
+        return name;
+      },
+    }],
+    plugins: [selection],
+  };
+  grid.rows = rows;
+
+  const NameProvider = createContext('missing');
+  function Checkbox({ context }: { context: SelectionRowCheckboxContext<Row> }) {
+    const provider = useContext(NameProvider);
+    return createElement('button', {
+      type: 'button', role: 'checkbox', 'data-provider': provider, 'data-action-row': context.row.id,
+      'aria-label': context.ariaLabel, 'aria-checked': context.checked, disabled: context.disabled,
+      onClick: (event) => {
+        if (!event.defaultPrevented) context.setChecked(!context.checked, event);
+      },
+    }, context.checked ? 'x' : '');
+  }
+  function Name({ context }: { context: CellRenderContext<Row> }) {
+    return createElement(NameProvider.Provider, { value: `name:${context.row.id}` },
+      createElement('span', { className: 'embedded-name' },
+        createElement('span', { className: 'embedded-icon-slot' },
+          createElement('span', { className: 'embedded-icon', 'aria-hidden': true }, '@'),
+          createElement('span', { className: 'embedded-action' },
+            createElement(SelectionCheckbox<Row>, {
+              context, children: (state) => createElement(Checkbox, { context: state }),
+            }))),
+        createElement('a', { href: `#${context.row.id}` }, context.row.name)));
+  }
+  const columns: ColumnConfig<Row>[] = [{ field: 'name', header: 'Name', renderer: (context) => createElement(Name, { context }) }];
+  const root = createRoot(document.getElementById('embedded-checkbox-react')!);
+  root.render(createElement(DataGrid<Row>, {
+    rows, gridConfig: { columns }, selection: { mode: 'row', checkbox: false, isSelectable: (row) => !row.locked },
+  }));
+  document.addEventListener('astro:before-swap', () => root.unmount(), { once: true });
+
+  const container = document.getElementById('selection-embedded-checkbox-demo')!;
+  container.querySelector<HTMLInputElement>('[data-select-mode]')!.onchange = (event) => {
+    container.classList.toggle('select-mode', (event.currentTarget as HTMLInputElement).checked);
+  };
+  let changes = 0;
+  container.addEventListener('selection-change', () => {
+    container.querySelector('output')!.textContent = `${++changes} selection changes`;
+  });
+</script>
+
+<style is:global>
+  #selection-embedded-checkbox-demo tbw-grid { height: 220px; }
+  #selection-embedded-checkbox-demo .embedded-name { display: flex; align-items: center; gap: 8px; overflow: visible; }
+  #selection-embedded-checkbox-demo .embedded-icon-slot { display: grid; width: 28px; height: 28px; flex: none; }
+  #selection-embedded-checkbox-demo .embedded-icon,
+  #selection-embedded-checkbox-demo .embedded-action { grid-area: 1 / 1; place-self: center; }
+  #selection-embedded-checkbox-demo .embedded-icon { visibility: hidden; pointer-events: none; }
+  #selection-embedded-checkbox-demo .embedded-action input,
+  #selection-embedded-checkbox-demo .embedded-action button { width: 24px; height: 24px; margin: 0; padding: 0; }
+  #selection-embedded-checkbox-demo .embedded-action button {
+    color: inherit; background: transparent; border: 1px solid currentColor; border-radius: 4px;
+  }
+  #selection-embedded-checkbox-demo .embedded-action :focus-visible { outline: 2px solid currentColor; outline-offset: 2px; }
+  @media (hover: hover) and (pointer: fine) {
+    #selection-embedded-checkbox-demo .embedded-action { opacity: 0; pointer-events: none; }
+    #selection-embedded-checkbox-demo .embedded-icon { visibility: visible; }
+    #selection-embedded-checkbox-demo.select-mode .embedded-action,
+    #selection-embedded-checkbox-demo .data-grid-row:hover .embedded-action,
+    #selection-embedded-checkbox-demo .embedded-action:focus-within { opacity: 1; pointer-events: auto; }
+    #selection-embedded-checkbox-demo.select-mode .embedded-icon,
+    #selection-embedded-checkbox-demo .data-grid-row:hover .embedded-icon,
+    #selection-embedded-checkbox-demo .embedded-icon-slot:focus-within .embedded-icon { visibility: hidden; }
+  }
+</style>

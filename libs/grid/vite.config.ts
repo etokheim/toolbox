@@ -495,7 +495,11 @@ export default defineConfig(({ command }) => ({
               // cascade, and focus management, and legitimately needs the headroom.
               // Most plugins sit well under this; keep pushing new surface behind
               // separate query types (zero core cost) rather than growing a plugin.
-              { path: 'lib/plugins/*/index.js', maxSize: 55 * 1024 },
+              ...pluginNames.map((name) => ({
+                path: `lib/plugins/${name}/index.js`,
+                // Selection owns the opt-in embedded checkbox binding lifecycle.
+                maxSize: (name === 'selection' ? 60 : 55) * 1024,
+              })),
             ],
             // #259/#370 v3: the shell is opt-in and MUST tree-shake out of core.
             // Assert the shell *controller logic* never leaks into index.js. We key

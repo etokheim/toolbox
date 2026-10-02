@@ -27,14 +27,25 @@
  * @packageDocumentation
  */
 
-import type { DataGridElement } from '@toolbox-web/grid';
+import type { CellRenderContext, DataGridElement } from '@toolbox-web/grid';
 import {
   type CellRange,
   type SelectionChangeDetail,
   type SelectionPlugin,
   type SelectionResult,
+  type SelectionRowCheckboxBinding,
+  type SelectionRowCheckboxContext,
 } from '@toolbox-web/grid/plugins/selection';
-import { useCallback, useContext, useEffect, useState } from 'react';
+import {
+  createElement,
+  useCallback,
+  useContext,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react';
 import { GridElementContext } from '../lib/grid-element-context';
 import { createControlBridge } from '../lib/control-bridge';
 import { registerFeatureRendererBridge } from '../lib/feature-renderers';
@@ -46,7 +57,63 @@ export type {
   SelectionCheckboxModifiers,
   SelectionHeaderCheckboxContext,
   SelectionRowCheckboxContext,
+  SelectionRowCheckboxBinding,
 } from '@toolbox-web/grid/plugins/selection';
+
+/** Props for a checkbox embedded in an existing React cell renderer. @since 2.7.0 */
+export interface SelectionCheckboxProps<TRow> {
+  /** Forward the entire owning cell renderer context without reading its internals. */
+  context: CellRenderContext<TRow>;
+  /** Native checkbox/button presentation; descendants retain Name-local providers. */
+  children: (context: SelectionRowCheckboxContext<TRow>) => ReactNode;
+}
+
+/**
+ * Selection-owned row checkbox inside an existing Name (or other body-cell) portal.
+ * Requires row-mode selection; works with `checkbox: false`. No extra portal/root.
+ * Initially empty and inert until the committed binding publishes its first state.
+ * Forward click modifiers to `setChecked`; leave native keyboard activation alone.
+ * @category Component
+ * @since 2.7.0
+ */
+export function SelectionCheckbox<TRow>({ context, children }: SelectionCheckboxProps<TRow>): ReactNode {
+  const owner = useContext(GridElementContext);
+  const host = useRef<HTMLSpanElement>(null);
+  const update = useRef<((next: CellRenderContext<TRow>) => void) | null>(null);
+  const latest = useRef(context);
+  latest.current = context;
+  const [state, setState] = useState<SelectionRowCheckboxContext<TRow> | null>(null);
+  // The renderer context supplies the row type for this grid's registered plugin.
+  const selection = context.grid?.getPluginByName?.('selection') as SelectionPlugin<TRow> | undefined;
+
+  useLayoutEffect(() => {
+    if (!selection || !host.current || owner?.current !== context.grid) {
+      throw new Error('SelectionCheckbox requires its owning DataGrid and row-mode Selection plugin.');
+    }
+    const element = host.current;
+    let mounted = true;
+    let generation = 0;
+    const bind = (nextContext: CellRenderContext<TRow>): SelectionRowCheckboxBinding<TRow> => {
+      const version = ++generation;
+      return selection.bindRowCheckbox(nextContext, element, (next) => {
+        if (mounted && generation === version) setState(next);
+      });
+    };
+    let current = bind(latest.current);
+    update.current = (next) => {
+      if (!current.update(next)) current = bind(next);
+    };
+    return () => {
+      mounted = false;
+      update.current = null;
+      current.dispose();
+    };
+  }, [selection, owner, context.grid, context.cellEl]);
+
+  useLayoutEffect(() => update.current?.(context), [context]);
+
+  return createElement('span', { ref: host, style: { display: 'contents' } }, state ? children(state) : null);
+}
 
 const rowRenderers = new WeakMap<
   NonNullable<SelectionConfig['rowCheckboxRenderer']>,

@@ -120,6 +120,13 @@ They share the DataGrid portal manager and inherit app/grid providers; manually
 instantiated core plugins remain DOM-only. See the
 [checkbox lifecycle and accessibility guide](/grid/plugins/selection/#react-checkbox-renderers).
 
+To place a checkbox **inside an existing Name renderer**, import
+`SelectionCheckbox` from `@toolbox-web/grid-react/features/selection` and forward
+the full cell context. Configure JSX columns through `gridConfig.columns`.
+The component remains inside that Name portal, retaining its local providers.
+This requires row mode but not a utility column (`checkbox: false` is supported);
+see the [embedded checkbox example](/grid/plugins/selection/#checkbox-inside-an-existing-column).
+
 Features are enabled using **declarative props** combined with **side-effect imports**. This gives you clean JSX and tree-shakeable bundles.
 
 ### How It Works

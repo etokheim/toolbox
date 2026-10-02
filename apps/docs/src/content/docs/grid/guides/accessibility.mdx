@@ -546,6 +546,15 @@ Key rules: prefer **system color keywords** (`CanvasText`, `Canvas`, `LinkText`,
 
 These patterns are how we keep the grid accessible — and how you should keep your customizations accessible too.
 
+For [checkboxes embedded inside a Name renderer](/grid/plugins/selection/#checkbox-inside-an-existing-column),
+use the Selection context's localized label, checked and disabled state. Native
+click is the sole activation path (including checkbox Space and button Enter/Space);
+forward its modifiers rather than duplicating keyboard handlers. Hover-only
+presentation must also reveal the action on focus and on touch, retain it while
+focused, and provide a target of at least 24×24 CSS pixels
+([SC 2.5.8](https://www.w3.org/WAI/WCAG22/Understanding/target-size-minimum.html)).
+Keep Name links outside the dedicated checkbox host.
+
 ### 1. Never replace content with color alone
 
 When you write a `renderer` for status, error, or category cells, give it text or an icon — not just a colored dot. The grid's built-in renderers (selection checkbox, sort indicator, expand chevron, filter button) all follow this rule.

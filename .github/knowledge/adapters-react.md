@@ -38,6 +38,8 @@ related: [adapters, adapters-vue, adapters-angular, grid-core, grid-features]
 - FLOW: callback-only change → non-renderer config equality → retain config/plugin instances → layout/ready synchronization → `SelectionPlugin.setCheckboxRenderers` → STYLE. Pending ready callbacks are cancelled on rerender/unmount.
 - INVARIANT: stable non-renderer config identity gates memo invalidation, not its payload. `processedGridConfig` rebuilds from the latest config ref; otherwise a later `sortable`/icons change restores old callbacks after the renderer-sync layout effect. `selection-controls.spec.tsx` covers passive-effect ordering outside React `act`.
 - TESTS: `selection-controls.spec.tsx` (both surfaces, providers, focus, isolated grids, header teardown); `control-bridge.spec.tsx` (mixed outputs); `selection-types.spec.tsx` (JSX vs core DOM contract, unrelated feature keys).
+- OWNS: `features/selection.ts` `SelectionCheckbox` is an ordinary descendant of the existing Name portal; it retains Name-local providers, with no extra portal/root/flush. Layout effects subscribe; core microtasks publish after commit. Retired `update` returns false → explicit successor binding; generation guards reject delayed predecessor nulls. Same-ID state refresh preserves focused descendants.
+- INVARIANT: JSX column renderers use `gridConfig.columns` (`processGridConfig`), not the `columns` shorthand's unwrapped normalization path. Native Vue columns use core `viewRenderer`; Vue's `renderer` path expects VNodes. Angular config preprocessing preserves native renderer callbacks. Template facades remain deferred; `embedded-selection.spec.*` in all three adapters qualify these paths.
 
 ## disclosure-control-bridge
 

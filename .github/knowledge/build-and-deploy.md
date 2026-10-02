@@ -6,6 +6,8 @@ related: [build-css, release-versioning, docs-agent-endpoints, grid-core]
 # Build, CI & Tooling — Mental Model
 
 > Release/versioning → release-versioning.md. Agent doc endpoints (llms.txt) → docs-agent-endpoints.md. CSS/theming → build-css.md.
+>
+> Read order for budget failures: `libs/grid/vite.config.ts` → `tools/vite-bundle-budget.ts` → emitted entry sizes.
 
 ## vite build ([libs/grid/vite.config.ts](libs/grid/vite.config.ts))
 
@@ -22,10 +24,11 @@ related: [build-css, release-versioning, docs-agent-endpoints, grid-core]
 ## bundle budget ([tools/vite-bundle-budget.ts](tools/vite-bundle-budget.ts))
 
 - RUNS IN: Vite `closeBundle` (after all sub-builds). Raw + gzip via zlib.
-- BUDGETS: core `index.js` ≤170 kB raw / ≤50 kB gz hard fail, ≤45 kB gz soft warn; plugins ≤50 kB each (**editing 55 kB** — the `commitCellValue` surface); adapters react ≤50 kB, vue ≤50 kB; grid-angular fesm ≤276 kB (`libs/grid-angular/project.json` `bundle-check`).
+- BUDGETS: core `index.js` ≤170 KiB raw / ≤50 KiB gzip hard, ≤45 KiB gzip soft; plugin entries ≤55 KiB raw except Selection ≤60 KiB; React/Vue ≤50 KiB; Angular fesm ≤276 KiB. Authoritative rules: each package's Vite config / Angular `bundle-check`.
+- DECIDED (2026-10, explicit human approval): Selection alone gets 61,440 raw bytes for Selection-owned embedded checkbox lifetimes. WHY: the first prototype added 2,167 raw / 746 gzip (56,288/15,688 → 58,455/16,434); optional packaging required a mandatory over-budget seam. Final implementation: 60,161 raw / 16,864 gzip; core 164,722/48,511 and Editing 56,314/17,178 unchanged. No cap change for other entries.
+- INVARIANT: budget matches are cumulative, not override-precedence. Expand plugin names into per-entry rules for the Selection exception; never raise the wildcard/shared cap. Disabling imported Selection config avoids neither download nor parse; only its mounted registry allocation is lazy.
 - INVARIANT: `warnSize`/`warnGzip` never fail the build; `maxSize`/`maxGzip` fail with exit 1 under `severity: 'error'`.
 - POLICY: design target 45 kB gz, hard ceiling 50 kB. Any new code pushing core toward 50 kB MUST first try a plugin extraction — land in core only if a plugin would damage performance (hot path, render scheduler, virtualization).
-- CURRENT (#370 v3 landed): `index.js` **145.11 kB raw / 42.46 kB gz**; shell chunk 40.72 kB / 10.99 gz. (Pre-extraction baseline was 172.46 kB / 49.25 kB gz — the shell cut reclaimed ~27 kB raw / 6.7 kB gz. All `TEMP-BUDGET-370` thresholds reverted.)
 - DECIDED (#259): `forbiddenSymbols` option (`{ path, symbols: string[], reason? }`) fails the build if any listed substring appears in the matched file — used to assert the shell controller tree-shakes OUT of core `index.js`. Signal choice is subtle: use public ShellPlugin METHOD names `openToolPanel`/`registerHeaderContent`/`unregisterHeaderContent` (terser preserves property names with `mangle.properties` off). RULED OUT: `tbw-shell-header` (core `dom-builder.ts` always emits that placeholder → false positive), `ShellController`/`ShellPlugin` class names (mangled away in both chunks), `getToolPanels` (substring leaks into core). This build-time assertion replaces a unit test.
 
 ## ci pipeline ([.github/workflows/ci.yml](.github/workflows/ci.yml))
