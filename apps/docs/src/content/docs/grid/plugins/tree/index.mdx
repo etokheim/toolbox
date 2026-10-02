@@ -5,6 +5,7 @@ description: "Display hierarchical data as an expandable tree."
 
 import { TabItem, Tabs } from '@astrojs/starlight/components';
 import TreeDefaultDemo from '@components/demos/tree/TreeDefaultDemo.astro';
+import TreeDisclosureControlsDemo from '@components/demos/tree/TreeDisclosureControlsDemo.astro';
 import TreeEventsDemo from '@components/demos/tree/TreeEventsDemo.astro';
 import TreeLazyLoadingDemo from '@components/demos/tree/TreeLazyLoadingDemo.astro';
 import TreePinnedColumnsDemo from '@components/demos/tree/TreePinnedColumnsDemo.astro';
@@ -398,6 +399,37 @@ Child rows are fetched as a single batch — no pagination. If a tree node has m
 
 
 
+## Custom disclosure controls
+
+Keep the default toggle unless you need a full application control. `disclosureRenderer`
+receives a typed `TreeDisclosureContext<T>` and returns an `HTMLElement`, a persistent
+`ControlView<TreeDisclosureContext<T>>`, or `null`. Prefer a `ControlView` to update
+expanded/loading state without replacing the focused element. Use `setExpanded(boolean)`;
+the plugin still owns eligibility, lazy loading, expansion state and events.
+
+React accepts JSX through either the `tree` prop or `gridConfig.features.tree`, with
+the canonical `TreeConfig<T>` exported by `@toolbox-web/grid-react`. Import
+`@toolbox-web/grid-react/features/tree` to enable normalization. The disclosure lives
+inside the configured Tree column beside, not around, its data renderer. Their lifetimes
+are independent, so a React Name link can keep its state and provider context while expanding.
+Manually constructed core plugins remain DOM-only. Vue/Angular template bridges are not provided.
+
+<ShowSource component="tree/TreeDisclosureControlsDemo">
+  <TreeDisclosureControlsDemo />
+</ShowSource>
+
+This demo also uses the separate [MasterDetail disclosure](/grid/plugins/master-detail/#custom-disclosure-controls).
+It does not combine the two expansion models or move the detail toggle into the Name cell.
+
+## Accessibility
+
+Custom disclosures own their accessible name, `aria-expanded`, disabled state and native activation
+([WCAG 4.1.2: Name, Role, Value](https://www.w3.org/WAI/WCAG22/Understanding/name-role-value.html)).
+Use a native `button type="button"` and call `setExpanded` only from its click handler;
+do not also toggle on Space/Enter. Supply a localized Tree name (there is no default Tree label
+in the context). The grid continues to own cell navigation. `showExpandIcons: false` suppresses
+custom controls too; leaves do not receive a disclosure.
+
 ## Configuration Options
 
 See [`TreeConfig`](./interfaces/treeconfig/) for the full list of options and defaults.
@@ -424,6 +456,11 @@ Animation respects the grid-level `animation.mode` setting.
 ### Tree Column
 
 By default, the tree toggle and indentation appear on the first visible column. Use `treeColumn` to target a specific column — useful when combining with pinned columns or when the first column is narrow:
+
+With manual plugins ordered `[MasterDetailPlugin, TreePlugin]`, omitting `treeColumn` places
+Tree's toggle in the MasterDetail utility column. Their controls and expansion state remain
+independent. Set `treeColumn: 'name'` to keep Tree beside the Name renderer instead;
+custom disclosures do not change the existing default placement.
 
 ```ts
 features: {

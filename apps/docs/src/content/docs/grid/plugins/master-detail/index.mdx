@@ -177,6 +177,35 @@ is also accepted in `gridConfig.masterDetail`.
   <MasterDetailDefaultDemo />
 </ShowSource>
 
+## Custom disclosure controls
+
+`disclosureRenderer` replaces only the standalone expander's control, not `detailRenderer`
+or the detail row. Its `MasterDetailDisclosureContext<T>` includes the owning grid, row,
+mounted host, expanded/loading/disabled state, `ariaLabel` and guarded `setExpanded(boolean)`.
+The plugin retains row-reference identity, cancellation, lazy detail loading and `detail-expand` events.
+The label uses the same source as the default control: "Expand details" / "Collapse details".
+
+Core renderers return an `HTMLElement`, persistent `ControlView<MasterDetailDisclosureContext<T>>`,
+or `null`. Prefer `ControlView` when focus must survive state updates. React's canonical
+`MasterDetailConfig<T>` accepts JSX on both the `masterDetail` prop and `gridConfig.features.masterDetail`;
+import `@toolbox-web/grid-react/features/master-detail`. Config-level `detailRenderer` still accepts
+JSX, strings and DOM elements; `<GridDetailPanel>` takes precedence. JSX shares the owning grid's
+providers and portal manager. Manually supplied core plugins remain DOM-only.
+
+See the [Tree + MasterDetail control demo](/grid/plugins/tree/#custom-disclosure-controls).
+Keep the defaults when full controls are unnecessary. Inline MasterDetail placement and
+Vue/Angular disclosure template bridges are separate features, not part of this hook.
+
+## Accessibility
+
+Use a native `button type="button"`, `aria-label={context.ariaLabel}`,
+`aria-expanded={context.expanded}` and `disabled={context.disabled}`. You may replace the label
+with your localized equivalent. Invoke `setExpanded(!context.expanded)` from click only,
+so native Space/Enter activation toggles exactly once.
+This is the custom control's responsibility under
+[WCAG 4.1.2: Name, Role, Value](https://www.w3.org/WAI/WCAG22/Understanding/name-role-value.html);
+the grid owns navigation and the plugin owns expansion.
+
 ## Configuration Options
 
 See [`MasterDetailConfig`](./interfaces/masterdetailconfig/) for the full list of options and their defaults.

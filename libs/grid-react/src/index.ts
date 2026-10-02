@@ -49,6 +49,7 @@ export type {
   GroupingColumnsConfig,
   GroupingRowsConfig,
   MasterDetailConfig,
+  TreeConfig,
   PanelRender,
   PanelSlot,
   PinnedRowSlot,
@@ -57,6 +58,8 @@ export type {
   ResponsivePluginConfig,
   ZonedPanelRender,
 } from './lib/feature-props';
+export type { TreeDisclosureContext } from '@toolbox-web/grid/plugins/tree';
+export type { MasterDetailDisclosureContext } from '@toolbox-web/grid/plugins/master-detail';
 
 // Column shorthand type & helpers (for typing column arrays with shorthand syntax)
 export {

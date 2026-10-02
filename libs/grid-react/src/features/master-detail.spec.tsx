@@ -4,13 +4,14 @@
  *
  * Light-DOM `<GridDetailPanel>` bridging is exercised in `grid-panels.spec.ts`.
  *
- * @vitest-environment jsdom
+ * @vitest-environment happy-dom
  */
-import { createPluginFromFeature } from '@toolbox-web/grid/features/registry';
+import { createPluginFromFeature as createCorePlugin } from '@toolbox-web/grid/features/registry';
 import type { MasterDetailConfig as CoreMasterDetailConfig } from '@toolbox-web/grid/plugins/master-detail';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { MasterDetailConfig } from '../lib/feature-props';
-import { resetBridge } from '../lib/portal-bridge';
+import { resetBridge, setPortalManager } from '../lib/portal-bridge';
+import { normalizeFeatureRenderers } from '../lib/feature-renderers';
 import './master-detail';
 
 const userConfigOf = <T,>(plugin: unknown): T | undefined =>
@@ -20,7 +21,20 @@ const detach = (plugin: unknown): void => {
   (plugin as { detach?: () => void } | null | undefined)?.detach?.();
 };
 
-beforeEach(() => resetBridge());
+const owner = document.createElement('div');
+function createPluginFromFeature(name: string, config: unknown) {
+  return createCorePlugin(name, normalizeFeatureRenderers({ [name]: config }, () => owner)[name]);
+}
+beforeEach(() => {
+  resetBridge();
+  setPortalManager(owner, {
+    renderPortal: vi.fn(),
+    removePortal: vi.fn(),
+    beginBatch: vi.fn(),
+    endBatch: vi.fn(),
+    clear: vi.fn(),
+  });
+});
 afterEach(() => {
   document.body.innerHTML = '';
   resetBridge();
@@ -59,7 +73,7 @@ describe('@toolbox-web/grid-react/features/master-detail (config bridge)', () =>
   it('passes a string return through unchanged', () => {
     const plugin = createPluginFromFeature('masterDetail', {
       detailRenderer: () => 'plain string',
-    } as unknown as MasterDetailConfig);
+    } as MasterDetailConfig);
     const bridged = userConfigOf<CoreMasterDetailConfig>(plugin)?.detailRenderer;
     const out = bridged!({}, 0);
     expect(out).toBe('plain string');

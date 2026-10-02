@@ -4,8 +4,8 @@
  */
 import { FOCUSABLE_EDITOR_SELECTOR, GridClasses } from '../constants';
 import type { GridHost } from '../types';
-import { isControlEvent } from './control-lifecycle';
-import { clearCellFocus, isRTL } from './utils';
+import { disclosureNavigationCell, isControlEvent } from './control-lifecycle';
+import { clearCellFocus, getColIndexFromCell, getRowIndexFromCell, isRTL } from './utils';
 import { readCellField } from './value-accessor';
 import { fromVirtualScrollTop, toVirtualScrollTop } from './virtualization';
 
@@ -137,9 +137,15 @@ function emitCellActivate(grid: GridHost, e: KeyboardEvent): boolean {
 }
 
 export function handleGridKeyDown(grid: GridHost, e: KeyboardEvent): void {
-  if (isControlEvent(e, grid)) return;
+  const controlEvent = isControlEvent(e, grid);
+  if (controlEvent) {
+    const cell = disclosureNavigationCell(e, grid);
+    if (!cell) return;
+    grid._focusRow = getRowIndexFromCell(cell);
+    grid._focusCol = getColIndexFromCell(cell);
+  }
   // Dispatch to plugin system first - if any plugin handles it, stop here
-  if (grid._dispatchKeyDown?.(e)) return;
+  if (!controlEvent && grid._dispatchKeyDown?.(e)) return;
 
   const path = e.composedPath?.() ?? [];
   const target = (path.length ? path[0] : e.target) as HTMLElement | null;

@@ -8,6 +8,7 @@ export { TreePlugin } from './tree-plugin';
 export type {
   FlattenedTreeRow,
   TreeConfig,
+  TreeDisclosureContext,
   TreeExpandDetail,
   TreeLoadChildrenParams,
   TreeLoadEndDetail,

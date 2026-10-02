@@ -11,7 +11,7 @@ import type {
 } from '@toolbox-web/grid';
 import type { ReactNode } from 'react';
 import { notifyEditorMounted } from './editor-mount-hooks';
-import { normalizeFeatureRenderers } from './feature-renderers';
+import { normalizeFeatureRenderers, type GridOwner } from './feature-renderers';
 import type { FeatureProps } from './feature-props';
 import { removeFromContainer, renderToContainer } from './portal-bridge';
 
@@ -105,7 +105,8 @@ export type GridConfig<TRow = unknown, TField extends string = ColumnFieldKey<TR
   BaseGridConfig<TRow, TField>,
   'columns' | 'loadingRenderer' | 'emptyRenderer' | 'features'
 > & {
-  features?: Omit<NonNullable<BaseGridConfig<TRow>['features']>, 'selection'> & Pick<FeatureProps<TRow>, 'selection'>;
+  features?: Omit<NonNullable<BaseGridConfig<TRow>['features']>, 'selection' | 'tree' | 'masterDetail'> &
+    Pick<FeatureProps<TRow>, 'selection' | 'tree' | 'masterDetail'>;
   columns?: ColumnConfig<TRow, TField>[];
   /**
    * Custom loading renderer - can be a vanilla DOM function or a React render function returning JSX.
@@ -221,6 +222,7 @@ export function makeFlushFocusedInput(container: HTMLElement): () => void {
  */
 export function wrapReactRenderer<TRow>(
   renderFn: (ctx: CellRenderContext<TRow>) => ReactNode,
+  owner?: GridOwner,
 ): (ctx: CellRenderContext<TRow>) => HTMLElement {
   // Cell cache for reusing portals
   const cellCache = new WeakMap<HTMLElement, { portalKey: string; container: HTMLElement }>();
@@ -232,7 +234,7 @@ export function wrapReactRenderer<TRow>(
       const cached = cellCache.get(cellEl);
       if (cached) {
         if (cellEl.contains(cached.container)) {
-          renderToContainer(cached.container, renderFn(ctx), cached.portalKey);
+          renderToContainer(cached.container, renderFn(ctx), cached.portalKey, owner?.() ?? undefined);
           return cached.container;
         }
         // Cached container was detached (typically by editor-injection's
@@ -246,7 +248,7 @@ export function wrapReactRenderer<TRow>(
 
     const container = createPortalContainer('react-cell-renderer');
 
-    const portalKey = renderToContainer(container, renderFn(ctx));
+    const portalKey = renderToContainer(container, renderFn(ctx), undefined, owner?.() ?? undefined);
 
     if (cellEl) {
       cellCache.set(cellEl, { portalKey, container });
@@ -379,13 +381,16 @@ export function wrapReactEmptyRenderer(
  *
  * @internal Used by DataGrid component
  */
-export function processGridConfig<TRow>(config: GridConfig<TRow> | undefined): BaseGridConfig<TRow> | undefined {
+export function processGridConfig<TRow>(
+  config: GridConfig<TRow> | undefined,
+  owner?: GridOwner,
+): BaseGridConfig<TRow> | undefined {
   if (!config) return undefined;
 
   // Already processed — return as-is to prevent double-wrapping
   if ((config as any)[REACT_PROCESSED]) return config as BaseGridConfig<TRow>;
 
-  if (config.features) config = { ...config, features: normalizeFeatureRenderers(config.features) };
+  if (config.features) config = { ...config, features: normalizeFeatureRenderers(config.features, owner) };
 
   // Process loadingRenderer at grid config level
   if (config.loadingRenderer && typeof config.loadingRenderer === 'function') {
@@ -418,7 +423,7 @@ export function processGridConfig<TRow>(config: GridConfig<TRow> | undefined): B
 
     // Convert React renderer to DOM renderer
     if (renderer) {
-      (processed as any).renderer = wrapReactRenderer(renderer) as any;
+      (processed as any).renderer = wrapReactRenderer(renderer, owner) as any;
     }
 
     // Convert React editor to DOM editor

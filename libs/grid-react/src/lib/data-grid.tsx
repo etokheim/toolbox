@@ -3,6 +3,7 @@ import { DataGridElement as GridElement } from '@toolbox-web/grid';
 import {
   createElement,
   forwardRef,
+  useCallback,
   useContext,
   useEffect,
   useImperativeHandle,
@@ -503,6 +504,7 @@ export const DataGrid = forwardRef<DataGridRef, DataGridProps>(function DataGrid
   const rendererStableConfig = stableGridConfig.current;
   const latestGridConfig = useRef(gridConfig);
   latestGridConfig.current = gridConfig;
+  const getGridOwner = useCallback(() => gridRef.current, []);
   const mergedFeatureProps = useMemo(() => {
     const configFeatures = rendererStableConfig?.features as Record<string, unknown> | undefined;
     const filteredChildFeatures: Record<string, unknown> = {};
@@ -524,8 +526,8 @@ export const DataGrid = forwardRef<DataGridRef, DataGridProps>(function DataGrid
   // Unregistered features show a helpful warning in dev mode.
   const featurePlugins = useMemo(() => {
     if (manualPlugins) return [];
-    return createPluginsFromFeatures(mergedFeatureProps) as BaseGridPlugin[];
-  }, [mergedFeatureProps, manualPlugins]);
+    return createPluginsFromFeatures(mergedFeatureProps, getGridOwner) as BaseGridPlugin[];
+  }, [mergedFeatureProps, manualPlugins, getGridOwner]);
 
   // Combine manual plugins with feature-based plugins
   const allPlugins = useMemo(() => {
@@ -553,7 +555,7 @@ export const DataGrid = forwardRef<DataGridRef, DataGridProps>(function DataGrid
   // Process gridConfig to convert React renderers/editors to DOM functions
   const processedGridConfig = useMemo(() => {
     // Stable identity gates rebuilds; their payload must still contain the latest callbacks.
-    const processed = processGridConfig(latestGridConfig.current);
+    const processed = processGridConfig(latestGridConfig.current, getGridOwner);
 
     // Build core config overrides from individual props
     const coreConfigOverrides: Record<string, unknown> = {};
@@ -596,7 +598,7 @@ export const DataGrid = forwardRef<DataGridRef, DataGridProps>(function DataGrid
     }
 
     return processed;
-  }, [rendererStableConfig, allPlugins, sortable, filterable, selectable, iconOverrides]);
+  }, [rendererStableConfig, allPlugins, sortable, filterable, selectable, iconOverrides, getGridOwner]);
 
   useLayoutEffect(() => {
     const grid = gridRef.current;

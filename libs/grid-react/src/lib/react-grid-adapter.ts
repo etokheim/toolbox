@@ -18,6 +18,7 @@ import { getToolPanelRenderer, type ToolPanelContext } from './grid-tool-panel';
 import type { TypeDefault as ReactTypeDefault, TypeDefaultsMap } from './grid-type-registry';
 import { beginPortalBatch, endPortalBatch, removeFromContainer, renderToContainer } from './portal-bridge';
 import { registerPostMountRefresh, type PostMountRefreshHook } from './post-mount-refresh-hooks';
+import { releaseFeaturePortals } from './feature-renderers';
 import {
   cleanupConfigRootsIn,
   processGridConfig,
@@ -974,6 +975,7 @@ export class GridAdapter implements FrameworkAdapter {
    * Unmount a specific container (called when cell is recycled).
    */
   unmount(container: HTMLElement): void {
+    releaseFeaturePortals(container);
     const key = this.containerToKey.get(container);
     if (key) {
       removeFromContainer(key);

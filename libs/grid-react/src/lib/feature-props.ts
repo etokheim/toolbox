@@ -41,7 +41,7 @@ import type {
   ServerSideConfig,
   StickyRowsConfig,
   TooltipConfig,
-  TreeConfig,
+  TreeConfig as CoreTreeConfig,
   UndoRedoConfig,
   VisibilityConfig,
 } from '@toolbox-web/grid/all';
@@ -54,6 +54,15 @@ import type { ShellConfig } from '@toolbox-web/grid/plugins/shell';
 import type { ReactNode } from 'react';
 import type { ControlView } from '@toolbox-web/grid';
 import type { SelectionHeaderCheckboxContext, SelectionRowCheckboxContext } from '@toolbox-web/grid/plugins/selection';
+import type { TreeDisclosureContext } from '@toolbox-web/grid/plugins/tree';
+import type { MasterDetailDisclosureContext } from '@toolbox-web/grid/plugins/master-detail';
+
+/** Tree disclosure rendered through the owning DataGrid's providers. @since 2.7.0 */
+export type TreeConfig<TRow = unknown> = Omit<CoreTreeConfig<TRow>, 'disclosureRenderer'> & {
+  disclosureRenderer?: (
+    context: TreeDisclosureContext<TRow>,
+  ) => Exclude<ReactNode, undefined> | HTMLElement | ControlView<TreeDisclosureContext<TRow>>;
+};
 
 /** Selection controls rendered through the owning DataGrid's React providers. @since 2.7.0 */
 export interface SelectionConfig<TRow = unknown> extends Omit<
@@ -188,7 +197,14 @@ export type PinnedRowsConfig = Omit<CorePinnedRowsConfig, 'slots'> & {
  *
  * @since 1.8.2
  */
-export type MasterDetailConfig = Omit<CoreMasterDetailConfig, 'detailRenderer'> & {
+export type MasterDetailConfig<TRow = unknown> = Omit<
+  CoreMasterDetailConfig<TRow>,
+  'detailRenderer' | 'disclosureRenderer'
+> & {
+  /** Custom standalone disclosure through this DataGrid's providers. @since 2.7.0 */
+  disclosureRenderer?: (
+    context: MasterDetailDisclosureContext<TRow>,
+  ) => Exclude<ReactNode, undefined> | HTMLElement | ControlView<MasterDetailDisclosureContext<TRow>>;
   detailRenderer?:
     CoreMasterDetailConfig['detailRenderer'] | ((row: Record<string, unknown>, rowIndex: number) => ReactNode);
 };
@@ -518,7 +534,7 @@ export interface FeatureProps<TRow = unknown> {
    * }} />
    * ```
    */
-  tree?: boolean | TreeConfig;
+  tree?: boolean | TreeConfig<TRow>;
 
   /**
    * Enable master-detail expandable rows.
@@ -532,7 +548,7 @@ export interface FeatureProps<TRow = unknown> {
    * }} />
    * ```
    */
-  masterDetail?: MasterDetailConfig;
+  masterDetail?: MasterDetailConfig<TRow>;
 
   // ═══════════════════════════════════════════════════════════════════
   // RESPONSIVE & LAYOUT

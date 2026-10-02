@@ -43,6 +43,11 @@ export default defineConfig({
       alias: {
         ...gridAliases(),
         '@toolbox-web/grid-react/features/selection': resolve(rootDir, 'libs/grid-react/src/features/selection.ts'),
+        '@toolbox-web/grid-react/features/tree': resolve(rootDir, 'libs/grid-react/src/features/tree.ts'),
+        '@toolbox-web/grid-react/features/master-detail': resolve(
+          rootDir,
+          'libs/grid-react/src/features/master-detail.ts',
+        ),
         '@toolbox-web/grid-react': resolve(rootDir, 'libs/grid-react/src/index.ts'),
         '@toolbox/themes': resolve(rootDir, 'libs/themes'),
         // Per-demo shared aliases — must point at the DIRECTORY (not index.ts)

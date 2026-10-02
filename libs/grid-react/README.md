@@ -335,6 +335,35 @@ const config: GridConfig<Employee> = {
 
 ## Master-Detail with GridDetailPanel
 
+Tree and MasterDetail also accept typed `disclosureRenderer` callbacks returning JSX,
+DOM elements, persistent `ControlView` objects, or `null`. Import the corresponding React
+feature module and use `TreeConfig<T>` / `MasterDetailConfig<T>` from this package.
+Both feature props and `gridConfig.features` normalize these hooks; manually supplied
+core plugins remain DOM-only.
+
+```tsx
+const tree: TreeConfig<Row> = {
+  disclosureRenderer: (context) => (
+    <button
+      type="button"
+      aria-label={`Children of ${context.row.name}`}
+      aria-expanded={context.expanded}
+      disabled={context.disabled}
+      onClick={() => context.setExpanded(!context.expanded)}
+    >
+      Toggle
+    </button>
+  ),
+};
+```
+
+Providers are shared with Name renderers and detail panels, using separate mounted slots.
+Replacing only disclosure callbacks preserves plugin expansion state. Keep the native
+control mounted across state updates; do not add a second Space/Enter toggle handler.
+MasterDetail exposes `context.ariaLabel` and remains in its standalone utility column.
+Its config-level `detailRenderer` still supports JSX/string/HTMLElement, while a
+`GridDetailPanel` child takes precedence.
+
 Create expandable row details using the `GridDetailPanel` component:
 
 ```tsx

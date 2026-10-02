@@ -4,7 +4,7 @@
  * Type definitions for expandable detail rows showing additional content.
  */
 
-import type { ExpandCollapseAnimation } from '../../core/types';
+import type { ControlRenderer, ExpandCollapseAnimation, PublicGrid } from '../../core/types';
 export type { ExpandCollapseAnimation } from '../../core/types';
 
 /**
@@ -28,7 +28,9 @@ export type { ExpandCollapseAnimation } from '../../core/types';
  * ```
  * @since 0.1.1
  */
-export interface MasterDetailConfig {
+export interface MasterDetailConfig<T = unknown> {
+  /** Custom disclosure in the existing expander column. @since 3.9.0 */
+  disclosureRenderer?: ControlRenderer<MasterDetailDisclosureContext<T>>;
   /**
    * Renderer function that returns detail content for a row.
    *
@@ -51,6 +53,21 @@ export interface MasterDetailConfig {
    * @default 'slide'
    */
   animation?: ExpandCollapseAnimation;
+}
+
+/** State and guarded action for a row's detail disclosure. @since 3.9.0 */
+export interface MasterDetailDisclosureContext<T = unknown> {
+  grid: PublicGrid<T> & HTMLElement;
+  host: HTMLElement;
+  row: T;
+  /** Current processed position; expansion remains owned by row reference. */
+  rowIndex: number;
+  /** Existing default toggle label; consumers may supply their own translation. */
+  ariaLabel: string;
+  expanded: boolean;
+  loading: boolean;
+  disabled: boolean;
+  setExpanded(expanded: boolean): void;
 }
 
 /** Internal state managed by the master-detail plugin */

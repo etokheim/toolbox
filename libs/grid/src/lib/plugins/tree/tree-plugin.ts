@@ -5,18 +5,27 @@
  */
 
 import { GridClasses } from '../../core/constants';
+import {
+  markDisclosureBoundary,
+  registerControlCleanup,
+  releaseCell,
+  unregisterControlCleanup,
+} from '../../core/internal/control-lifecycle';
+import { getRowIndexFromCell } from '../../core/internal/utils';
 import { createDefaultSpinner } from '../../core/internal/loading';
 import { setSanitizedHTML } from '../../core/internal/sanitize';
 import { builtInSort } from '../../core/internal/sorting';
 import type { GridElement } from '../../core/plugin/base-plugin';
+import { ControlSlot } from '../../core/plugin/control-view';
 import {
   BaseGridPlugin,
   CellClickEvent,
   HeaderClickEvent,
+  type AfterCellRenderContext,
   type PluginManifest,
   type PluginQuery,
 } from '../../core/plugin/base-plugin';
-import type { ColumnConfig, ColumnViewRenderer, SortHandler } from '../../core/types';
+import type { CellRenderContext, ColumnConfig, ColumnViewRenderer, PublicGrid, SortHandler } from '../../core/types';
 import type {
   DataSourceChildrenDetail,
   DataSourceDataDetail,
@@ -34,6 +43,7 @@ import type {
   ExpandCollapseAnimation,
   FlattenedTreeRow,
   TreeConfig,
+  TreeDisclosureContext,
   TreeExpandDetail,
   TreeLoadEndDetail,
   TreeLoadErrorDetail,
@@ -110,7 +120,7 @@ function isSubscribable<T>(value: Promise<T> | Subscribable<T>): value is Subscr
  * @internal Extends BaseGridPlugin
  * @since 0.1.1
  */
-export class TreePlugin extends BaseGridPlugin<TreeConfig> {
+export class TreePlugin<TRow = unknown> extends BaseGridPlugin<TreeConfig<TRow>> {
   static override readonly manifest: PluginManifest = {
     modifiesRowStructure: true,
     hookPriority: {
@@ -177,7 +187,7 @@ export class TreePlugin extends BaseGridPlugin<TreeConfig> {
   override readonly styles = styles;
 
   /** @internal */
-  protected override get defaultConfig(): Partial<TreeConfig> {
+  protected override get defaultConfig(): Partial<TreeConfig<TRow>> {
     return {
       childrenField: 'children',
       autoDetect: true,
@@ -232,15 +242,28 @@ export class TreePlugin extends BaseGridPlugin<TreeConfig> {
 
   /** Cached original (unwrapped) renderer to prevent re-wrapping on repeated processColumns calls. */
   private originalTreeColumnRenderer: ColumnViewRenderer | undefined;
+  #originalRendererAlias: ColumnViewRenderer | undefined;
+  #installedTreeRenderer: ColumnViewRenderer | undefined;
   /** Field name of the column currently wrapped with tree decorations. */
   private wrappedTreeColumnField: string | undefined;
   /** True while `processColumns` has the tree renderer installed on the tree column. */
   #treeColumnWrapped = false;
   /** Guards `#syncTreeColumn` against queueing more than one microtask. */
   #treeColumnSyncScheduled = false;
+  #cells = new Map<
+    HTMLElement,
+    {
+      row: object;
+      key: string | undefined;
+      wrapper: HTMLElement;
+      content: HTMLElement;
+      slot?: ControlSlot<TreeDisclosureContext<TRow>>;
+    }
+  >();
 
   /** @internal */
   override detach(): void {
+    for (const cell of this.#cells.keys()) this.#releaseTreeCell(cell);
     // Restore default `role="grid"` on the rows-body so the grid stays
     // ARIA-valid after the plugin is removed (template default lives in
     // `core/internal/dom-builder.ts`). See WAI-ARIA Treegrid pattern.
@@ -259,6 +282,8 @@ export class TreePlugin extends BaseGridPlugin<TreeConfig> {
     for (const controller of this.#childRequests.values()) controller.abort();
     this.#childRequests.clear();
     this.originalTreeColumnRenderer = undefined;
+    this.#originalRendererAlias = undefined;
+    this.#installedTreeRenderer = undefined;
     this.wrappedTreeColumnField = undefined;
     this.#treeColumnWrapped = false;
     // WeakMaps GC themselves once row references are dropped — nothing to clear.
@@ -740,10 +765,17 @@ export class TreePlugin extends BaseGridPlugin<TreeConfig> {
       // already baked into the columns handed to us. Put the original back.
       if (this.#treeColumnWrapped) {
         const idx = cols.findIndex((c) => c.field === this.wrappedTreeColumnField);
-        if (idx >= 0) cols[idx] = { ...cols[idx], viewRenderer: this.originalTreeColumnRenderer };
+        if (idx >= 0)
+          cols[idx] = {
+            ...cols[idx],
+            renderer: this.#originalRendererAlias,
+            viewRenderer: this.originalTreeColumnRenderer,
+          };
       }
       this.#treeColumnWrapped = false;
       this.originalTreeColumnRenderer = undefined;
+      this.#originalRendererAlias = undefined;
+      this.#installedTreeRenderer = undefined;
       this.wrappedTreeColumnField = undefined;
       return cols;
     }
@@ -765,70 +797,195 @@ export class TreePlugin extends BaseGridPlugin<TreeConfig> {
     // Capture the original (unwrapped) renderer only once per target column.
     // On subsequent processColumns calls, reuse the cached original so we
     // don't nest tree-cell-wrappers.
-    if (this.wrappedTreeColumnField !== targetField) {
+    if (
+      this.wrappedTreeColumnField !== targetField ||
+      targetCol.viewRenderer !== this.#installedTreeRenderer ||
+      targetCol.renderer
+    ) {
       this.originalTreeColumnRenderer = targetCol.viewRenderer;
+      this.#originalRendererAlias = targetCol.renderer;
       this.wrappedTreeColumnField = targetField;
     }
-    const originalRenderer = this.originalTreeColumnRenderer;
-    const getConfig = () => this.config;
-    const setIconFn = this.setIcon.bind(this);
-
+    const originalRenderer = this.#originalRendererAlias ?? this.originalTreeColumnRenderer;
     const wrappedRenderer: ColumnViewRenderer = (ctx) => {
-      const { row, value } = ctx;
-      const { showExpandIcons = true, indentWidth } = getConfig();
-      const meta = this.#rowMeta.get(row as object);
-      const depth = meta?.depth ?? 0;
-
-      const container = document.createElement('span');
-      container.className = 'tree-cell-wrapper';
-      container.style.setProperty('--tbw-tree-depth', String(depth));
-      // Allow config-based indentWidth to override CSS default
-      if (indentWidth !== undefined) {
-        container.style.setProperty('--tbw-tree-indent-width', `${indentWidth}px`);
-      }
-
-      // Add expand/collapse icon, loading spinner, or spacer
-      if (showExpandIcons) {
-        if (meta && this.loadingKeys.has(meta.key)) {
-          // Reuse the core loading UI (`.tbw-spinner--small`) instead of a
-          // tree-specific indicator so custom spinner theming applies here too.
-          const spinner = createDefaultSpinner('small');
-          spinner.classList.add('tree-loading');
-          container.appendChild(spinner);
-        } else if (meta && meta.hasChildren) {
-          const icon = document.createElement('span');
-          icon.className = `${GridClasses.TREE_TOGGLE}${meta.isExpanded ? ` ${GridClasses.EXPANDED}` : ''}`;
-          setIconFn(icon, meta.isExpanded ? 'collapse' : 'expand');
-          icon.setAttribute('data-tree-key', meta.key);
-          container.appendChild(icon);
-        } else {
-          const spacer = document.createElement('span');
-          spacer.className = 'tree-spacer';
-          container.appendChild(spacer);
-        }
-      }
-
-      // Add the original content
-      const content = document.createElement('span');
-      content.className = 'tree-content';
-      if (originalRenderer) {
-        const result = originalRenderer(ctx);
-        if (result instanceof Node) {
-          content.appendChild(result);
-        } else if (typeof result === 'string') {
-          setSanitizedHTML(content, result);
-        }
-      } else {
-        content.textContent = value != null ? String(value) : '';
-      }
-      container.appendChild(content);
-
-      return container;
+      return this.#renderTreeCell(ctx, originalRenderer);
     };
 
-    cols[targetIndex] = { ...targetCol, viewRenderer: wrappedRenderer };
+    this.#installedTreeRenderer = wrappedRenderer;
+    cols[targetIndex] = { ...targetCol, renderer: undefined, viewRenderer: wrappedRenderer };
     this.#treeColumnWrapped = true;
     return cols;
+  }
+
+  #renderTreeCell(ctx: CellRenderContext, originalRenderer: ColumnViewRenderer | undefined): HTMLElement {
+    const { row, value } = ctx;
+    const { showExpandIcons = true, indentWidth } = this.config;
+    const meta = this.#rowMeta.get(row as object);
+    const depth = meta?.depth ?? 0;
+    const cell = ctx.cellEl;
+    let record = cell ? this.#cells.get(cell) : undefined;
+    if (cell && record && (record.row !== row || record.key !== meta?.key || record.wrapper.parentElement !== cell)) {
+      // Release before invoking a cached framework renderer, not after it reparents its output.
+      const adapter = this.grid.__frameworkAdapter;
+      adapter?.beginBatch?.(this.gridElement);
+      try {
+        releaseCell(this.grid, cell);
+        record.wrapper.remove();
+      } finally {
+        adapter?.endBatch?.(this.gridElement);
+      }
+      record = undefined;
+    }
+    if (!record) {
+      const wrapper = document.createElement('span');
+      wrapper.className = 'tree-cell-wrapper';
+      const content = document.createElement('span');
+      content.className = 'tree-content';
+      wrapper.appendChild(content);
+      record = { row: row as object, key: meta?.key, wrapper, content };
+      if (cell) this.#cells.set(cell, record);
+    }
+    const container = record.wrapper;
+    container.style.setProperty('--tbw-tree-depth', String(depth));
+    // Allow config-based indentWidth to override CSS default
+    if (indentWidth !== undefined) {
+      container.style.setProperty('--tbw-tree-indent-width', `${indentWidth}px`);
+    } else {
+      container.style.removeProperty('--tbw-tree-indent-width');
+    }
+
+    // Add expand/collapse icon, loading spinner, or spacer
+    if (cell && showExpandIcons && meta?.hasChildren && this.config.disclosureRenderer) {
+      this.#updateDisclosure(cell);
+    } else {
+      record.slot?.dispose();
+      record.slot = undefined;
+      this.#renderDefaultDecoration(container, record.content, meta);
+    }
+
+    // Add the original content
+    const content = record.content;
+    if (originalRenderer) {
+      const result = originalRenderer(ctx);
+      if (result instanceof Node) {
+        if (result.parentNode !== content) content.replaceChildren(result);
+      } else if (typeof result === 'string') {
+        setSanitizedHTML(content, result);
+      } else {
+        content.replaceChildren();
+      }
+    } else {
+      content.textContent = value != null ? String(value) : '';
+    }
+    return container;
+  }
+
+  #renderDefaultDecoration(wrapper: HTMLElement, content: HTMLElement, meta?: FlattenedTreeRow): void {
+    while (wrapper.firstChild !== content) wrapper.firstChild?.remove();
+    if (this.config.showExpandIcons === false) return;
+    let decoration: HTMLElement;
+    if (meta && this.loadingKeys.has(meta.key)) {
+      decoration = createDefaultSpinner('small');
+      decoration.classList.add('tree-loading');
+    } else {
+      decoration = document.createElement('span');
+      if (meta?.hasChildren) {
+        decoration.className = `${GridClasses.TREE_TOGGLE}${meta.isExpanded ? ` ${GridClasses.EXPANDED}` : ''}`;
+        this.setIcon(decoration, meta.isExpanded ? 'collapse' : 'expand');
+        decoration.setAttribute('data-tree-key', meta.key);
+      } else {
+        decoration.className = 'tree-spacer';
+      }
+    }
+    wrapper.insertBefore(decoration, content);
+  }
+
+  #updateDisclosure(cell: HTMLElement): void {
+    const record = this.#cells.get(cell);
+    const renderer = this.config.disclosureRenderer;
+    if (!record || !renderer) return;
+    const meta = this.#rowMeta.get(record.row);
+    if (!meta?.hasChildren || this.config.showExpandIcons === false) return;
+    if (record.slot?.renderer !== renderer) {
+      record.slot?.dispose();
+      while (record.wrapper.firstChild !== record.content) record.wrapper.firstChild?.remove();
+      const host = document.createElement('span');
+      host.style.display = 'contents';
+      markDisclosureBoundary(host, this.gridElement);
+      record.wrapper.insertBefore(host, record.content);
+      record.slot = new ControlSlot(host, renderer, this.gridElement);
+    }
+    const slot = record.slot;
+    slot.update({
+      grid: this.grid as PublicGrid<TRow> & HTMLElement,
+      host: slot.host,
+      row: record.row as TRow,
+      rowIndex: getRowIndexFromCell(cell),
+      key: meta.key,
+      depth: meta.depth,
+      hasChildren: meta.hasChildren,
+      expanded: this.expandedKeys.has(meta.key),
+      loading: this.loadingKeys.has(meta.key),
+      disabled: this.loadingKeys.has(meta.key),
+      setExpanded: (expanded) => {
+        const current = this.#rowMeta.get(record.row);
+        if (
+          !slot.active ||
+          record.slot !== slot ||
+          this.#cells.get(cell) !== record ||
+          !this.gridElement.isConnected ||
+          !this.grid.contains(cell) ||
+          record.wrapper.parentElement !== cell ||
+          !record.wrapper.contains(slot.host) ||
+          this.rows[getRowIndexFromCell(cell)] !== record.row ||
+          this.config.disclosureRenderer !== renderer ||
+          this.config.showExpandIcons === false ||
+          !current?.hasChildren ||
+          current.key !== record.key ||
+          this.loadingKeys.has(current.key) ||
+          this.expandedKeys.has(current.key) === expanded
+        )
+          return;
+        this.toggle(current.key);
+      },
+    });
+  }
+
+  #releaseTreeCell(cell: HTMLElement): void {
+    const record = this.#cells.get(cell);
+    if (!record) return;
+    this.#cells.delete(cell);
+    unregisterControlCleanup(cell, this);
+    record.slot?.dispose();
+  }
+
+  /** @internal */
+  override afterCellRender(context: AfterCellRenderContext): void {
+    const cell = context.cellElement;
+    if (this.#cells.has(cell)) registerControlCleanup(cell, () => this.#releaseTreeCell(cell), this);
+  }
+
+  /** Replace only disclosure controls, preserving expansion and content renderers. @since 3.9.0 */
+  setDisclosureRenderer(renderer: TreeConfig<TRow>['disclosureRenderer']): void {
+    if (this.config.disclosureRenderer === renderer) return;
+    this.config.disclosureRenderer = this.userConfig.disclosureRenderer = renderer;
+    this.requestAfterRender();
+  }
+
+  #refreshDisclosures(): void {
+    for (const [cell, record] of this.#cells) {
+      if (!this.grid.contains(cell) || record.wrapper.parentElement !== cell) {
+        this.#releaseTreeCell(cell);
+      } else if (this.config.disclosureRenderer) {
+        this.#updateDisclosure(cell);
+      } else if (record.slot) {
+        // Restore the default decoration without touching the content renderer.
+        const meta = this.#rowMeta.get(record.row);
+        record.slot.dispose();
+        record.slot = undefined;
+        this.#renderDefaultDecoration(record.wrapper, record.content, meta);
+      }
+    }
   }
 
   // #endregion
@@ -927,6 +1084,7 @@ export class TreePlugin extends BaseGridPlugin<TreeConfig> {
 
   /** @internal */
   override afterRender(): void {
+    this.#refreshDisclosures();
     // Tree introduces hierarchy → switch the rows-body role from `grid` to
     // `treegrid` per WAI-ARIA so `aria-expanded` / `aria-level` /
     // `aria-setsize` / `aria-posinset` are valid in context. Idempotent
