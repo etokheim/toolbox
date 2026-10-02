@@ -4,7 +4,7 @@
  * Type definitions for the selection feature.
  */
 
-import type { ColumnConfig, ControlRenderer, PublicGrid } from '../../core/types';
+import type { CellRenderContext, ColumnConfig, ControlRenderer, PublicGrid } from '../../core/types';
 import type { TouchSelectionMode } from './touch-selection';
 
 /** Keyboard modifiers for a checkbox action, independent of native/framework events. @since 3.9.0 */
@@ -39,6 +39,30 @@ export interface SelectionRowCheckboxContext<T = unknown> {
   selectable: boolean;
   disabled: boolean;
   setChecked(checked: boolean, modifiers?: SelectionCheckboxModifiers): void;
+}
+
+/**
+ * Lifetime of a checkbox nested inside a consumer body-cell renderer.
+ * Notifications are microtask-batched after DOM commit: pending bindings publish
+ * nothing, active bindings publish current state, retirement publishes one null.
+ * Active actions republish canonical state even when unchanged; apply checked and
+ * disabled on every notification to reconcile native input activation.
+ * A throwing listener is diagnosed and retired without calling it again.
+ * @since 3.9.0
+ */
+export interface SelectionRowCheckboxBinding<T = unknown> {
+  /**
+   * Forward the next renderer context, even for fresh data with the same row ID.
+   * Immediately invalidates previous actions. Returns false after retirement;
+   * a new binding is required for a reused host, never reviving the old lifetime.
+   */
+  update(context: CellRenderContext<T>): boolean;
+  /**
+   * Revoke actions synchronously, release owned metadata, and queue terminal null.
+   * A click already dispatched inside this control remains a control event;
+   * subsequent clicks on the released host are ordinary cell interactions.
+   */
+  dispose(): void;
 }
 
 // #region Module Augmentation

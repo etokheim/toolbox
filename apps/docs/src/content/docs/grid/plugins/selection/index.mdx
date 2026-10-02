@@ -10,6 +10,7 @@ import SelectionPlaygroundDemo from '@components/demos/SelectionPlaygroundDemo.a
 import ConditionalSelectionDemo from '@components/demos/selection/ConditionalSelectionDemo.astro';
 import SelectionEventsDemo from '@components/demos/selection/SelectionEventsDemo.astro';
 import SelectionCustomCheckboxDemo from '@components/demos/selection/SelectionCustomCheckboxDemo.astro';
+import SelectionEmbeddedCheckboxDemo from '@components/demos/selection/SelectionEmbeddedCheckboxDemo.astro';
 
 The Selection plugin adds cell, row, and range selection capabilities to the grid with full keyboard support. Whether you need simple cell highlighting or complex multi-range selections, this plugin has you covered.
 
@@ -124,6 +125,99 @@ const selection: SelectionConfig<Row> = {
 Manually constructed `SelectionPlugin` instances always use the core DOM contract,
 including inside React. Vue and Angular can use DOM hooks; native framework-template
 bridges for these hooks are not provided.
+
+## Checkbox inside an existing column
+
+`bindRowCheckbox(context, host, onContext)` binds a dedicated host inside an existing
+body-cell renderer. It works with `mode: 'row'` and `checkbox: false`: no generated
+column is required. Forward the whole `CellRenderContext`; do not reconstruct cell
+identity from selectors or processed indices. Keep the Name link, Tree disclosure
+and other interactions outside this host.
+
+<ShowSource component="selection/SelectionEmbeddedCheckboxDemo">
+  <SelectionEmbeddedCheckboxDemo />
+</ShowSource>
+
+Selection still owns eligibility, canonical selection, modifier handling and
+`selection-change`. This is not a second batch-selection store and does not make
+checkboxes compatible with cell/range mode or CellEntry. Header embedding and
+additional select-all scopes are not part of this API.
+
+The returned `SelectionRowCheckboxBinding` has `update(nextRendererContext)` and
+`dispose()`. Update returns `false` after retirement (create a new binding for a
+reused host); otherwise it invalidates previous actions immediately, including same-ID data
+refreshes. Bindings without a stable row ID use row-object identity, never an index.
+Actions recheck the current row and eligibility. Do not retain old actions.
+
+The lifecycle is **pending → active → retired**. Pending hosts are inert and publish
+nothing. After DOM commit, microtask-batched notifications publish the current
+context. A discarded host, row reassignment, cell cleanup, plugin detach or grid
+disconnect retires the binding and publishes one terminal `null`; handle this by
+disabling/removing the control. A listener that throws reports `TBW065`, retires and
+is not called again. Reentrant update/dispose revokes queued obsolete publications.
+Do not attach cleanup to the old cell while constructing replacement output.
+
+Active actions republish canonical state even when it is unchanged, such as
+Shift-clicking an already checked row or clicking the selected row in single-select
+mode. Apply checked/disabled on every notification so native checkbox toggles are
+reconciled; unrelated unchanged STYLE refreshes remain deduplicated. Disposing a
+binding inside `selection-change` revokes its actions immediately, but that same
+click still belongs to the control. Future clicks on the released host are ordinary
+cell interactions; a successor binding owns its own boundary.
+
+Hover replacement and select mode in the demo are app-owned CSS/state, not plugin
+options. Controls remain tabbable and become visible on focus; coarse pointers get
+an always-visible control. Never hide a focused action. Apply the localised label,
+checked/disabled state, visible focus and a 24-by-24 CSS-pixel target
+([SC 2.5.8](https://www.w3.org/WAI/WCAG22/Understanding/target-size-minimum.html)).
+Use a single click handler and forward its Shift/Ctrl/Meta modifiers. Native
+checkbox Space and button Space/Enter generate that click; checkbox Enter retains
+browser behaviour. Do not also toggle on keydown or change. `selection-change` is
+a post-change notification, not a veto event; cancel native activation before
+calling the action when needed.
+
+### React embedded checkbox
+
+Import `SelectionCheckbox` from the existing Selection feature entry. Place it
+inside your Name renderer/component; its children retain providers declared
+**inside Name**, without another portal, root or synchronous flush.
+
+```tsx
+import type { ColumnConfig } from '@toolbox-web/grid-react';
+import { SelectionCheckbox } from '@toolbox-web/grid-react/features/selection';
+
+type Row = { id: string; name: string };
+const columns: ColumnConfig<Row>[] = [{
+  field: 'name',
+  renderer: (context) => (
+    <span>
+      <SelectionCheckbox context={context}>
+        {(state) => (
+          <button
+            type="button"
+            role="checkbox"
+            aria-label={state.ariaLabel}
+            aria-checked={state.checked}
+            disabled={state.disabled}
+            onClick={(event) => state.setChecked(!state.checked, event)}
+          >
+            {state.checked ? 'x' : ''}
+          </button>
+        )}
+      </SelectionCheckbox>
+      <a href={`/people/${context.row.id}`}>{context.row.name}</a>
+    </span>
+  ),
+}];
+// <DataGrid rows={rows} gridConfig={{ columns }} selection={{ mode: 'row', checkbox: false }} />
+```
+
+The component initially renders an empty host and subscribes after commit.
+State refreshes do not replace the focused subtree; callback/children changes
+remain ordinary React updates. Removing the component releases only its binding,
+not Name's sibling interactions. Vue and Angular can call the core DOM binding
+from native column renderers; Vue's native escape hatch is `viewRenderer` (its
+`renderer` is the VNode/component surface). Framework-template facades are not included.
 
 ## Installation
 

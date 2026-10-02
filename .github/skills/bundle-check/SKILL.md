@@ -85,7 +85,7 @@ The build will hard-fail. Work through the **Over-budget investigation checklist
 
 ## Plugin Bundle Sizes
 
-Individual plugins are separate entry points. The `tools/build-size-report.ts` table from step 2 already lists every plugin's raw/gzip size (one row per plugin) — read those rows rather than re-listing files by hand. Plugins don't have strict budgets but should be as small as possible.
+Individual plugins are separate entry points. The `tools/build-size-report.ts` table from step 2 lists every plugin's raw/gzip size. `libs/grid/vite.config.ts` enforces 55 KiB raw per plugin, except Selection's explicitly approved 60 KiB ceiling for embedded checkbox lifetimes. Do not raise the shared cap or move always-loaded bytes to core to satisfy an entry limit. Disabled configuration does not remove an imported plugin's download/parse cost.
 
 ## Dead Code Removal
 

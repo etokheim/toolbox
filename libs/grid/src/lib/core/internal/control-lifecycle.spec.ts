@@ -1,11 +1,101 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { registerControlCleanup, releaseControl, unregisterControlCleanup } from './control-lifecycle';
+import {
+  isControlEvent,
+  markControlBoundary,
+  ownControlBoundary,
+  registerControlCleanup,
+  releaseControl,
+  unregisterControlCleanup,
+} from './control-lifecycle';
 
 afterEach(() => {
   document.body.innerHTML = '';
 });
 
 describe('composite cell control cleanup', () => {
+  it('does not stamp an obsolete owner while a foreign-grid successor owns the host', () => {
+    const grid = document.createElement('div');
+    const other = document.createElement('div');
+    const host = document.createElement('span');
+    grid.append(host);
+    document.body.append(grid);
+    const obsolete = ownControlBoundary(host, grid);
+    const successor = ownControlBoundary(host, other);
+    const classified: boolean[][] = [];
+    grid.addEventListener('click', (event) =>
+      classified.push([isControlEvent(event, grid), isControlEvent(event, other)]),
+    );
+    host.click();
+    obsolete();
+    obsolete();
+    host.click();
+    successor();
+    host.click();
+    expect(classified).toEqual([
+      [false, true],
+      [false, true],
+      [false, false],
+    ]);
+  });
+
+  it('keeps a foreign marker when its obsolete lease is released repeatedly', () => {
+    const grid = document.createElement('div');
+    const other = document.createElement('div');
+    const host = document.createElement('span');
+    grid.append(host);
+    document.body.append(grid);
+    const obsolete = ownControlBoundary(host, grid);
+    markControlBoundary(host, other);
+    obsolete();
+    obsolete();
+    grid.addEventListener('click', (event) => {
+      expect(isControlEvent(event, grid)).toBe(false);
+      expect(isControlEvent(event, other)).toBe(true);
+    });
+    host.click();
+  });
+
+  it('classifies an in-flight click after release without claiming another grid or future clicks', () => {
+    const grid = document.createElement('div');
+    const other = document.createElement('div');
+    const host = document.createElement('span');
+    const input = document.createElement('input');
+    host.append(input);
+    grid.append(host);
+    document.body.append(grid);
+    const release = ownControlBoundary(host, grid);
+    const classified: boolean[] = [];
+    input.addEventListener('click', release, { once: true });
+    grid.addEventListener('click', (event) => {
+      classified.push(isControlEvent(event, grid));
+      expect(isControlEvent(event, other)).toBe(false);
+    });
+    input.click();
+    host.click();
+    expect(classified).toEqual([true, false]);
+  });
+
+  it('removes an obsolete lease listener without clearing a successor boundary', () => {
+    const grid = document.createElement('div');
+    const host = document.createElement('span');
+    grid.append(host);
+    document.body.append(grid);
+    const release = ownControlBoundary(host, grid);
+    const successor = ownControlBoundary(host, grid);
+    release();
+    const classified: boolean[] = [];
+    host.addEventListener('click', successor, { once: true });
+    grid.addEventListener('click', (event) => classified.push(isControlEvent(event, grid)));
+    host.click();
+    host.click();
+    expect(classified).toEqual([true, false]);
+    const obsolete = ownControlBoundary(host, grid);
+    markControlBoundary(host, grid);
+    obsolete();
+    host.click();
+    expect(classified).toEqual([true, false, true]);
+  });
+
   it('replaces only the same owner and releases all owners exactly once', () => {
     const cell = document.createElement('div');
     const first = {};
