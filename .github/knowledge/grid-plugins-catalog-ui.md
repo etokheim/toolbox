@@ -78,7 +78,7 @@ OWNS: row order, drag state. HOOKS: onCellMouseDown/Move/Up. QUERIES: `canMoveRo
 
 ### RowDragDrop (#225)
 
-OWNS: row order + cross-grid drag/drop session. ALIASES: none. HOOKS: processColumns (drag-handle col), onKeyDown (Ctrl+arrow), onCellClick, delegated dragstart/over/leave/drop/dragend. QUERIES: `canMoveRow`. EVENTS: `row-move`, `row-drag-start` (cancelable), `row-drag-end`, `row-drop` (cancelable), `row-transfer`. USES: `core/internal/drag-drop-registry.ts` (WeakRef session map, shared across split bundles) + `plugins/shared/drag-drop-protocol.ts` (MIME constants, payload codec, drop-position math, auto-scroller, session tracker).
+OWNS: row order/cross-grid sessions. HOOKS: processColumns, onKeyDown, onCellClick, delegated dragstart/over/leave/drop/dragend. QUERIES: `canMoveRow`. EVENTS: `row-move`, `row-drag-start`/`row-drop` (cancelable), `row-drag-end`, `row-transfer`. USES: `drag-drop-registry.ts` (cross-bundle WeakRefs), `drag-drop-protocol.ts` (MIME, codec, positioning, auto-scroll, current session).
 
 - DECIDED (v3): removed `RowReorderPlugin`, `reorderRows` feature and `reorderRows`/`rowReorder` aliases. WHY: plugin deleted in v3. `RowDragDropPlugin.aliases === undefined` (`row-drag-drop.spec.ts > aliases`); docs redirect `reorder-rows` → `row-drag-drop`.
 - INVARIANT (#225): other-plugin alias dedup uses constructor identity (`PluginManager#collapseAliasDuplicates`). `BaseGridPlugin.mergeConfigsFrom`: equal scalars/refs silent; dedupe TBW023 (dev); conflict TBW025.
@@ -88,7 +88,7 @@ OWNS: row order + cross-grid drag/drop session. ALIASES: none. HOOKS: processCol
 - INVARIANT: row-origin interactive descendants (`button,input,select,textarea,a[href],[contenteditable]`) never start a drag — `INTERACTIVE_DRAG_SELECTORS` / `isInteractiveDragOrigin()`. Explicit `bindHandle` registration is the handle-only exception; nested independent controls still veto pickup.
 - OWNS: `drag-handle-controls.ts` revocable `ControlSlot` lease; SVG → registered HTML root. Host listeners run after React portal cancellation. Revocation restores owned attributes/closes owned menu, not native payload.
 - INVARIANT: native buttons keep Enter/Space clicks; other roots synthesize Enter-down/Space-up once. Local Ctrl-arrow precedes boundary bailout; custom move-menu boundary prevents Escape clearing Selection. `canDrag` refresh is custom-only/pure; default refresh skips control scanning.
-- FLOW: row identity/slot generation → current index → existing drag/menu policy. Cleanup uses plugin owner keys (including omitted-treeColumn wrapping).
+- FLOW: `resolveDragOrigin` → `{rowEl, handle}`: native veto → binding ownership/identity/generation → handle/row. `onDragStart` keeps rows → `canDrag` → cancelable DOM event → state/payload/registry → refresh; no post-event revalidation. Cleanup: per-plugin (including omitted-treeColumn wrapping).
 - DECIDED (drag-control slice): typed DOM + React-local hooks on both surfaces. WHY: retain per-grid providers/stable portals. Composition/pinning and Vue/Angular templates deferred.
 - INVARIANT: `setDragImage` clone lives inside `this.gridElement`, not body (scoped `core/styles/*.css`, host `--tbw-column-template`). Fixed at -10000px; removed in `setTimeout(0)`. No opacity/shadow: browser translucency already fades it.
 

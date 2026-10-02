@@ -626,7 +626,8 @@ export class RowDragDropPlugin<T = unknown> extends BaseGridPlugin<RowDragDropCo
     gridEl.addEventListener('drop', (e) => this.onDrop(e as DragEvent), { signal });
   }
 
-  private onDragStart(de: DragEvent): void {
+  /** Resolve a live pickup origin before selecting rows or mutating the drag session. */
+  private resolveDragOrigin(de: DragEvent): { rowEl: HTMLElement; handle: HTMLElement | null } | undefined {
     if (de.defaultPrevented) return;
     const target = de.target as HTMLElement | null;
     if (!target) return;
@@ -641,10 +642,8 @@ export class RowDragDropPlugin<T = unknown> extends BaseGridPlugin<RowDragDropCo
     }
     const handle = binding?.element ?? (target.closest('.dg-row-drag-handle') as HTMLElement | null);
     let rowEl: HTMLElement | null = null;
-    let initiatedFromHandle = false;
     if (handle) {
       rowEl = handle.closest('.data-grid-row') as HTMLElement | null;
-      initiatedFromHandle = true;
     } else if (this.rowIsDraggable) {
       // Row-as-handle: any cell may start the drag, but interactive
       // descendants (inputs, buttons, anchors, contenteditable, open
@@ -652,7 +651,13 @@ export class RowDragDropPlugin<T = unknown> extends BaseGridPlugin<RowDragDropCo
       if (this.isInteractiveDragOrigin(target)) return;
       rowEl = target.closest('.data-grid-row') as HTMLElement | null;
     }
-    if (!rowEl) return;
+    return rowEl ? { rowEl, handle } : undefined;
+  }
+
+  private onDragStart(de: DragEvent): void {
+    const origin = this.resolveDragOrigin(de);
+    if (!origin) return;
+    const { rowEl, handle } = origin;
 
     const rowIndex = this.getRowIndex(rowEl);
     if (rowIndex < 0) return;
@@ -722,7 +727,7 @@ export class RowDragDropPlugin<T = unknown> extends BaseGridPlugin<RowDragDropCo
         }
         setTimeout(() => badge.remove(), 0);
       } else {
-        attachRowCloneDragImage(this.gridElement, de, rowEl, initiatedFromHandle ? handle : null);
+        attachRowCloneDragImage(this.gridElement, de, rowEl, handle);
       }
     }
 

@@ -1,7 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { DataGridElement } from '../../core/grid';
 import { releaseControl } from '../../core/internal/control-lifecycle';
+import { lookupDragSession } from '../../core/internal/drag-drop-registry';
 import type { ControlView } from '../../core/types';
+import { getCurrentDragSession, mimeForZone, TBW_ROW_DRAG_MIME } from '../shared/drag-drop-protocol';
 import { TreePlugin } from '../tree/tree-plugin';
 import { SelectionPlugin } from '../selection/selection-plugin';
 import { ROW_DRAG_HANDLE_FIELD, RowDragDropPlugin } from './row-drag-drop-plugin';
@@ -54,6 +56,23 @@ function drag(element: Element) {
   const event = new Event('dragstart', { bubbles: true, cancelable: true });
   element.dispatchEvent(event);
   return event;
+}
+
+function pickup(element: Element) {
+  const transfer = { effectAllowed: '', setData: vi.fn(), setDragImage: vi.fn() };
+  const event = new Event('dragstart', { bubbles: true, cancelable: true });
+  Object.defineProperty(event, 'dataTransfer', { value: transfer });
+  element.dispatchEvent(event);
+  return { event, transfer };
+}
+
+function expectNoPickup(grid: HTMLElement, transfer: ReturnType<typeof pickup>['transfer']) {
+  expect(transfer.effectAllowed).toBe('');
+  expect(transfer.setData).not.toHaveBeenCalled();
+  expect(transfer.setDragImage).not.toHaveBeenCalled();
+  expect(getCurrentDragSession()).toBeNull();
+  expect(grid.querySelector('.dragging, .tbw-row-drag-clone')).toBeNull();
+  expect(grid.classList.contains('tbw-grid--drag-source')).toBe(false);
 }
 
 afterEach(() => {
@@ -220,6 +239,125 @@ describe('row drag controls', () => {
     allowed = true;
     plugin.afterRender();
     expect(button.getAttribute('draggable')).toBe('true');
+  });
+
+  it.each(['native cancellation', 'renderer replacement', 'recycled row', 'nested control'] as const)(
+    'rejects %s before policy, payload or session mutation in row-and-handle mode',
+    async (reason) => {
+      const canDrag = vi.fn(() => true);
+      const serializeRow = vi.fn((row: Row) => row);
+      const { grid, plugin } = await setup({ dragHandleRenderer: renderer, dragFrom: 'both', canDrag, serializeRow });
+      const button = handle(grid);
+      const start = vi.fn();
+      grid.addEventListener('row-drag-start', start);
+      canDrag.mockClear();
+      let target: Element = button;
+      if (reason === 'native cancellation') {
+        button.addEventListener('dragstart', (event) => event.preventDefault(), { once: true });
+      } else if (reason === 'renderer replacement') {
+        plugin.setDragHandleRenderer((ctx) => renderer(ctx));
+      } else if (reason === 'recycled row') {
+        const cell = button.closest<HTMLElement>('.cell');
+        if (!cell) throw new Error('Missing cell');
+        cell.dataset['row'] = '1';
+      } else {
+        target = document.createElement('input');
+        button.append(target);
+      }
+      const { event, transfer } = pickup(target);
+      expect(event.defaultPrevented).toBe(true);
+      expect(canDrag).not.toHaveBeenCalled();
+      expect(start).not.toHaveBeenCalled();
+      expect(serializeRow).not.toHaveBeenCalled();
+      expectNoPickup(grid, transfer);
+    },
+  );
+
+  it('cancels and disposes the binding before serialization without leaving session or menu state', async () => {
+    const serializeRow = vi.fn((row: Row) => row);
+    const { grid } = await setup({ dragHandleRenderer: renderer, serializeRow });
+    const button = handle(grid);
+    button.click();
+    expect(grid.querySelector('.tbw-row-move-menu')).not.toBeNull();
+    const cell = button.closest<HTMLElement>('.cell');
+    if (!cell) throw new Error('Missing control cell');
+    const start = vi.fn((event: Event) => {
+      expect(getCurrentDragSession()).toBeNull();
+      expect(grid.classList.contains('tbw-grid--drag-source')).toBe(false);
+      event.preventDefault();
+      releaseControl(cell);
+    });
+    grid.addEventListener('row-drag-start', start);
+    const { event, transfer } = pickup(button);
+    expect(event.defaultPrevented).toBe(true);
+    expect(start).toHaveBeenCalledTimes(1);
+    expect(serializeRow).not.toHaveBeenCalled();
+    expectNoPickup(grid, transfer);
+    expect(button.hasAttribute('draggable')).toBe(false);
+    expect(grid.querySelector<HTMLElement>('.tbw-row-move-menu')?.hidden).toBe(true);
+    const retry = pickup(button);
+    expect(start).toHaveBeenCalledTimes(1);
+    expectNoPickup(grid, retry.transfer);
+  });
+
+  it.each([false, true])('rechecks canDrag before emission with custom handles=%s', async (custom) => {
+    let checks: number | undefined;
+    const { grid } = await setup({
+      dragHandleRenderer: custom ? renderer : undefined,
+      canDrag: () => checks === undefined || ++checks === (custom ? 1 : 0),
+    });
+    checks = 0;
+    const target = custom ? handle(grid) : grid.querySelector('.dg-row-drag-handle');
+    if (!target) throw new Error('Missing drag handle');
+    const start = vi.fn();
+    grid.addEventListener('row-drag-start', start);
+    const { event, transfer } = pickup(target);
+    expect(event.defaultPrevented).toBe(true);
+    expect(checks).toBe(custom ? 2 : 1);
+    expect(start).not.toHaveBeenCalled();
+    expectNoPickup(grid, transfer);
+  });
+
+  it('publishes a custom copy payload only after the cancelable event and clears it on dragend', async () => {
+    const order: string[] = [];
+    const { grid, plugin } = await setup({
+      dragHandleRenderer: renderer,
+      operation: 'copy',
+      dropZone: 'shared',
+      serializeRow: (row) => {
+        order.push('serialize');
+        expect(grid.classList.contains('tbw-grid--drag-source')).toBe(false);
+        return { ...row };
+      },
+    });
+    const start = vi.fn(() => {
+      order.push('event');
+      expect(getCurrentDragSession()).toBeNull();
+      expect(grid.classList.contains('tbw-grid--drag-source')).toBe(false);
+    });
+    grid.addEventListener('row-drag-start', start);
+    const button = handle(grid);
+    const { event, transfer } = pickup(button);
+    expect(event.defaultPrevented).toBe(false);
+    expect(order).toEqual(['event', 'serialize']);
+    expect(transfer.effectAllowed).toBe('copyMove');
+    expect(transfer.setData.mock.calls.map(([type]) => type)).toEqual([
+      TBW_ROW_DRAG_MIME,
+      mimeForZone('shared'),
+      'text/plain',
+    ]);
+    const session = getCurrentDragSession<Row>();
+    if (!session) throw new Error('Missing drag session');
+    expect(session.payload.operation).toBe('copy');
+    expect(lookupDragSession(session.sessionId)?.[0]).toBe(grid.rows[0]);
+    plugin.afterRender();
+    expect(contexts.filter((ctx) => ctx.row.id === 'a').at(-1)?.dragging).toBe(true);
+    button.dispatchEvent(new Event('dragend', { bubbles: true }));
+    plugin.afterRender();
+    expect(getCurrentDragSession()).toBeNull();
+    expect(lookupDragSession(session.sessionId)).toBeUndefined();
+    expect(contexts.filter((ctx) => ctx.row.id === 'a').at(-1)?.dragging).toBe(false);
+    expect(grid.classList.contains('tbw-grid--drag-source')).toBe(false);
   });
 
   it('opens one menu without selecting a row; Ctrl moves the bound row and menu actions revalidate', async () => {
