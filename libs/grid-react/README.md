@@ -90,7 +90,8 @@ DOM elements, persistent `ControlView` outputs or `null`. Use the React
 `SelectionConfig<Row>` type and import `@toolbox-web/grid-react/features/selection`.
 Both the `selection` prop and `gridConfig.features.selection` use the shared
 DataGrid portal manager, preserving app providers and component state on updates.
-Callback replacement replaces controls without resetting selection. Manually
+Callback replacement replaces controls without resetting selection; later changes
+to grid props such as `sortable` retain the latest callbacks. Manually
 constructed core plugins remain DOM-only; omit the hooks for native checkboxes.
 See the [typed contexts, accessibility and lifecycle guide](https://toolboxjs.com/grid/plugins/selection/#react-checkbox-renderers).
 

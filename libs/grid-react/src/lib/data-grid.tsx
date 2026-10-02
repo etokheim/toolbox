@@ -501,6 +501,8 @@ export const DataGrid = forwardRef<DataGridRef, DataGridProps>(function DataGrid
   const stableGridConfig = useRef(gridConfig);
   if (!sameNonRendererConfig(stableGridConfig.current, gridConfig)) stableGridConfig.current = gridConfig;
   const rendererStableConfig = stableGridConfig.current;
+  const latestGridConfig = useRef(gridConfig);
+  latestGridConfig.current = gridConfig;
   const mergedFeatureProps = useMemo(() => {
     const configFeatures = rendererStableConfig?.features as Record<string, unknown> | undefined;
     const filteredChildFeatures: Record<string, unknown> = {};
@@ -550,7 +552,8 @@ export const DataGrid = forwardRef<DataGridRef, DataGridProps>(function DataGrid
 
   // Process gridConfig to convert React renderers/editors to DOM functions
   const processedGridConfig = useMemo(() => {
-    const processed = processGridConfig(rendererStableConfig);
+    // Stable identity gates rebuilds; their payload must still contain the latest callbacks.
+    const processed = processGridConfig(latestGridConfig.current);
 
     // Build core config overrides from individual props
     const coreConfigOverrides: Record<string, unknown> = {};

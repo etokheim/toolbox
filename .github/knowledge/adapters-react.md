@@ -36,6 +36,7 @@ related: [adapters, adapters-vue, adapters-angular, grid-core, grid-features]
 - OWNS: `control-bridge.ts` persistent outer element, explicit owning grid, stable portal key; `PortalManager` retains batching/error boundaries/unmount guards. JSX↔DOM/null transitions detach the old portal container intact before allocating another; never wipe React-owned descendants.
 - INVARIANT: `GridElementContext.Provider` wraps BOTH PortalManager and the custom element. App providers alone are insufficient for controls using grid hooks.
 - FLOW: callback-only change → non-renderer config equality → retain config/plugin instances → layout/ready synchronization → `SelectionPlugin.setCheckboxRenderers` → STYLE. Pending ready callbacks are cancelled on rerender/unmount.
+- INVARIANT: stable non-renderer config identity gates memo invalidation, not its payload. `processedGridConfig` rebuilds from the latest config ref; otherwise a later `sortable`/icons change restores old callbacks after the renderer-sync layout effect. `selection-controls.spec.tsx` covers passive-effect ordering outside React `act`.
 - TESTS: `selection-controls.spec.tsx` (both surfaces, providers, focus, isolated grids, header teardown); `control-bridge.spec.tsx` (mixed outputs); `selection-types.spec.tsx` (JSX vs core DOM contract, unrelated feature keys).
 
 ## react-overlay-editors (`useGridOverlay`)

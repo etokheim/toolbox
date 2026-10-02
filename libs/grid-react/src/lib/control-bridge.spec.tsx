@@ -11,6 +11,22 @@ afterEach(() => {
   document.body.innerHTML = '';
 });
 
+it('requires an explicit portal owner for JSX but not DOM output', () => {
+  const grid = document.createElement('div');
+  const jsx = createControlBridge(() => <button>React</button>);
+  expect(() => jsx({ grid })).toThrow('owning DataGrid PortalManager');
+  const dom = document.createElement('button');
+  const result = createControlBridge(() => dom)({ grid });
+  if (!result || result instanceof HTMLElement) throw new Error('Expected persistent bridge.');
+  expect(result.element.firstElementChild).toBe(dom);
+  result.dispose?.();
+});
+
+it('rejects undefined output rather than substituting a default control', () => {
+  const renderer = createControlBridge(() => undefined);
+  expect(() => renderer({ grid: document.createElement('div') })).toThrow('not undefined');
+});
+
 it('switches JSX, DOM and null without wiping React-owned descendants', async () => {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
   const rootHost = document.createElement('div');
@@ -38,6 +54,10 @@ it('switches JSX, DOM and null without wiping React-owned descendants', async ()
     await act(async () => result.update({ grid, checked: true }));
     expect(grid.firstElementChild?.firstElementChild).toBe(dom);
     expect(portalNode.isConnected).toBe(false);
+    const replaceChildren = vi.spyOn(result.element, 'replaceChildren');
+    await act(async () => result.update({ grid, checked: false }));
+    expect(replaceChildren).not.toHaveBeenCalled();
+    replaceChildren.mockRestore();
     output = null;
     await act(async () => result.update({ grid, checked: false }));
     expect(grid.textContent).toBe('');

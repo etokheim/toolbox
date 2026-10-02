@@ -129,6 +129,7 @@ function createMockGrid(overrides = {}) {
 
 - Use existing `react-dom/client.createRoot` + React `act` fixtures; the workspace does not install `@testing-library/react`.
 - Finish `await act(() => root.render(...))` before polling for the new DOM in another `act`. Polling inside the render's uncompleted `act` can prevent React from committing and time out.
+- For a reproduced layout-effect/passive-effect ordering race, also test normal rendering outside `act`: it can change promise/effect ordering and mask the bug. Isolate `IS_REACT_ACT_ENVIRONMENT = false`, restore it in `finally`, unmount explicitly and allow scheduled work to settle. Keep ordinary interaction tests inside `act`.
 - Mock grid element with `vi.fn()` for hooks and adapter tests
 
 #### Vue Adapter (`libs/grid-vue/`)

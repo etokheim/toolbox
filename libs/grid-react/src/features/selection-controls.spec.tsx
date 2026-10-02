@@ -80,11 +80,12 @@ describe('React selection checkbox controls', () => {
         rowCheckboxRenderer: (context) => <Checkbox context={context} />,
         headerCheckboxRenderer: (context) => <Checkbox context={context} />,
       };
-      const app = (selection: SelectionConfig<Row>) => (
+      const app = (selection: SelectionConfig<Row>, sortable = false) => (
         <Provider.Provider value="scoped">
           <DataGrid<Row>
             rows={rows}
             columns={columns}
+            sortable={sortable}
             {...(surface === 'prop' ? { selection } : { gridConfig: { features: { selection } } })}
           />
         </Provider.Provider>
@@ -108,22 +109,75 @@ describe('React selection checkbox controls', () => {
       expect(document.activeElement).toBe(input);
       expect(unmounts).not.toHaveBeenCalled();
 
-      await act(async () => {
-        root.render(
-          app({
-            ...config,
-            rowCheckboxRenderer: (context) => <button aria-label={`New ${context.ariaLabel}`}>New</button>,
-          }),
-        );
-      });
+      const replacement: SelectionConfig<Row> = {
+        ...config,
+        rowCheckboxRenderer: (context) => <button aria-label={`New ${context.ariaLabel}`}>New</button>,
+        headerCheckboxRenderer: (context) => <button aria-label={`New ${context.ariaLabel}`}>Header</button>,
+      };
+      await act(async () => root.render(app(replacement)));
       await act(async () => {
         await vi.waitFor(() => expect(grid.querySelector('.rows button')?.textContent).toBe('New'));
       });
       expect(grid.getPluginByName('selection')).toBe(plugin);
       expect(plugin.getSelectedRowIndices()).toEqual([0]);
-      expect(unmounts).toHaveBeenCalledTimes(2);
+      expect(unmounts).toHaveBeenCalledTimes(3);
+
+      await act(async () => root.render(app(replacement, true)));
+      await act(async () => {
+        await vi.waitFor(() => expect(grid.effectiveConfig.sortable).toBe(true));
+        await new Promise(requestAnimationFrame);
+        await new Promise(requestAnimationFrame);
+      });
+      expect(grid.querySelector('.rows button')?.textContent).toBe('New');
+      expect(grid.querySelector('.header-row button')?.textContent).toBe('Header');
     },
   );
+
+  it('retains the latest callbacks when passive config effects rebuild outside act', async () => {
+    const previousActEnvironment = Reflect.get(globalThis, 'IS_REACT_ACT_ENVIRONMENT');
+    Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: false });
+    const container = document.createElement('div');
+    document.body.append(container);
+    const root = createRoot(container);
+    const first = () => <button>First</button>;
+    const latest = () => <button>Latest</button>;
+    const app = (renderer: typeof first, sortable = false) => (
+      <DataGrid
+        rows={rows}
+        columns={columns}
+        sortable={sortable}
+        gridConfig={{
+          features: {
+            selection: {
+              mode: 'row',
+              checkbox: true,
+              rowCheckboxRenderer: renderer,
+              headerCheckboxRenderer: renderer,
+            },
+          },
+        }}
+      />
+    );
+    // act() flushes the ready continuation after passive effects, masking this ordering bug.
+    const settle = () => new Promise((resolve) => setTimeout(resolve, 150));
+    try {
+      root.render(app(first));
+      await settle();
+      const grid = container.querySelector(DataGridElement.activeTag) as DataGridElement<Row>;
+      expect(grid.querySelector('.rows button')?.textContent).toBe('First');
+      root.render(app(latest));
+      await settle();
+      expect(grid.querySelector('.rows button')?.textContent).toBe('Latest');
+      root.render(app(latest, true));
+      await settle();
+      expect(grid.effectiveConfig.sortable).toBe(true);
+      expect(grid.querySelector('.rows button')?.textContent).toBe('Latest');
+      expect(grid.querySelector('.header-row button')?.textContent).toBe('Latest');
+    } finally {
+      root.unmount();
+      Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: previousActEnvironment });
+    }
+  });
 
   it('isolates two React owners and explicitly cleans up rebuilt headers', async () => {
     const config: SelectionConfig<Row> = {
