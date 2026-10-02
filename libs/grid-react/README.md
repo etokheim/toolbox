@@ -225,6 +225,38 @@ function EmployeeGrid({ employees }: { employees: Employee[] }) {
 
 ## Custom Cell Renderers
 
+### Custom drag handles
+
+Import `@toolbox-web/grid-react/features/row-drag-drop` and use the typed
+`RowDragDropConfig<T>.dragHandleRenderer` on either the feature prop or
+`gridConfig.features.rowDragDrop`. Return JSX, an HTMLElement, a persistent
+ControlView, or intentional null. Omission preserves the default grip.
+
+Each returned output owns its binding callback: do not reuse one from a retired
+output. JSX/DOM transitions retire old refs without detaching the successor.
+Persistent `ControlView.update` keeps its binding; JSX component state survives
+portal updates. Calling the current `bindHandle(null)` still detaches its handle.
+Removing the ref in a later renderer result also detaches it when React retains
+the same DOM node; adding the ref again restores native drag and move-menu handling.
+Retiring-ref cleanup runs in a microtask so a same-commit replacement retains its
+binding and open menu. Calling `bindHandle(null)` on the active output remains synchronous.
+
+```tsx
+rowDragDrop={{
+  dragHandleRenderer: (ctx) => (
+    <button ref={ctx.bindHandle} type="button" aria-label={ctx.ariaLabel}
+      aria-disabled={ctx.disabled}><GripIcon aria-hidden /></button>
+  ),
+}}
+```
+
+Register one HTML root; nested SVG is supported. Native drag, click-to-menu and
+Ctrl-arrow wiring belong to the plugin, not consumer handlers. Providers and the
+owning grid flow through stable portals. Renderer updates preserve plugin state
+and columns. `canDrag` must be pure because custom control refresh evaluates it;
+destination vetoes remain separate. Manual core plugins remain DOM-only.
+See the [drag controls guide](https://toolboxjs.com/grid/plugins/row-drag-drop/#custom-drag-controls).
+
 There are two ways to define custom renderers: inline in the configuration, or via `GridColumn` components.
 
 ### Inline Configuration (Recommended)

@@ -37,7 +37,7 @@ import type {
   PivotConfig,
   PrintConfig,
   ReorderConfig,
-  RowDragDropConfig,
+  RowDragDropConfig as CoreRowDragDropConfig,
   SelectionConfig as CoreSelectionConfig,
   ServerSideConfig,
   StickyRowsConfig,
@@ -57,6 +57,14 @@ import type { ControlView } from '@toolbox-web/grid';
 import type { SelectionHeaderCheckboxContext, SelectionRowCheckboxContext } from '@toolbox-web/grid/plugins/selection';
 import type { TreeDisclosureContext } from '@toolbox-web/grid/plugins/tree';
 import type { MasterDetailDisclosureContext } from '@toolbox-web/grid/plugins/master-detail';
+import type { RowDragHandleContext } from '@toolbox-web/grid/plugins/row-drag-drop';
+
+/** Native drag controls rendered through the owning DataGrid's providers. @since 2.7.0 */
+export interface RowDragDropConfig<TRow = unknown> extends Omit<CoreRowDragDropConfig<TRow>, 'dragHandleRenderer'> {
+  dragHandleRenderer?: (
+    context: RowDragHandleContext<TRow>,
+  ) => Exclude<ReactNode, undefined> | HTMLElement | ControlView<RowDragHandleContext<TRow>>;
+}
 
 /** Tree disclosure rendered through the owning DataGrid's providers. @since 2.7.0 */
 export type TreeConfig<TRow = unknown> = Omit<CoreTreeConfig<TRow>, 'disclosureRenderer'> & {

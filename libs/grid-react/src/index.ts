@@ -55,11 +55,13 @@ export type {
   PinnedRowSlot,
   PinnedRowsConfig,
   SelectionConfig,
+  RowDragDropConfig,
   ResponsivePluginConfig,
   ZonedPanelRender,
 } from './lib/feature-props';
 export type { TreeDisclosureContext } from '@toolbox-web/grid/plugins/tree';
 export type { MasterDetailDisclosureContext } from '@toolbox-web/grid/plugins/master-detail';
+export type { RowDragHandleContext } from '@toolbox-web/grid/plugins/row-drag-drop';
 
 // Column shorthand type & helpers (for typing column arrays with shorthand syntax)
 export {

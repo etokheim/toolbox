@@ -99,6 +99,21 @@ function EmployeeGrid() {
 
 ## Enabling Features with Props
 
+RowDragDrop supports `RowDragDropConfig<T>.dragHandleRenderer` on both the feature
+prop and `gridConfig.features`. Import `@toolbox-web/grid-react/features/row-drag-drop`,
+return JSX and attach `ref={context.bindHandle}` to one HTML control. The plugin
+owns native drag, move-menu and Ctrl-arrow behaviour; providers flow through
+stable portals. Manual core plugins remain DOM-only.
+Each renderer output owns its binding callback; do not reuse a callback from a
+retired output. JSX/DOM handoffs cannot let an old ref detach the successor,
+while the current `bindHandle(null)` still detaches its handle. Persistent
+`ControlView.update` retains its binding and JSX component state survives portal updates.
+A later renderer result may remove the ref without replacing the DOM node:
+that node stops handling drag and move-menu actions until the ref is added again.
+Retiring-ref cleanup runs in a microtask so same-commit replacement preserves the
+binding and open menu; `bindHandle(null)` on the active output detaches synchronously.
+See [custom drag controls](/grid/plugins/row-drag-drop/#custom-drag-controls).
+
 Selection supports typed `rowCheckboxRenderer` and `headerCheckboxRenderer` JSX
 hooks through both the `selection` prop and `gridConfig.features.selection`.
 They share the DataGrid portal manager and inherit app/grid providers; manually

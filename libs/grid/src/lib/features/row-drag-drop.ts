@@ -15,9 +15,9 @@ import { RowDragDropPlugin, type RowDragDropConfig } from '../plugins/row-drag-d
 import { registerFeature } from './registry';
 
 declare module '../core/types' {
-  interface FeatureConfig {
+  interface FeatureConfig<TRow = unknown> {
     /** Enable row drag-drop (intra-grid + optional cross-grid via `dropZone`). */
-    rowDragDrop?: boolean | RowDragDropConfig;
+    rowDragDrop?: boolean | RowDragDropConfig<TRow>;
   }
 }
 

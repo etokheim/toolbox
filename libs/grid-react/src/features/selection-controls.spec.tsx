@@ -70,6 +70,32 @@ async function mount(node: React.ReactNode) {
 }
 
 describe('React selection checkbox controls', () => {
+  it('preserves unscoped selection actions through same-callback JSX/DOM transitions', async () => {
+    let dom = false;
+    const selection: SelectionConfig<Row> = {
+      mode: 'row',
+      checkbox: true,
+      headerCheckboxRenderer: (context) => <Checkbox context={context} />,
+      rowCheckboxRenderer: (context) => {
+        if (!dom) return <Checkbox context={context} />;
+        const button = document.createElement('button');
+        button.dataset['selectionDom'] = context.row.id;
+        button.onclick = () => context.setChecked(!context.checked);
+        return button;
+      },
+    };
+    const { grid } = await mount(<DataGrid rows={rows} columns={columns} selection={selection} />);
+    const plugin = grid.getPluginByName('selection');
+    if (!plugin) throw new Error('Missing selection plugin');
+    dom = true;
+    await act(async () => plugin.afterRender());
+    await act(async () => grid.querySelector<HTMLButtonElement>('[data-selection-dom="a"]')?.click());
+    expect(plugin.getSelectedRowIndices()).toEqual([0]);
+    dom = false;
+    await act(async () => plugin.afterRender());
+    expect(grid.querySelector<HTMLInputElement>('.rows [data-provider]')?.checked).toBe(true);
+  });
+
   it.each(['prop', 'config'] as const)(
     'preserves providers, focus and selection on callback-only %s replacements',
     async (surface) => {

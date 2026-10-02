@@ -130,6 +130,42 @@ afterEach(async () => {
 });
 
 describe('React disclosure controls', () => {
+  it('preserves unscoped disclosure actions through same-callback JSX/DOM transitions', async () => {
+    let dom = false;
+    const renderer = (kind: string) => (context: TreeDisclosureContext<Row> | MasterDetailDisclosureContext<Row>) => {
+      if (!dom) return <Disclosure context={context} kind={kind} version="mixed" />;
+      const button = document.createElement('button');
+      button.dataset['disclosureDom'] = `${kind}-${context.row.id}`;
+      button.onclick = () => context.setExpanded(!context.expanded);
+      return button;
+    };
+    const { grid } = await mount(
+      <DataGrid
+        rows={rows}
+        gridConfig={{ columns }}
+        tree={{ animation: false, treeColumn: 'name', disclosureRenderer: renderer('tree') }}
+        masterDetail={{ animation: false, detailRenderer, disclosureRenderer: renderer('detail') }}
+      />,
+    );
+    const tree = grid.getPluginByName('tree');
+    const detail = grid.getPluginByName('masterDetail');
+    if (!tree || !detail) throw new Error('Missing disclosure plugins');
+    dom = true;
+    tree.afterRender();
+    detail.afterRender();
+    grid.querySelector<HTMLButtonElement>('[data-disclosure-dom="tree-p"]')?.click();
+    await vi.waitFor(() => expect(grid.querySelector('[data-name="Child"]')).not.toBeNull());
+    grid.querySelector<HTMLButtonElement>('[data-disclosure-dom="detail-p"]')?.click();
+    await vi.waitFor(() => expect(grid.querySelector('[data-detail]')).not.toBeNull());
+    dom = false;
+    tree.afterRender();
+    detail.afterRender();
+    await vi.waitFor(() =>
+      expect(grid.querySelector('[data-control="tree"]')?.getAttribute('aria-expanded')).toBe('true'),
+    );
+    expect(grid.querySelector('[data-control="detail"]')?.getAttribute('aria-expanded')).toBe('true');
+  });
+
   it.each(['props', 'config'] as const)(
     'preserves independent slots and latest callbacks outside act (%s)',
     async (surface) => {
@@ -247,7 +283,7 @@ describe('React disclosure controls', () => {
   it('preserves light-DOM detail precedence and leaves the core factory DOM-only', async () => {
     const vanilla = () => document.createElement('article');
     const plugin = createPluginFromFeature('masterDetail', { detailRenderer: vanilla }) as MasterDetailPlugin;
-    expect(plugin.userConfig.detailRenderer).toBe(vanilla);
+    expect(plugin.resolvedConfig.detailRenderer).toBe(vanilla);
     const { grid } = await mount(
       <DataGrid rows={rows} gridConfig={{ columns }} {...config('A')}>
         <GridDetailPanel>{() => <section data-child-detail>Child wins</section>}</GridDetailPanel>

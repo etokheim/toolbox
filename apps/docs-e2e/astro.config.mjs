@@ -47,6 +47,10 @@ export default defineConfig({
     resolve: {
       alias: {
         ...gridAliases(),
+        '@toolbox-web/grid-react/features/row-drag-drop': resolve(
+          rootDir,
+          'libs/grid-react/src/features/row-drag-drop.ts',
+        ),
         '@toolbox-web/grid-react/features/cell-entry': resolve(rootDir, 'libs/grid-react/src/features/cell-entry.ts'),
         '@toolbox-web/grid-react/features/editing': resolve(rootDir, 'libs/grid-react/src/features/editing.ts'),
         '@toolbox-web/grid-react/features/selection': resolve(rootDir, 'libs/grid-react/src/features/selection.ts'),
