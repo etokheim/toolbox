@@ -482,6 +482,15 @@ function AutocompleteEditor({ value, commit, cancel }: GridEditorContext<MyRow>)
 
 The grid host is also exposed on `ColumnEditorContext.grid` for editors that need to call grid APIs directly without using the hook.
 
+## Single-Cell Entry
+
+For opt-in [Cell Entry](/grid/plugins/cell-entry/), import
+`@toolbox-web/grid-react/features/cell-entry` alongside the Editing and Selection
+features. Set `cellEntry={{ singleClick: true }}`,
+`editing={{ editOn: 'manual', tabToEdit: true }}` and `selection="range"`.
+Alternatively, pass these same keys in `gridConfig.features` for cross-framework
+configuration. Existing custom editors keep their commit/close contracts.
+
 ## Manual Plugin Instantiation
 
 Feature props are the recommended path. Use manual plugin instantiation only when you need a third-party plugin or a configuration the feature prop doesn't expose. Feature props and manual plugins can be mixed — the grid merges them.

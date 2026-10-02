@@ -1,0 +1,41 @@
+<div id="cell-entry-default-demo">
+  <p>Click a value or press Enter/F2 to edit. Tab continues; Escape discards the current edit. The middle row is read-only.</p>
+  <button type="button" id="cell-entry-before">Before grid</button>
+  <tbw-grid aria-label="Cell entry example"></tbw-grid>
+  <button type="button" id="cell-entry-after">After grid</button>
+</div>
+
+<script>
+  import { queryGrid } from '@toolbox-web/grid';
+  import '@toolbox-web/grid/features/cell-entry';
+  import '@toolbox-web/grid/features/editing';
+  import '@toolbox-web/grid/features/selection';
+
+  type Person = { id: string; name: string; team: string; locked?: boolean };
+  const grid = queryGrid<Person>('#cell-entry-default-demo tbw-grid');
+  if (!grid) throw new Error('Cell entry demo grid not found');
+  grid.gridConfig = {
+    columns: [
+      { field: 'name', header: 'Name', editable: true },
+      { field: 'team', header: 'Team', editable: true },
+    ],
+    rowEditable: (row) => !row.locked,
+    features: {
+      editing: { editOn: 'manual', tabToEdit: true },
+      selection: 'range',
+      cellEntry: { singleClick: true },
+    },
+  };
+  grid.rows = [
+    { id: 'alice', name: 'Alice', team: 'Engineering' },
+    { id: 'bob', name: 'Bob', team: 'Design', locked: true },
+    { id: 'carol', name: 'Carol', team: 'Support' },
+  ];
+</script>
+
+<style>
+  #cell-entry-default-demo button {
+    min-height: 24px;
+    margin-block: 8px;
+  }
+</style>

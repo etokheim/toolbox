@@ -1,0 +1,122 @@
+---
+title: Cell Entry Plugin
+description: Opt-in single-cell click and keyboard entry with Tab continuation.
+---
+
+import CellEntryDefaultDemo from '@components/demos/cell-entry/CellEntryDefaultDemo.astro';
+import ShowSource from '@components/ShowSource.astro';
+
+## Installation
+
+```ts
+import '@toolbox-web/grid/features/editing';
+import '@toolbox-web/grid/features/selection';
+import '@toolbox-web/grid/features/cell-entry';
+```
+
+CellEntry owns activation only. [Editing](/grid/plugins/editing/) owns the editor
+lifecycle; [Selection](/grid/plugins/selection/) owns cell/range state.
+
+## Basic Usage
+
+```ts
+grid.gridConfig = {
+  columns: [{ field: 'name', editable: true }],
+  features: {
+    editing: { mode: 'row', editOn: 'manual', tabToEdit: true },
+    selection: 'range',
+    cellEntry: { singleClick: true },
+  },
+};
+```
+
+Use the declarative feature API unless you manage plugin instances directly.
+The equivalent manual configuration uses `CellEntryPlugin` from
+`@toolbox-web/grid/plugins/cell-entry`, `EditingPlugin` and `SelectionPlugin`.
+Do not configure both paths for the same plugin.
+
+| Path | Trade-off |
+| --- | --- |
+| `features.cellEntry` (recommended) | Declarative configuration shared by all frameworks |
+| `new CellEntryPlugin(config)` | Direct instance ownership; configure both dependencies explicitly |
+
+<ShowSource component="cell-entry/CellEntryDefaultDemo">
+  <CellEntryDefaultDemo />
+</ShowSource>
+
+## Configuration Options
+
+See [`CellEntryConfig`](./interfaces/cellentryconfig/) and
+[`EditingConfig`](/grid/plugins/editing/interfaces/editingconfig/) for options.
+
+`singleClick` and Editing's `tabToEdit` are both off by default. CellEntry requires
+row-mode Editing with `editOn: 'manual'` and Selection mode `'cell'` or `'range'`
+with the default click trigger. `editOn: false` disables entry without removing
+column configuration. Missing dependencies and conflicting triggers raise grid
+diagnostics.
+
+| Input | Behaviour |
+| --- | --- |
+| Enter / F2 | Open the focused eligible cell |
+| Ordinary click, `singleClick: true` | Select first, then open only that cell |
+| Modifier click / drag / long press | Selection only |
+| Tab / Shift+Tab, `tabToEdit: true` | Commit, close the previous editor, open the next/previous editable cell |
+| Tab at the last eligible cell / Shift+Tab at the first | Commit and leave the grid; no wrapping |
+| Escape | Retain Editing's cancel/rollback behaviour |
+| Printable keys / Delete / Backspace | No new activation, seeding or clearing |
+
+Traversal uses displayed rows and visible columns, skipping read-only rows/cells,
+utility columns and loading placeholders. Ordinary client-side rows are the
+supported scope; this is not a new mixed-row-model editing contract.
+
+`tabToEdit` also works with F2 or `editing.beginCellEdit()` without CellEntry.
+Existing row-wide and grid-wide editing keep their current Tab behaviour.
+
+## Framework Configuration
+
+React and Vue expose the same `cellEntry` boolean/config prop after importing
+`@toolbox-web/grid-react/features/cell-entry` or
+`@toolbox-web/grid-vue/features/cell-entry`. Import each framework's Editing and
+Selection features too. For example, React:
+
+```tsx
+<DataGrid
+  rows={rows}
+  columns={columns}
+  selection="range"
+  editing={{ editOn: 'manual', tabToEdit: true }}
+  cellEntry={{ singleClick: true }}
+/>
+```
+
+Angular's attribute form uses `GridCellEntryDirective` from
+`@toolbox-web/grid-angular/features/cell-entry`, alongside `Grid`,
+`GridEditingDirective` and `GridSelectionDirective` in component `imports`.
+Bind `[cellEntry]="{ singleClick: true }"`, `[editing]="{ editOn: 'manual', tabToEdit: true }"`
+and `[selection]="'range'"`. All three adapters can instead pass the shared
+`gridConfig.features` object above. No framework-specific editor API is added.
+
+## Events
+
+The existing cancelable `cell-activate` can veto entry. Editor commit, row commit,
+`before-edit-close` and edit-open/close events retain Editing's existing semantics.
+A commit veto rejects/reverts values but still closes the editor; use the existing
+`onBeforeEditClose` contract to prevent leaving an editor.
+
+## Accessibility
+
+[SC 2.1.1 Keyboard](https://www.w3.org/WAI/WCAG22/Understanding/keyboard.html):
+Enter/F2 provides keyboard entry, and Escape cancels. Editing continues to supply
+column-based editor names and edit announcements. Native links/controls, nested
+interactive content, IME composition and custom-editor event cancellation retain
+their own interaction.
+
+[SC 2.1.2 No Keyboard Trap](https://www.w3.org/WAI/WCAG22/Understanding/no-keyboard-trap.html):
+boundary Tab/Shift+Tab leaves the grid using browser focus navigation.
+Custom overlays can still veto closing through Editing's existing contract.
+
+## See Also
+
+- [Editing](/grid/plugins/editing/)
+- [Selection](/grid/plugins/selection/)
+- [Accessibility](/grid/guides/accessibility/)

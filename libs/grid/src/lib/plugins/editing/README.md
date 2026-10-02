@@ -48,6 +48,21 @@ Click/double-click a row to enter edit mode. One row at a time.
 
 All editable cells always show editors (spreadsheet-like).
 
+## Single-Cell Entry
+
+For F2/programmatic single-cell editing, Tab closes without continuing by default.
+Set `tabToEdit: true` to continue with Tab/Shift+Tab, skipping non-editable cells and
+leaving the grid at the outer boundary. This does not change row/grid-wide editing.
+For optional single-click/Enter cell entry, use [Cell Entry](../cell-entry/README.md)
+with `editOn: 'manual'`.
+
+## Accessibility
+
+[SC 2.1.1 Keyboard](https://www.w3.org/WAI/WCAG22/Understanding/keyboard.html):
+F2 opens one cell and Escape cancels it; editors receive column-based accessible
+names. With `tabToEdit`, boundary Tab/Shift+Tab leaves the grid, supporting
+[SC 2.1.2 No Keyboard Trap](https://www.w3.org/WAI/WCAG22/Understanding/no-keyboard-trap.html).
+
 ## Column Configuration
 
 | Property       | Type                                  | Description                                        |

@@ -32,6 +32,7 @@ import './clipboard';
 import './column-virtualization';
 import './context-menu';
 import './editing';
+import './cell-entry';
 import './export';
 import './filtering';
 import './grouping-columns';

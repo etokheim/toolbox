@@ -354,6 +354,21 @@ The demo above uses `editOn: 'click'` — a single click enters edit mode.
 Use **F2** when you only need to edit one cell without activating editors on the entire row.
 :::
 
+## Single-Cell Entry
+
+F2/programmatic single-cell entry retains close-only Tab by default. Set
+`tabToEdit: true` to commit and continue with Tab/Shift+Tab. Traversal skips
+read-only rows/cells and leaves the grid at the outer boundary rather than
+wrapping. For opt-in single-click/Enter cell entry, configure
+[Cell Entry](/grid/plugins/cell-entry/) with `editOn: 'manual'`.
+
+## Accessibility
+
+[SC 2.1.1 Keyboard](https://www.w3.org/WAI/WCAG22/Understanding/keyboard.html):
+F2 opens one cell and Escape cancels it. Editors receive column-based accessible
+names and edit announcements. Opt-in `tabToEdit` leaves the grid at either boundary,
+supporting [SC 2.1.2 No Keyboard Trap](https://www.w3.org/WAI/WCAG22/Understanding/no-keyboard-trap.html).
+
 ## Grid Mode (Spreadsheet-like Editing)
 
 For data entry forms or spreadsheet-like interfaces, use `mode: 'grid'` to make all editable cells show their editors at all times:

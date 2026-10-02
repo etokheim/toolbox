@@ -43,6 +43,12 @@ bun nx test grid-vue --coverage
 
 ## Step 2: Identify Gaps
 
+For a focused rerun, inspect the project's test executor first. Legacy
+`@nx/vitest:test` targets accept `--testFile=<repo-relative path>`; inferred
+Vitest targets (for example grid-vue) forward CLI options and require
+`bun nx test grid-vue --run src/features/cell-entry.spec.ts` instead.
+Do not assume a positional path filtered a legacy target: check its test-file count.
+
 Review the coverage report to identify uncovered:
 
 - **Branches** (if/else, switch, ternary)

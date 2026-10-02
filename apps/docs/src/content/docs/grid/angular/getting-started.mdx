@@ -375,6 +375,16 @@ export const appConfig = {
 };
 ```
 
+## Single-Cell Entry
+
+For opt-in [Cell Entry](/grid/plugins/cell-entry/), add `GridCellEntryDirective`
+from `@toolbox-web/grid-angular/features/cell-entry` alongside the Editing and
+Selection directives. Set `[cellEntry]="{ singleClick: true }"`,
+`[editing]="{ editOn: 'manual', tabToEdit: true }"` and `[selection]="'range'"`.
+Alternatively, use `gridConfig.features` with the same keys and side-effect feature
+imports; attribute directives are then unnecessary. Existing custom editors retain
+their commit/close contracts.
+
 ## Manual Plugin Instantiation
 
 While feature inputs are recommended, you can instantiate plugins manually for custom configurations or third-party plugins:

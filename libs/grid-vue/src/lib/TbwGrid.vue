@@ -32,6 +32,7 @@ import type {
   DirtyChangeDetail,
   EditCloseDetail,
   EditOpenDetail,
+  EditingConfig,
   ExportCompleteDetail,
   ExportConfig,
   FilterChangeDetail,
@@ -65,6 +66,7 @@ import type {
   RowTransferDetail,
   SelectionChangeDetail,
   SelectionConfig,
+  CellEntryConfig,
   ServerSideConfig,
   SortChangeDetail,
   StickyRowsConfig,
@@ -253,9 +255,14 @@ const props = defineProps({
     type: [String, Object] as PropType<'cell' | 'row' | 'range' | SelectionConfig<TRow>>,
     default: undefined,
   },
+  /** Opt-in single-cell entry; requires manual editing and cell/range selection. */
+  cellEntry: {
+    type: [Boolean, Object] as PropType<boolean | CellEntryConfig>,
+    default: undefined,
+  },
   /** Enable inline cell editing */
   editing: {
-    type: [Boolean, String] as PropType<boolean | 'click' | 'dblclick' | 'manual'>,
+    type: [Boolean, String, Object] as PropType<boolean | 'click' | 'dblclick' | 'manual' | EditingConfig>,
     default: undefined,
   },
   /** Enable clipboard copy/paste */

@@ -83,6 +83,7 @@ export function clearFeaturePropKeys(): void {
 const BUILTIN_FEATURE_PROP_KEYS: readonly FeatureName[] = [
   'selection',
   'editing',
+  'cellEntry',
   'filtering',
   'multiSort',
   'clipboard',
