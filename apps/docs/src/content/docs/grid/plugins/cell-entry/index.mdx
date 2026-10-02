@@ -55,6 +55,13 @@ with the default click trigger. `editOn: false` disables entry without removing
 column configuration. Missing dependencies and conflicting triggers raise grid
 diagnostics.
 
+Selection's checkbox column requires `'row'` selection, so it cannot be combined
+with CellEntry in the same grid. Row-selection checkboxes can use Editing without
+CellEntry; independent batch-checkbox and cell/range selection are not provided.
+Custom Tree and MasterDetail disclosures retain their own click/Enter/Space
+activation, while disclosure navigation keys move from their actual cell without
+opening an editor.
+
 | Input | Behaviour |
 | --- | --- |
 | Enter / F2 | Open the focused eligible cell |

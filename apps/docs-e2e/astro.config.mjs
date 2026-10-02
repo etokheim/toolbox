@@ -47,6 +47,8 @@ export default defineConfig({
     resolve: {
       alias: {
         ...gridAliases(),
+        '@toolbox-web/grid-react/features/cell-entry': resolve(rootDir, 'libs/grid-react/src/features/cell-entry.ts'),
+        '@toolbox-web/grid-react/features/editing': resolve(rootDir, 'libs/grid-react/src/features/editing.ts'),
         '@toolbox-web/grid-react/features/selection': resolve(rootDir, 'libs/grid-react/src/features/selection.ts'),
         '@toolbox-web/grid-react/features/tree': resolve(rootDir, 'libs/grid-react/src/features/tree.ts'),
         '@toolbox-web/grid-react/features/master-detail': resolve(

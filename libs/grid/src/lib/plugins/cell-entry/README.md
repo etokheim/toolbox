@@ -55,6 +55,10 @@ close veto. Custom editors must continue using the existing commit and
 CellEntry requires row-mode Editing with `editOn: 'manual'` (or `false` to disable
 entry) and click-triggered cell/range Selection. Conflicting configuration and
 missing dependencies produce grid diagnostics, not competing activation handlers.
+Selection checkbox columns require row selection and therefore cannot share a
+grid with CellEntry. Use row checkboxes with Editing without CellEntry; independent
+batch-checkbox and cell/range selection are not provided. Custom Tree/MasterDetail
+disclosures retain control activation and navigation without opening cell editors.
 
 Printable-key seeding, Delete/Backspace clearing, fill handles and new history
 behaviour are not provided.

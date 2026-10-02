@@ -6,7 +6,7 @@ import { DEMOS, waitForGridReady } from './utils';
 test('React — F2 Tab continuation preserves controlled editors and overlay vetoes', async ({ page }) => {
   const errors: string[] = [];
   page.on('pageerror', (error) => errors.push(error.message));
-  await page.goto(DEMOS.react);
+  await page.goto(process.env.TBW_REACT_DEMO_URL ?? DEMOS.react);
   await waitForGridReady(page);
   const grid = page.locator('tbw-grid').first();
   await grid.evaluate((element) => {
