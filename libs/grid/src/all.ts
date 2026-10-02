@@ -13,6 +13,7 @@
 // when consumers only import '@toolbox-web/grid/all'. Keep these BEFORE
 // any core/public imports so the resolver is available before <tbw-grid>
 // upgrades and initializes plugins.
+import './lib/features/cell-entry';
 import './lib/features/clipboard';
 import './lib/features/column-virtualization';
 import './lib/features/context-menu';
@@ -51,6 +52,7 @@ export type { CellClickEvent } from './lib/core/plugin/base-plugin';
 export type { GridPlugin } from './lib/core/types';
 
 // All plugins - each plugin's index.ts exports its class and types
+export * from './lib/plugins/cell-entry';
 export * from './lib/plugins/clipboard';
 export * from './lib/plugins/column-virtualization';
 export * from './lib/plugins/context-menu';

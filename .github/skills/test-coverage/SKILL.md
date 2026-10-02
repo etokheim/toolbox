@@ -43,6 +43,12 @@ bun nx test grid-vue --coverage
 
 ## Step 2: Identify Gaps
 
+For a focused rerun, inspect the project's test executor first. Legacy
+`@nx/vitest:test` targets accept `--testFile=<repo-relative path>`; inferred
+Vitest targets (for example grid-vue) forward CLI options and require
+`bun nx test grid-vue --run src/features/cell-entry.spec.ts` instead.
+Do not assume a positional path filtered a legacy target: check its test-file count.
+
 Review the coverage report to identify uncovered:
 
 - **Branches** (if/else, switch, ternary)
@@ -146,6 +152,19 @@ function createMockGrid(overrides = {}) {
 4. **Mock `document.execCommand`** when testing clipboard (not in happy-dom)
 5. **Run tests through Nx**: core/React's `@nx/vitest:test` executor accepts `--testFiles=path1,path2`. Confirm the reported file count; positional paths can run the whole suite. Inferred Vitest targets instead use normal CLI positional filters.
 6. **Never use `npx vitest`** directly — always use `bun nx test <project>`
+
+### Public generic type regressions
+
+Vitest transpiles specs without typechecking them, and library `typecheck` targets may exclude
+specs. Compile public API fixtures explicitly with
+`bun nx exec --projects=<project> --excludeTaskDependencies -- bunx tsc -p <absolute-fixture-config>`.
+Without both scope flags, `nx exec` can repeat the command across projects/dependencies.
+Use positive `expectTypeOf<Row>()` assertions plus negative `@ts-expect-error` invalid-field
+accesses to catch both erased `unknown` and widened `any`. Check both source aliases and
+rebuilt emitted package declarations; include direct adapter props and canonical
+`GridConfig<Row>.features` so generic feature augmentation cannot silently erase `Row`.
+Auxiliary source configs should retain each source project's compiler assumptions rather
+than applying an adapter-only restriction to the entire core dependency graph.
 
 ### happy-dom gotchas (layout, timers, plugin identity)
 

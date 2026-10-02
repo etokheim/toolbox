@@ -455,6 +455,11 @@ const order = grid.getColumnOrder();
 
 ### Editing Methods
 
+For opt-in single-cell activation, use [CellEntry](/grid/plugins/cell-entry/) with
+[`CellEntryConfig`](/grid/plugins/cell-entry/interfaces/cellentryconfig/).
+[`EditingConfig.tabToEdit`](/grid/plugins/editing/interfaces/editingconfig/#tabtoedit)
+adds Tab/Shift+Tab continuation to the existing single-cell lifecycle; it is off by default.
+
 Bulk-edit lifecycle, change tracking, and active-row controls are provided by the **Editing plugin** and surfaced on the grid instance when the plugin is loaded. See [Editing Plugin → Imperative Bulk-Edit API](/grid/plugins/editing/#imperative-bulk-edit-api) for the full method list and examples.
 
 ### Plugin Methods

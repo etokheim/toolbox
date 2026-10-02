@@ -413,6 +413,15 @@ export interface EditingConfig {
   mode?: 'row' | 'grid';
 
   /**
+   * Continue single-cell edits (F2 or CellEntry) with Tab/Shift+Tab.
+   * Skips non-editable cells and rows; at the boundary, commits and leaves
+   * the grid. Row/grid editing and the default close-only F2 behavior are unchanged.
+   * @default false
+   * @since 3.9.0
+   */
+  tabToEdit?: boolean;
+
+  /**
    * Enable per-row dirty tracking against deep-cloned baselines.
    *
    * When `true`, the plugin captures a `structuredClone` snapshot of each

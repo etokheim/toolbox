@@ -37,7 +37,7 @@ function lint(projects: string[]): string {
   try {
     return execFileSync(
       'bun',
-      ['nx', 'run-many', '-t', 'lint', `--projects=${projects.join(',')}`, '--skip-nx-cache'],
+      ['nx', 'run-many', '-t', 'lint', `--projects=${projects.join(',')}`, '--skip-nx-cache', '--output-style=static'],
       { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 },
     );
   } catch (err) {

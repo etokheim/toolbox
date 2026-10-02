@@ -21,6 +21,7 @@
 // Types that the React adapter re-exports under their canonical (unprefixed)
 // name are imported with a `Core*` alias to avoid a local naming collision.
 import type {
+  CellEntryConfig,
   ClipboardConfig,
   ColumnVirtualizationConfig,
   ContextMenuConfig,
@@ -281,6 +282,13 @@ export interface FeatureProps<TRow = unknown> {
    * ```
    */
   editing?: boolean | 'click' | 'dblclick' | 'manual' | EditingConfig;
+
+  /**
+   * Single-cell keyboard entry; optional single click. Requires manual Editing
+   * and cell/range Selection, plus the `features/cell-entry` import.
+   * @since 2.7.0
+   */
+  cellEntry?: boolean | CellEntryConfig;
 
   /**
    * Enable clipboard copy/paste.

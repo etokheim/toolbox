@@ -155,6 +155,15 @@ Import from `@toolbox-web/grid-vue/features/<name>`:
 | `pivot`                 | `pivot`                 | `:pivot="{ rowFields: [...], columnFields: [...] }"`                  |
 | `server-side`           | `server-side`           | `:server-side="{ ... }"`                                              |
 
+### Single-Cell Entry
+
+For opt-in single-cell entry, import `features/cell-entry`, `features/editing` and
+`features/selection` from `@toolbox-web/grid-vue`, then use
+`:cell-entry="{ singleClick: true }"`, `:editing="{ editOn: 'manual', tabToEdit: true }"`
+and `selection="range"`. The same options work in `gridConfig.features`.
+See [Cell Entry](https://toolboxjs.com/grid/plugins/cell-entry/) for keyboard,
+validation and boundary-focus behaviour.
+
 ### Import All Features
 
 For prototyping or when bundle size isn't critical, import all features at once:

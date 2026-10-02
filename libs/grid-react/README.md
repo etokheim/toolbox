@@ -155,6 +155,15 @@ Import from `@toolbox-web/grid-react/features/<name>`:
 | `server-side`           | `serverSide`           | `serverSide={{ ... }}` (server-side data)                            |
 | `shell`                 | `gridConfig.shell`     | header bar + tool panels (config-driven; opt-in for v3)              |
 
+### Single-Cell Entry
+
+For opt-in single-cell entry, import `features/cell-entry`, `features/editing` and
+`features/selection` from `@toolbox-web/grid-react`, then use
+`cellEntry={{ singleClick: true }}`, `editing={{ editOn: 'manual', tabToEdit: true }}`
+and `selection="range"`. The same options work in `gridConfig.features`.
+See [Cell Entry](https://toolboxjs.com/grid/plugins/cell-entry/) for keyboard,
+validation and boundary-focus behaviour.
+
 ### Import All Features
 
 For prototyping or when bundle size isn't critical, import all features at once:

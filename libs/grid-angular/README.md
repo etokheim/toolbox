@@ -199,6 +199,16 @@ alongside `Grid` in your component's `imports`.
 | [`GridPivotDirective`](https://toolboxjs.com/grid/angular/api/directives/GridPivotDirective/)                               | `[pivot]`                         | `[pivot]="{ rowFields: [...], columnFields: [...] }"`                      |
 | [`GridServerSideDirective`](https://toolboxjs.com/grid/angular/api/directives/GridServerSideDirective/)                     | `[serverSide]`                    | `[serverSide]="{ ... }"`                                                   |
 
+### Single-Cell Entry
+
+For opt-in single-cell entry, import `GridCellEntryDirective` from
+`@toolbox-web/grid-angular/features/cell-entry`, alongside the Editing and Selection
+directives. Use `[cellEntry]="{ singleClick: true }"`,
+`[editing]="{ editOn: 'manual', tabToEdit: true }"` and `[selection]="'range'"`.
+The same options work in `gridConfig.features` without attribute directives.
+See [Cell Entry](https://toolboxjs.com/grid/plugins/cell-entry/) for keyboard,
+validation and boundary-focus behaviour.
+
 ### Import All Features
 
 For prototyping or when bundle size isn't critical, import all features at once:

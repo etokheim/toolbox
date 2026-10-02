@@ -153,7 +153,7 @@ export function injectEditor<T>(
     // autocomplete, calendar) call preventDefault on Enter to confirm an
     // option without exiting the row. Bubbling reaches editorHost with
     // defaultPrevented=true; honor that and skip the row-exit logic (#250).
-    if (e.defaultPrevented) return;
+    if (e.defaultPrevented || e.isComposing || e.keyCode === 229) return;
     // ARIA-expanded fallback (#251): when the focused control declares
     // an open overlay via aria-expanded="true" + aria-controls, defer
     // Enter to the overlay so combobox confirmation does not close the
@@ -243,6 +243,33 @@ export function injectEditor<T>(
   const onValueChange = (cb: (newValue: unknown) => void) => {
     callbacks.push(cb);
   };
+  const updateNativeInput = (newVal: unknown) => {
+    const input = editorHost.querySelector<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>(
+      'input,textarea,select',
+    );
+    if (input instanceof HTMLInputElement && input.type === 'checkbox') input.checked = !!newVal;
+    else if (input) input.value = String(newVal ?? '');
+  };
+  const focusEditor = () => {
+    if (!skipFocus) {
+      queueMicrotask(() => {
+        if (editorHost.isConnected)
+          editorHost.querySelector<HTMLElement>(FOCUSABLE_EDITOR_SELECTOR)?.focus({ preventScroll: true });
+      });
+    }
+  };
+  const context: ColumnEditorContext<T> = {
+    row: rowData,
+    rowId: rowId ?? '',
+    value,
+    field: column.field,
+    column,
+    commit,
+    cancel,
+    updateRow,
+    onValueChange,
+    grid: deps.grid as ColumnEditorContext<T>['grid'],
+  };
 
   if (editorSpec === 'template' && tplHolder) {
     renderTemplateEditor(deps, editorHost, colInternal, rowData, originalValue, commit, cancel, skipFocus, rowIndex);
@@ -251,16 +278,7 @@ export function injectEditor<T>(
     // those via the cell-cancel event. String() on arrays produces comma-separated junk.
     onValueChange((newVal) => {
       if (newVal != null && typeof newVal === 'object') return;
-      const input = editorHost.querySelector<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>(
-        'input,textarea,select',
-      );
-      if (input) {
-        if (input instanceof HTMLInputElement && input.type === 'checkbox') {
-          input.checked = !!newVal;
-        } else {
-          input.value = String(newVal ?? '');
-        }
-      }
+      updateNativeInput(newVal);
     });
   } else if (typeof editorSpec === 'string') {
     const el = document.createElement(editorSpec) as HTMLElement & { value?: unknown };
@@ -271,27 +289,10 @@ export function injectEditor<T>(
       el.value = newVal;
     });
     editorHost.appendChild(el);
-    if (!skipFocus) {
-      queueMicrotask(() => {
-        const focusable = editorHost.querySelector(FOCUSABLE_EDITOR_SELECTOR) as HTMLElement | null;
-        focusable?.focus({ preventScroll: true });
-      });
-    }
+    focusEditor();
   } else if (typeof editorSpec === 'function') {
-    const ctx: ColumnEditorContext<T> = {
-      row: rowData,
-      rowId: rowId ?? '',
-      value,
-      field: column.field,
-      column,
-      commit,
-      cancel,
-      updateRow,
-      onValueChange,
-      grid: deps.grid as ColumnEditorContext<T>['grid'],
-    };
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const produced = (editorSpec as any)(ctx);
+    const produced = (editorSpec as any)(context);
     if (typeof produced === 'string') {
       // NOT sanitized on purpose: sanitizeHTML strips `input`/`select`/
       // `textarea`/`button`, which is exactly what an editor is made of. The
@@ -303,18 +304,7 @@ export function injectEditor<T>(
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       wireEditorInputs(editorHost, column as any, commit, originalValue);
       // Auto-update wired inputs when value changes externally
-      onValueChange((newVal) => {
-        const input = editorHost.querySelector<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>(
-          'input,textarea,select',
-        );
-        if (input) {
-          if (input instanceof HTMLInputElement && input.type === 'checkbox') {
-            input.checked = !!newVal;
-          } else {
-            input.value = String(newVal ?? '');
-          }
-        }
-      });
+      onValueChange(updateNativeInput);
     } else if (produced instanceof Node) {
       editorHost.appendChild(produced);
       const isSimpleInput =
@@ -325,13 +315,7 @@ export function injectEditor<T>(
         cell.setAttribute('data-editor-managed', '');
       } else {
         // Auto-update simple inputs returned by factory functions
-        onValueChange((newVal) => {
-          if (produced instanceof HTMLInputElement && produced.type === 'checkbox') {
-            produced.checked = !!newVal;
-          } else {
-            (produced as HTMLInputElement).value = String(newVal ?? '');
-          }
-        });
+        onValueChange(updateNativeInput);
       }
     } else if (!produced && editorHost.hasChildNodes()) {
       // Factory returned void but mounted content into the editor host
@@ -340,30 +324,13 @@ export function injectEditor<T>(
       // does not read raw input values from framework editor DOM.
       cell.setAttribute('data-editor-managed', '');
     }
-    if (!skipFocus) {
-      queueMicrotask(() => {
-        const focusable = editorHost.querySelector(FOCUSABLE_EDITOR_SELECTOR) as HTMLElement | null;
-        focusable?.focus({ preventScroll: true });
-      });
-    }
+    focusEditor();
   } else if (editorSpec && typeof editorSpec === 'object') {
     const placeholder = document.createElement('div');
     placeholder.setAttribute('data-external-editor', '');
     placeholder.setAttribute('data-field', column.field);
     editorHost.appendChild(placeholder);
     cell.setAttribute('data-editor-managed', '');
-    const context: ColumnEditorContext<T> = {
-      row: rowData,
-      rowId: rowId ?? '',
-      value,
-      field: column.field,
-      column,
-      commit,
-      cancel,
-      updateRow,
-      onValueChange,
-      grid: deps.grid as ColumnEditorContext<T>['grid'],
-    };
     if (editorSpec.mount) {
       try {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -402,9 +369,7 @@ function nameEditorFromHeader<T>(editorHost: HTMLElement, column: ColumnConfig<T
     const control = editorHost.querySelector(FOCUSABLE_EDITOR_SELECTOR) as HTMLElement | null;
     if (!control) return;
     const named =
-      control.hasAttribute('aria-label') ||
-      control.hasAttribute('aria-labelledby') ||
-      control.hasAttribute('title') ||
+      control.matches('[aria-label],[aria-labelledby],[title]') ||
       (control.id && editorHost.querySelector(`label[for="${CSS.escape(control.id)}"]`)) ||
       control.closest('label');
     if (!named) control.setAttribute('aria-label', label);
@@ -500,7 +465,9 @@ function renderTemplateEditor<T>(
       input.addEventListener('change', () => commit(input.checked));
     }
     if (!skipFocus) {
-      setTimeout(() => input.focus({ preventScroll: true }), 0);
+      setTimeout(() => {
+        if (input.isConnected) input.focus({ preventScroll: true });
+      }, 0);
     }
   }
   editorHost.appendChild(clone);

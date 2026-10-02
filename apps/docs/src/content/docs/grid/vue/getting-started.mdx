@@ -338,6 +338,15 @@ useGridOverlay(panel, { open });
 
 `options.open` accepts a `MaybeRef<boolean>` so reactive refs and plain booleans both work. The grid host is also exposed on `ColumnEditorContext.grid` for editors that need to call grid APIs directly without using the composable.
 
+## Single-Cell Entry
+
+For opt-in [Cell Entry](/grid/plugins/cell-entry/), import
+`@toolbox-web/grid-vue/features/cell-entry` alongside the Editing and Selection
+features. Set `:cell-entry="{ singleClick: true }"`,
+`:editing="{ editOn: 'manual', tabToEdit: true }"` and `selection="range"`.
+Alternatively, pass these same keys in `gridConfig.features` for cross-framework
+configuration. Existing custom editors keep their commit/close contracts.
+
 ## Manual Plugin Instantiation
 
 For custom configurations or third-party plugins, instantiate manually using `markRaw()`:

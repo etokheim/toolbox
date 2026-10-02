@@ -87,6 +87,7 @@ export default defineConfig(() => ({
         'features/column-virtualization': 'src/features/column-virtualization.ts',
         'features/context-menu': 'src/features/context-menu.ts',
         'features/editing': 'src/features/editing.ts',
+        'features/cell-entry': 'src/features/cell-entry.ts',
         'features/export': 'src/features/export.ts',
         'features/filtering': 'src/features/filtering.ts',
         'features/grouping-columns': 'src/features/grouping-columns.ts',

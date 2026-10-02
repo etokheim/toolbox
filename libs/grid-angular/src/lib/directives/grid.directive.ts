@@ -923,6 +923,7 @@ export class Grid implements OnInit, AfterContentInit, OnDestroy {
     addPlugin('serverSide');
     addPlugin('stickyRows');
     addPlugin('tooltip');
+    addPlugin('cellEntry');
 
     return plugins;
   }

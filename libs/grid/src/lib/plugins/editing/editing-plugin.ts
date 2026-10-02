@@ -43,6 +43,7 @@ import { CellValidationManager } from './internal/cell-validation';
 import { type BaselinesCapturedDetail, type DirtyChangeDetail, type DirtyRowEntry } from './internal/dirty-tracking';
 import { DirtyTrackingManager } from './internal/dirty-tracking-manager';
 import { type EditorInjectionDeps, injectEditor as injectEditorImpl } from './internal/editor-injection';
+import { type CellEditRequest, isEntryCell, leaveCellEditing, nextEditCell } from './internal/single-cell-entry';
 import {
   clearEditingState,
   FOCUSABLE_EDITOR_SELECTOR,
@@ -155,7 +156,15 @@ export class EditingPlugin<T = unknown> extends BaseGridPlugin<EditingConfig> {
    * Plugin manifest - declares owned properties for configuration validation.
    * @internal
    */
-  static override readonly manifest: PluginManifest = {
+  static override readonly manifest: PluginManifest<EditingConfig> = {
+    configRules: [
+      {
+        id: 'editing/tabToEdit',
+        severity: 'error',
+        message: 'tabToEdit must be boolean.',
+        check: (config) => config.tabToEdit !== undefined && typeof config.tabToEdit !== 'boolean',
+      },
+    ],
     ownedProperties: [
       {
         property: 'editable',
@@ -187,18 +196,21 @@ export class EditingPlugin<T = unknown> extends BaseGridPlugin<EditingConfig> {
     ],
     queries: [
       {
+        type: 'beginCellEdit',
+        description: 'Commit the current session and enter one cell, respecting vetoes.',
+      },
+      {
         type: 'isEditing',
         description: 'Returns whether any cell is currently being edited',
       },
       {
         type: 'getCellEditableResolver',
-        description:
-          'Returns a predicate (field, row) => boolean resolving per-cell editability (rowEditable gate + column.editable true/false/function), for consumers like clipboard paste',
+        description: 'Predicate (field, row) => boolean combining rowEditable and column.editable.',
       },
       {
         type: 'commitCellValue',
         description:
-          'Commits a single cell value coming from a core row mutation (updateRow/updateRows), running the full edit pipeline: cancelable cell-commit (validation/abortion), dirty tracking, history, and cascade. Returns true (applied), false (vetoed), or undefined (not handled).',
+          'Commit a mutation with validation/dirty/history/cascade. Returns true (applied), false (vetoed), undefined (unhandled).',
       },
     ],
   };
@@ -433,7 +445,7 @@ export class EditingPlugin<T = unknown> extends BaseGridPlugin<EditingConfig> {
       'keydown',
       (e: KeyboardEvent) => {
         // In grid mode, Escape doesn't exit edit mode
-        if (this.#isGridMode) return;
+        if (this.#isGridMode || e.isComposing || e.keyCode === 229) return;
         if (e.key === 'Escape' && this.#activeEditRow !== -1) {
           if (shouldPreventEditClose(this.config, e)) return;
           this.#exitRowEdit(this.#activeEditRow, true);
@@ -714,6 +726,7 @@ export class EditingPlugin<T = unknown> extends BaseGridPlugin<EditingConfig> {
    * @internal
    */
   override handleQuery(query: PluginQuery): unknown {
+    if (query.type === 'beginCellEdit') return this.#enterSingleCell(query.context as CellEditRequest);
     if (query.type === 'isEditing') {
       // In grid mode, we're always editing
       return this.#isGridMode || this.#activeEditRow !== -1;
@@ -853,6 +866,7 @@ export class EditingPlugin<T = unknown> extends BaseGridPlugin<EditingConfig> {
    * @internal
    */
   override onKeyDown(event: KeyboardEvent): boolean | void {
+    if (event.isComposing || event.keyCode === 229) return true;
     switch (event.key) {
       case 'Escape':
         return this.#onEscapeKey(event);
@@ -951,6 +965,37 @@ export class EditingPlugin<T = unknown> extends BaseGridPlugin<EditingConfig> {
   /** Tab/Shift+Tab while editing: move to the next/previous editable cell. */
   #onTabKey(event: KeyboardEvent): boolean {
     if (this.#activeEditRow === -1 && !this.#isGridMode) return false;
+
+    if (this.#singleCellEdit && this.config.tabToEdit) {
+      if (
+        event.defaultPrevented ||
+        event.isComposing ||
+        event.keyCode === 229 ||
+        event.ctrlKey ||
+        event.altKey ||
+        event.metaKey
+      )
+        return true;
+      if (shouldPreventEditClose(this.config, event)) {
+        event.preventDefault();
+        return true;
+      }
+      const next = nextEditCell(
+        this.#internalGrid,
+        this.#activeEditRow,
+        this.#activeEditCol,
+        !event.shiftKey,
+        (column, row) => this.#isCellEditable(column, row),
+      );
+      if (next) {
+        this.#enterSingleCell(next);
+        event.preventDefault();
+      } else {
+        this.#exitRowEdit(this.#activeEditRow, false, false);
+        leaveCellEditing(this.gridElement);
+      }
+      return true;
+    }
 
     event.preventDefault();
 
@@ -1805,19 +1850,38 @@ export class EditingPlugin<T = unknown> extends BaseGridPlugin<EditingConfig> {
    * @fires cell-commit - Emitted when the cell value is committed (on blur or Enter)
    */
   beginCellEdit(rowIndex: number, field: string): void {
-    const internalGrid = this.#internalGrid;
-    const colIndex = internalGrid._visibleColumns.findIndex((c) => c.field === field);
-    if (colIndex === -1) return;
+    this.#enterSingleCell({ rowIndex, field }, this.config.tabToEdit === true);
+  }
 
-    const column = internalGrid._visibleColumns[colIndex];
-    const rowData = internalGrid._rows[rowIndex];
-    if (!column || !rowData || !this.#isCellEditable(column as ColumnConfig<T>, rowData as T)) return;
-
-    const cellEl = this.#getCell(rowIndex, colIndex);
-    if (!cellEl) return;
-
+  #enterSingleCell({ rowIndex, field, event }: CellEditRequest, transition = true): boolean {
+    const grid = this.#internalGrid;
+    let row: T | undefined = grid._rows[rowIndex];
+    let colIndex = grid._visibleColumns.findIndex((column) => column.field === field);
+    const canEnter = () => {
+      const column = grid._visibleColumns[colIndex];
+      return row && column && this.#isCellEditable(column, row) && (!transition || isEntryCell(column, row));
+    };
+    if (!canEnter()) return false;
+    if (transition) {
+      if (this.#isGridMode || this.config.editOn === false || event?.defaultPrevented) return false;
+      if (this.#activeEditRow === rowIndex && this.#activeEditCol === colIndex && this.#singleCellEdit) return true;
+      if (this.#activeEditRow !== -1 && event && shouldPreventEditClose(this.config, event)) return false;
+      const rowId = this.#safeGetRowId(row);
+      if (this.#activeEditRow !== -1) this.#exitRowEdit(this.#activeEditRow, false, false);
+      if (!this.gridElement.isConnected || this.disconnectSignal.aborted) return false;
+      if (rowId) row = grid._getRowEntry(rowId)?.row as T | undefined;
+      rowIndex = row ? grid._rows.indexOf(row) : -1;
+      colIndex = grid._visibleColumns.findIndex((column) => column.field === field);
+      if (rowIndex < 0 || !canEnter()) return false;
+      grid._focusRow = rowIndex;
+      grid._focusCol = colIndex;
+      ensureCellVisible(grid, { forceHorizontalScroll: true });
+    }
+    const cell = this.#getCell(rowIndex, colIndex);
+    if (!cell) return false;
     this.#singleCellEdit = true;
-    this.#beginCellEdit(rowIndex, colIndex, cellEl);
+    this.#beginCellEdit(rowIndex, colIndex, cell);
+    return true;
   }
 
   /**
@@ -2187,14 +2251,18 @@ export class EditingPlugin<T = unknown> extends BaseGridPlugin<EditingConfig> {
   #handleTabNavigation(forward: boolean): void {
     const internalGrid = this.#internalGrid;
     const rows = internalGrid._rows;
-    // In grid mode, use focusRow since there's no active edit row
     const currentRow = this.#isGridMode ? internalGrid._focusRow : this.#activeEditRow;
-    const currentRowData = rows[currentRow] as T;
-
-    // Get editable column indices for the CURRENT row
-    const editableCols = internalGrid._visibleColumns
-      .map((c, i) => (currentRowData && this.#isCellEditable(c as ColumnConfig<T>, currentRowData) ? i : -1))
-      .filter((i) => i >= 0);
+    const editableColumns = (row: number) =>
+      internalGrid._visibleColumns
+        .map((column, i) => (rows[row] && this.#isCellEditable(column, rows[row]) ? i : -1))
+        .filter((i) => i >= 0);
+    const focusEditor = (row: number) => {
+      const cell = this.#getCell(row, internalGrid._focusCol);
+      if (cell?.classList.contains('editing')) {
+        cell.querySelector<HTMLElement>(FOCUSABLE_EDITOR_SELECTOR)?.focus({ preventScroll: true });
+      }
+    };
+    const editableCols = editableColumns(currentRow);
     if (editableCols.length === 0) return;
 
     const currentIdx = editableCols.indexOf(internalGrid._focusCol);
@@ -2203,11 +2271,7 @@ export class EditingPlugin<T = unknown> extends BaseGridPlugin<EditingConfig> {
     // Can move within same row?
     if (nextIdx >= 0 && nextIdx < editableCols.length) {
       internalGrid._focusCol = editableCols[nextIdx];
-      const cellEl = this.#getCell(currentRow, editableCols[nextIdx]);
-      if (cellEl?.classList.contains('editing')) {
-        const editor = cellEl.querySelector(FOCUSABLE_EDITOR_SELECTOR) as HTMLElement | null;
-        editor?.focus({ preventScroll: true });
-      }
+      focusEditor(currentRow);
       ensureCellVisible(internalGrid, { forceHorizontalScroll: true });
       return;
     }
@@ -2215,34 +2279,17 @@ export class EditingPlugin<T = unknown> extends BaseGridPlugin<EditingConfig> {
     // Can move to adjacent row?
     const nextRow = currentRow + (forward ? 1 : -1);
     if (nextRow >= 0 && nextRow < rows.length) {
-      const nextRowData = rows[nextRow] as T;
-      // Compute editable columns for the next row
-      const nextEditableCols = internalGrid._visibleColumns
-        .map((c, i) => (nextRowData && this.#isCellEditable(c as ColumnConfig<T>, nextRowData) ? i : -1))
-        .filter((i) => i >= 0);
+      const nextEditableCols = editableColumns(nextRow);
       if (nextEditableCols.length === 0) return; // Next row has no editable cells
 
-      // In grid mode, just move focus (all rows are always editable)
+      if (!this.#isGridMode) this.#exitRowEdit(currentRow, false);
+      internalGrid._focusRow = nextRow;
+      internalGrid._focusCol = forward ? nextEditableCols[0] : nextEditableCols[nextEditableCols.length - 1];
+      if (!this.#isGridMode) this.beginBulkEdit(nextRow);
+      ensureCellVisible(internalGrid, { forceHorizontalScroll: true });
       if (this.#isGridMode) {
-        internalGrid._focusRow = nextRow;
-        internalGrid._focusCol = forward ? nextEditableCols[0] : nextEditableCols[nextEditableCols.length - 1];
-        ensureCellVisible(internalGrid, { forceHorizontalScroll: true });
-        // Focus the editor in the new cell after render
         this.requestAfterRender();
-        setTimeout(() => {
-          const cellEl = this.#getCell(nextRow, internalGrid._focusCol);
-          if (cellEl?.classList.contains('editing')) {
-            const editor = cellEl.querySelector(FOCUSABLE_EDITOR_SELECTOR) as HTMLElement | null;
-            editor?.focus({ preventScroll: true });
-          }
-        }, 0);
-      } else {
-        // In row mode, commit current row and enter next row
-        this.#exitRowEdit(currentRow, false);
-        internalGrid._focusRow = nextRow;
-        internalGrid._focusCol = forward ? nextEditableCols[0] : nextEditableCols[nextEditableCols.length - 1];
-        this.beginBulkEdit(nextRow);
-        ensureCellVisible(internalGrid, { forceHorizontalScroll: true });
+        setTimeout(() => focusEditor(nextRow), 0);
       }
     }
     // else: at boundary - stay put
@@ -2293,7 +2340,7 @@ export class EditingPlugin<T = unknown> extends BaseGridPlugin<EditingConfig> {
   /**
    * Exit editing for a row.
    */
-  #exitRowEdit(rowIndex: number, revert: boolean): void {
+  #exitRowEdit(rowIndex: number, revert: boolean, restoreFocus = true): void {
     if (this.#activeEditRow !== rowIndex) return;
 
     const internalGrid = this.#internalGrid;
@@ -2329,14 +2376,14 @@ export class EditingPlugin<T = unknown> extends BaseGridPlugin<EditingConfig> {
     // Mark that focus should be restored after the upcoming render completes.
     // This must be set BEFORE refreshVirtualWindow because it calls afterRender()
     // synchronously, which reads this flag.
-    this.#pendingFocusRestore = true;
+    this.#pendingFocusRestore = restoreFocus;
 
     // Re-render the row to remove editors
     if (rowEl) {
       this.#teardownRowEditors(rowEl, internalGrid);
     } else {
       // Row not visible - restore focus immediately (no render will happen)
-      this.#restoreCellFocus(internalGrid);
+      if (restoreFocus) this.#restoreCellFocus(internalGrid);
       this.#pendingFocusRestore = false;
     }
 

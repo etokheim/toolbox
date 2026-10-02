@@ -44,7 +44,7 @@ related: [adapters, adapters-vue, adapters-angular, grid-core, grid-features]
 - OWNS: `features/{tree,master-detail}.ts` adapter-local normalization; canonical generic configs widen both feature props and `GridConfig.features`. Callback-only setters preserve expansion; core plugins remain DOM-only. Vue/Angular template bridges deferred.
 - FLOW: DataGrid stable owner getter → `processGridConfig` → `wrapReactRenderer` and MD detail normalization → owning PortalManager. INVARIANT: new/recycled Name containers are detached; DOM traversal or single-manager fallback cannot bind them with two grids. Pre-existing fallback-root weakness surfaced by Tree + Name composition; unit regression spies `createRoot` with a DOM grid and two providers.
 - INVARIANT: MD JSX detail hosts use `trackFeaturePortal` → adapter `unmount` → `releaseFeaturePortals`; no shared core-factory override or new React roots. Strings/HTMLElement pass through; `GridDetailPanel` retains precedence.
-- INVARIANT: renderer-stable config identity gates memo rebuilds, but payload comes from `latestGridConfig.current`. Normal-effect A→B→sortable regression MUST run outside `act`; layout/passive ordering otherwise masks stale callback restoration.
+- READS FROM: the selection-control-bridge memo-payload invariant above; `disclosure-controls.spec.tsx` covers the same A→B→sortable ordering with independent Name/detail portals.
 
 ## react-overlay-editors (`useGridOverlay`)
 
