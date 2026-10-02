@@ -82,6 +82,131 @@ afterEach(() => {
 });
 
 describe('embedded Selection checkbox lifecycle', () => {
+  it('rejects duplicate hosts and invalid listeners without disturbing an active binding or claiming a new host', async () => {
+    const { plugin, entries } = await setup();
+    const entry = entries[0];
+    const rejected = vi.fn();
+    expect(() => plugin.bindRowCheckbox(entry.renderContext, entry.host, rejected)).toThrow('TBW065');
+    const host = document.createElement('span');
+    entry.renderContext.cellEl!.append(host);
+    expect(() => Reflect.apply(plugin.bindRowCheckbox, plugin, [entry.renderContext, host, null])).toThrow('TBW065');
+    expect(host.inert).not.toBe(true);
+    const successor = vi.fn();
+    const binding = plugin.bindRowCheckbox(entry.renderContext, host, successor);
+    await Promise.resolve();
+    expect(successor).toHaveBeenCalledTimes(1);
+    expect(successor.mock.calls[0][0].rowId).toBe('a');
+    expect(rejected).not.toHaveBeenCalled();
+    latest(entry).setChecked(true);
+    expect(plugin.getSelectedRowIndices()).toEqual([0]);
+    binding.dispose();
+    binding.dispose();
+    await Promise.resolve();
+    expect(successor.mock.calls.filter(([value]) => value === null)).toHaveLength(1);
+    expect(latest(entry).rowId).toBe('a');
+  });
+
+  it('retires a host omitted from installed non-null output without claiming its sibling', async () => {
+    const notifications = vi.fn();
+    const pending: SelectionRowCheckboxBinding<Row>[] = [];
+    const { grid } = await setup({}, (context, plugin) => {
+      const omitted = document.createElement('span');
+      pending.push(plugin.bindRowCheckbox(context, omitted, notifications));
+      const sibling = document.createElement('button');
+      sibling.textContent = context.row.name;
+      return sibling;
+    });
+    expect(notifications.mock.calls.map(([value]) => value)).toEqual([null, null, null]);
+    pending.forEach((binding) => binding.dispose());
+    await Promise.resolve();
+    expect(notifications).toHaveBeenCalledTimes(3);
+    const click = vi.fn();
+    grid.addEventListener('cell-click', click);
+    grid.querySelector<HTMLButtonElement>('button')!.click();
+    expect(click).toHaveBeenCalledTimes(1);
+  });
+
+  it('preserves a caller-cleared inert flag through activation and disposal', async () => {
+    const hosts: HTMLElement[] = [];
+    const bindings: SelectionRowCheckboxBinding<Row>[] = [];
+    const { grid } = await setup({}, (context, plugin) => {
+      const host = document.createElement('span');
+      host.inert = true;
+      bindings.push(plugin.bindRowCheckbox(context, host, vi.fn()));
+      host.inert = false;
+      hosts.push(host);
+      return host;
+    });
+    expect(hosts.every((host) => !host.inert)).toBe(true);
+    expect(isControlEvent({ composedPath: () => [hosts[0], grid] } as Event, grid)).toBe(true);
+    bindings.forEach((binding) => binding.dispose());
+    await Promise.resolve();
+    expect(hosts.every((host) => !host.inert)).toBe(true);
+    expect(isControlEvent({ composedPath: () => [hosts[0], grid] } as Event, grid)).toBe(false);
+  });
+
+  it('returns focus to the grid only when retiring the focused host and revokes its old action', async () => {
+    const { grid, plugin, entries } = await setup();
+    const entry = entries[0];
+    const old = latest(entry);
+    const input = entry.host.firstElementChild as HTMLInputElement;
+    input.focus();
+    expect(document.activeElement).toBe(input);
+    entry.binding.dispose();
+    expect(document.activeElement).toBe(grid);
+    old.setChecked(true);
+    expect(plugin.getSelectedRowIndices()).toEqual([]);
+    await Promise.resolve();
+    expect(entry.contexts.filter((value) => value === null)).toHaveLength(1);
+    const link = grid.querySelector<HTMLAnchorElement>('a')!;
+    link.focus();
+    entry.binding.dispose();
+    expect(document.activeElement).toBe(link);
+    expect(latest(entries[1]).rowId).toBe('b');
+  });
+
+  it('skips a queued predecessor notification when a sibling listener reentrantly updates its binding', async () => {
+    const handles = new Map<string, SelectionRowCheckboxBinding<Row>>();
+    const contexts = new Map<string, CellRenderContext<Row>>();
+    const published = new Map<string, (SelectionRowCheckboxContext<Row> | null)[]>();
+    let armed = false;
+    const { plugin } = await setup({}, (context, selection) => {
+      const host = document.createElement('span');
+      const values: (SelectionRowCheckboxContext<Row> | null)[] = [];
+      contexts.set(context.row.id, context);
+      published.set(context.row.id, values);
+      handles.set(
+        context.row.id,
+        selection.bindRowCheckbox(context, host, (value) => {
+          values.push(value);
+          if (armed && context.row.id === 'a' && value?.checked) {
+            armed = false;
+            expect(handles.get('b')!.update(contexts.get('b')!)).toBe(true);
+          }
+        }),
+      );
+      return host;
+    });
+    const previous = published.get('b')!.at(-1)!;
+    published.get('b')!.length = 0;
+    armed = true;
+    plugin.selectRows([0, 1]);
+    plugin.afterRender();
+    await Promise.resolve();
+    expect(published.get('b')).toEqual([]);
+    previous.setChecked(false);
+    expect(plugin.getSelectedRowIndices()).toEqual([0, 1]);
+    await Promise.resolve();
+    expect(published.get('b')).toHaveLength(1);
+    expect(published.get('b')![0]?.checked).toBe(true);
+    published.get('b')![0]!.setChecked(false);
+    expect(plugin.getSelectedRowIndices()).toEqual([0]);
+    handles.get('b')!.dispose();
+    handles.get('b')!.dispose();
+    await Promise.resolve();
+    expect(published.get('b')!.filter((value) => value === null)).toHaveLength(1);
+  });
+
   it('reconciles only the acting native checkbox when Shift retains an already selected row', async () => {
     const { grid, plugin, entries } = await setup();
     const first = entries[0];

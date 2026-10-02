@@ -1,10 +1,11 @@
 /** @vitest-environment happy-dom */
 import { DataGridElement, type CellRenderContext } from '@toolbox-web/grid';
 import type { SelectionRowCheckboxContext } from '@toolbox-web/grid/plugins/selection';
-import { act, createContext, StrictMode, useContext, useEffect, useState } from 'react';
+import { act, Component, createContext, StrictMode, useContext, useEffect, useState, type ReactNode } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { DataGrid } from '../lib/data-grid';
+import { GridElementContext } from '../lib/grid-element-context';
 import type { ColumnConfig } from '../lib/react-column-config';
 import { SelectionCheckbox } from './selection';
 
@@ -87,6 +88,60 @@ afterEach(async () => {
 });
 
 describe('SelectionCheckbox inside an existing Name portal', () => {
+  it('reports a wrong-grid provider without acquiring a binding or changing either grid', async () => {
+    const {
+      grids: [first, second],
+    } = await mount(2);
+    const selection = first.getPluginByName('selection')!;
+    const bind = vi.spyOn(selection, 'bindRowCheckbox');
+    const caught = vi.fn();
+    class Boundary extends Component<{ children: ReactNode }, { failed: boolean }> {
+      state = { failed: false };
+      static getDerivedStateFromError() {
+        return { failed: true };
+      }
+      componentDidCatch(error: Error) {
+        caught(error);
+      }
+      render() {
+        return this.state.failed ? <span role="alert">Wrong owner</span> : this.props.children;
+      }
+    }
+    const container = document.createElement('div');
+    document.body.append(container);
+    const reported = vi.fn();
+    const root = createRoot(container, { onCaughtError: reported });
+    roots.push(root);
+    const context: CellRenderContext<Row> = {
+      row: rows[0],
+      value: rows[0].name,
+      field: 'name',
+      column: { field: 'name' },
+      grid: first,
+      cellEl: first.querySelector<HTMLElement>('.rows .cell')!,
+    };
+    const child = vi.fn(() => <input type="checkbox" />);
+    await act(async () =>
+      root.render(
+        <Boundary>
+          <GridElementContext.Provider value={{ current: second }}>
+            <SelectionCheckbox context={context}>{child}</SelectionCheckbox>
+          </GridElementContext.Provider>
+        </Boundary>,
+      ),
+    );
+    expect(container.querySelector('[role="alert"]')?.textContent).toBe('Wrong owner');
+    expect(caught).toHaveBeenCalledTimes(1);
+    expect(caught.mock.calls[0][0].message).toContain('requires its owning DataGrid');
+    expect(reported).toHaveBeenCalledTimes(1);
+    expect(bind).not.toHaveBeenCalled();
+    expect(child).not.toHaveBeenCalled();
+    expect(selection.getSelectedRowIndices()).toEqual([]);
+    expect(second.getPluginByName('selection')!.getSelectedRowIndices()).toEqual([]);
+    expect(first.querySelectorAll('input')).toHaveLength(2);
+    expect(second.querySelectorAll('input')).toHaveLength(2);
+  });
+
   it('reconciles a retained controlled native checkbox after checked Shift activation', async () => {
     const {
       grids: [grid],
