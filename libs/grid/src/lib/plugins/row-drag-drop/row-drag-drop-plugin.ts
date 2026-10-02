@@ -22,6 +22,15 @@
 
 import { GridClasses } from '../../core/constants';
 import {
+  markControlBoundary,
+  registerControlCleanup,
+  unregisterControlCleanup,
+} from '../../core/internal/control-lifecycle';
+import { tryResolveRowId } from '../../core/internal/row-manager';
+import { getColIndexFromCell, getRowIndexFromCell } from '../../core/internal/utils';
+import { ControlSlot } from '../../core/plugin/control-view';
+import type { AfterCellRenderContext } from '../../core/plugin/types';
+import {
   clearDragSession,
   lookupDragSession,
   newDragSessionId,
@@ -30,7 +39,15 @@ import {
 import { ensureCellVisible } from '../../core/internal/keyboard';
 import { BaseGridPlugin, type GridElement, type PluginManifest } from '../../core/plugin/base-plugin';
 import { createUtilityColumn, removeUtilityColumn, upsertUtilityColumn } from '../../core/plugin/utility-column';
-import type { ColumnConfig, GridHost } from '../../core/types';
+import type { ColumnConfig, GridHost, PublicGrid } from '../../core/types';
+import {
+  DragHandleBinding,
+  findDragHandle,
+  createDefaultDragHandle,
+  attachRowCloneDragImage,
+  DRAG_HANDLE_LABEL,
+  type HandleRecord,
+} from './drag-handle-controls';
 import {
   type AutoScroller,
   type RowDragPayload,
@@ -47,7 +64,11 @@ import {
   mimeForZone,
   setCurrentDragSession,
 } from '../shared/drag-drop-protocol';
-import { type DragAlternativeAction, type DragAlternativeMenu, createDragAlternativeMenu } from '../shared/drag-alternative-menu';
+import {
+  type DragAlternativeAction,
+  type DragAlternativeMenu,
+  createDragAlternativeMenu,
+} from '../shared/drag-alternative-menu';
 import styles from './row-drag-drop.css?inline';
 import type {
   PendingMove,
@@ -271,6 +292,9 @@ export class RowDragDropPlugin<T = unknown> extends BaseGridPlugin<RowDragDropCo
 
   /** Click-only move menu (WCAG 2.2 SC 2.5.7), created lazily on first tap. */
   private moveMenu: DragAlternativeMenu | null = null;
+  #moveMenuHandle: HTMLElement | null = null;
+  #controls = new Map<HTMLElement, HandleRecord<T>>();
+  #customHandleCount = 0;
 
   /** Typed internal grid accessor. */
   private get internalGrid(): GridHost {
@@ -294,6 +318,7 @@ export class RowDragDropPlugin<T = unknown> extends BaseGridPlugin<RowDragDropCo
 
   /** @internal */
   override detach(): void {
+    for (const cell of this.#controls.keys()) this.#releaseHandle(cell);
     this.clearDebounceTimer();
     this.autoScroller?.stop();
     this.autoScroller = null;
@@ -325,30 +350,159 @@ export class RowDragDropPlugin<T = unknown> extends BaseGridPlugin<RowDragDropCo
   #createDragHandleColumn(): ColumnConfig {
     return {
       ...createUtilityColumn(ROW_DRAG_HANDLE_FIELD, this.config.dragHandleWidth ?? 40, this),
-      viewRenderer: () => {
-        const container = document.createElement('div');
-        container.className = 'dg-row-drag-handle';
-        container.setAttribute('aria-label', 'Drag to reorder, or activate for move options');
-        container.setAttribute('role', 'button');
-        container.setAttribute('tabindex', '-1');
-        container.draggable = true;
-        // Press-and-release without moving is a tap, not a drag — HTML5 DnD
-        // only fires `dragstart` on a real drag, so a plain `click` here means
-        // the pointer user could not (or chose not to) drag. Offer the
-        // click-only alternative instead (WCAG 2.2 SC 2.5.7).
-        container.addEventListener('click', (e) => {
-          e.stopPropagation();
-          this.openMoveMenu(container);
-        });
-        this.setIcon(container, 'dragHandle');
-        return container;
-      },
+      viewRenderer: ({ cellEl, row }) => (cellEl ? this.#renderHandle(cellEl, row as T) : this.#defaultHandle()),
     };
+  }
+
+  #defaultHandle(): HTMLElement {
+    const container = createDefaultDragHandle((handle) => this.openMoveMenu(handle));
+    this.setIcon(container, 'dragHandle');
+    return container;
+  }
+
+  #identity(row: T): unknown {
+    return tryResolveRowId(row, this.grid.effectiveConfig.getRowId) ?? row;
+  }
+
+  #currentIndex(cell: HTMLElement, record: HandleRecord<T>): number {
+    const index = getRowIndexFromCell(cell);
+    const row = this.rows[index] as T | undefined;
+    return this.#controls.get(cell) === record &&
+      this.shouldRenderDragHandle() &&
+      this.gridElement.isConnected &&
+      this.grid.contains(cell) &&
+      cell.contains(record.element) &&
+      (!record.slot || (record.slot.active && record.slot.renderer === this.config.dragHandleRenderer)) &&
+      row !== undefined &&
+      this.#identity(row) === record.identity
+      ? index
+      : -1;
+  }
+
+  #pickupAllowed(index: number): boolean {
+    if (index < 0 || index >= this.rows.length) return false;
+    const { rows } = this.resolveDraggedRows(index);
+    return rows.length > 0 && (!this.config.canDrag || this.config.canDrag(rows[0], index));
+  }
+
+  #renderHandle(cell: HTMLElement, row: T): HTMLElement {
+    let record = this.#controls.get(cell);
+    const renderer = this.config.dragHandleRenderer;
+    const identity = renderer ? this.#identity(row) : undefined;
+    if (record && (record.identity !== identity || record.slot?.renderer !== renderer)) {
+      this.#releaseHandle(cell);
+      record = undefined;
+    }
+    if (!record) {
+      const element = renderer ? document.createElement('span') : this.#defaultHandle();
+      record = { identity, element };
+      this.#controls.set(cell, record);
+      if (renderer) {
+        element.style.display = 'contents';
+        markControlBoundary(element, this.gridElement);
+        const current = record;
+        record.slot = new ControlSlot(element, renderer, this.gridElement);
+        this.#customHandleCount++;
+        record.binding = new DragHandleBinding(
+          element,
+          this.gridElement,
+          () => this.#currentIndex(cell, current) >= 0,
+          () => !this.#pickupAllowed(getRowIndexFromCell(cell)),
+          (handle) =>
+            this.openMoveMenu(handle, () => (current.binding?.valid ? this.#currentIndex(cell, current) : -1)),
+          (event) => {
+            if (!this.config.enableKeyboard) return;
+            const index = this.#currentIndex(cell, current);
+            if (index < 0) return;
+            this.grid._focusRow = index;
+            this.grid._focusCol = getColIndexFromCell(cell);
+            this.onKeyDown(event);
+            event.preventDefault();
+            event.stopPropagation();
+          },
+          (handle) => {
+            if (this.#moveMenuHandle === handle) {
+              this.moveMenu?.close();
+              this.#moveMenuHandle = null;
+            }
+          },
+          DRAG_HANDLE_LABEL,
+        );
+      }
+    }
+    if (record.slot && record.binding) {
+      record.slot.update({
+        grid: this.grid as PublicGrid<T> & HTMLElement,
+        host: record.element,
+        row,
+        rowId: tryResolveRowId(row, this.grid.effectiveConfig.getRowId),
+        rowIndex: getRowIndexFromCell(cell),
+        ariaLabel: DRAG_HANDLE_LABEL,
+        disabled: !this.#pickupAllowed(getRowIndexFromCell(cell)),
+        dragging: this.isDragging && this.draggedRows.some((dragged) => this.#identity(dragged) === identity),
+        bindHandle: record.binding.bind,
+      });
+      if (!record.slot.active) record.binding.dispose();
+      else if (record.binding.element && !record.element.contains(record.binding.element)) record.binding.unbind();
+      else record.binding.refresh();
+    }
+    return record.element;
+  }
+
+  #releaseHandle(cell: HTMLElement): void {
+    const record = this.#controls.get(cell);
+    if (!record) return;
+    this.#controls.delete(cell);
+    if (record.slot) this.#customHandleCount--;
+    unregisterControlCleanup(cell, this);
+    record.binding?.dispose();
+    record.slot?.dispose();
+  }
+
+  #refreshHandles(): void {
+    if (!this.config.dragHandleRenderer && this.#customHandleCount === 0) return;
+    for (const [cell, record] of Array.from(this.#controls)) {
+      const index = getRowIndexFromCell(cell);
+      if (
+        !this.grid.contains(cell) ||
+        !cell.contains(record.element) ||
+        !this.shouldRenderDragHandle() ||
+        this.rows[index] === undefined
+      ) {
+        this.#releaseHandle(cell);
+      } else if (this.config.dragHandleRenderer || record.slot) {
+        const element = this.#renderHandle(cell, this.rows[index] as T);
+        if (element !== record.element) {
+          record.element.replaceWith(element);
+          registerControlCleanup(cell, () => this.#releaseHandle(cell), this);
+        }
+      }
+    }
+  }
+
+  /** @internal */
+  override afterCellRender(context: AfterCellRenderContext): void {
+    if (this.#controls.has(context.cellElement)) {
+      registerControlCleanup(context.cellElement, () => this.#releaseHandle(context.cellElement), this);
+    }
+  }
+
+  /** Replace the visual control without rebuilding columns or drag state. @since 3.9.0 */
+  setDragHandleRenderer(renderer: RowDragDropConfig<T>['dragHandleRenderer']): void {
+    if (this.config.dragHandleRenderer === renderer) return;
+    if (!renderer) {
+      this.moveMenu?.dispose();
+      this.moveMenu = null;
+      this.#moveMenuHandle = null;
+    }
+    this.config.dragHandleRenderer = this.userConfig.dragHandleRenderer = renderer;
+    this.requestAfterRender();
   }
 
   /** @internal */
   override afterRender(): void {
     this.applyRowDraggable();
+    this.#refreshHandles();
   }
 
   /** @internal */
@@ -356,6 +510,7 @@ export class RowDragDropPlugin<T = unknown> extends BaseGridPlugin<RowDragDropCo
     // Virtualization recycles row DOM elements during scroll; re-apply the
     // `draggable` attribute so newly-shown rows still accept HTML5 drag.
     this.applyRowDraggable();
+    this.#refreshHandles();
   }
 
   /**
@@ -471,19 +626,24 @@ export class RowDragDropPlugin<T = unknown> extends BaseGridPlugin<RowDragDropCo
     gridEl.addEventListener('drop', (e) => this.onDrop(e as DragEvent), { signal });
   }
 
-  private onDragStart(de: DragEvent): void {
+  /** Resolve a live pickup origin before selecting rows or mutating the drag session. */
+  private resolveDragOrigin(de: DragEvent): { rowEl: HTMLElement; handle: HTMLElement | null } | undefined {
+    if (de.defaultPrevented) return;
     const target = de.target as HTMLElement | null;
     if (!target) return;
 
     // Resolve the row element being picked up. Order matters: a click on the
     // grip column inside a row-draggable grid should still go through the
     // handle path so the cursor offset feels right.
-    const handle = target.closest('.dg-row-drag-handle') as HTMLElement | null;
+    const binding = findDragHandle(de, this.gridElement);
+    if (binding && (!binding.owns(de) || !binding.valid)) {
+      de.preventDefault();
+      return;
+    }
+    const handle = binding?.element ?? (target.closest('.dg-row-drag-handle') as HTMLElement | null);
     let rowEl: HTMLElement | null = null;
-    let initiatedFromHandle = false;
     if (handle) {
       rowEl = handle.closest('.data-grid-row') as HTMLElement | null;
-      initiatedFromHandle = true;
     } else if (this.rowIsDraggable) {
       // Row-as-handle: any cell may start the drag, but interactive
       // descendants (inputs, buttons, anchors, contenteditable, open
@@ -491,7 +651,13 @@ export class RowDragDropPlugin<T = unknown> extends BaseGridPlugin<RowDragDropCo
       if (this.isInteractiveDragOrigin(target)) return;
       rowEl = target.closest('.data-grid-row') as HTMLElement | null;
     }
-    if (!rowEl) return;
+    return rowEl ? { rowEl, handle } : undefined;
+  }
+
+  private onDragStart(de: DragEvent): void {
+    const origin = this.resolveDragOrigin(de);
+    if (!origin) return;
+    const { rowEl, handle } = origin;
 
     const rowIndex = this.getRowIndex(rowEl);
     if (rowIndex < 0) return;
@@ -561,7 +727,7 @@ export class RowDragDropPlugin<T = unknown> extends BaseGridPlugin<RowDragDropCo
         }
         setTimeout(() => badge.remove(), 0);
       } else {
-        this.attachRowCloneDragImage(de, rowEl, initiatedFromHandle ? handle : null);
+        attachRowCloneDragImage(this.gridElement, de, rowEl, handle);
       }
     }
 
@@ -571,6 +737,7 @@ export class RowDragDropPlugin<T = unknown> extends BaseGridPlugin<RowDragDropCo
 
     rowEl.classList.add(GridClasses.DRAGGING);
     this.gridElement.classList.add('tbw-grid--drag-source');
+    if (this.config.dragHandleRenderer) this.requestAfterRender();
   }
 
   /**
@@ -584,52 +751,6 @@ export class RowDragDropPlugin<T = unknown> extends BaseGridPlugin<RowDragDropCo
   /** @internal */
   private isInteractiveDragOrigin(target: HTMLElement): boolean {
     return target.closest(RowDragDropPlugin.INTERACTIVE_DRAG_SELECTORS) !== null;
-  }
-
-  /**
-   * Build a full-row drag image by cloning `rowEl` so the user sees the
-   * actual row — not just the grip icon — while dragging.
-   *
-   * The clone is appended off-screen, snapshotted by the browser via
-   * `setDragImage`, then removed on the next tick (after the snapshot).
-   * The cursor offset is preserved relative to where the user pressed.
-   */
-  private attachRowCloneDragImage(de: DragEvent, rowEl: HTMLElement, handle: HTMLElement | null): void {
-    if (!de.dataTransfer) return;
-    const rect = rowEl.getBoundingClientRect();
-    const clone = rowEl.cloneNode(true) as HTMLElement;
-    clone.classList.add('tbw-row-drag-clone');
-    // Strip transient classes that would look wrong in the drag image.
-    clone.classList.remove('dragging', 'drop-target', 'drop-before', 'drop-after', 'flip-animating', 'row-focus');
-    clone.removeAttribute('aria-selected');
-    // Preserve the actual rendered width so cells don't reflow in the snapshot.
-    clone.style.width = `${rect.width}px`;
-    clone.style.height = `${rect.height}px`;
-    // The clone MUST stay inside the grid host: every core row/cell rule is
-    // scoped under `tbw-grid …` (see core/styles/*.css), and the
-    // `--tbw-column-template` custom property is set on the host. If the
-    // clone is moved to `document.body`, none of those rules match and the
-    // drag image collapses to an empty box. Off-screen positioning via
-    // `position: fixed` works the same regardless of the DOM parent.
-    this.gridElement.appendChild(clone);
-    // Cursor offset: where the user pressed inside the source row. Falls
-    // back to the centre of the handle when initiated from the grip.
-    let offsetX = de.clientX - rect.left;
-    let offsetY = de.clientY - rect.top;
-    if (handle) {
-      const handleRect = handle.getBoundingClientRect();
-      offsetX = handleRect.left - rect.left + handleRect.width / 2;
-      offsetY = handleRect.top - rect.top + handleRect.height / 2;
-    }
-    // Clamp into the row bounds so the cursor stays inside the drag image.
-    offsetX = Math.max(0, Math.min(rect.width, offsetX));
-    offsetY = Math.max(0, Math.min(rect.height, offsetY));
-    try {
-      de.dataTransfer.setDragImage(clone, offsetX, offsetY);
-    } catch {
-      /* JSDOM/happy-dom: harmless */
-    }
-    setTimeout(() => clone.remove(), 0);
   }
 
   private onDragOver(de: DragEvent): void {
@@ -889,6 +1010,7 @@ export class RowDragDropPlugin<T = unknown> extends BaseGridPlugin<RowDragDropCo
     }
     this.clearDragClasses();
     this.resetDragState();
+    if (this.config.dragHandleRenderer) this.requestAfterRender();
   }
   // #endregion
 
@@ -933,33 +1055,37 @@ export class RowDragDropPlugin<T = unknown> extends BaseGridPlugin<RowDragDropCo
    * and, when a `dropZone` is configured, send the row to a peer grid — all
    * with single clicks or taps, no press-hold-move gesture.
    */
-  private openMoveMenu(handle: HTMLElement): void {
+  private openMoveMenu(handle: HTMLElement, resolveIndex?: () => number): void {
     const rowEl = handle.closest('.data-grid-row') as HTMLElement | null;
     if (!rowEl) return;
-    const rowIndex = this.getRowIndex(rowEl);
+    const rowIndex = resolveIndex ? resolveIndex() : this.getRowIndex(rowEl);
     if (rowIndex < 0) return;
+    const run = (action: (index: number) => void) => {
+      const index = resolveIndex ? resolveIndex() : rowIndex;
+      if (index >= 0) action(index);
+    };
 
     const rows = this.internalGrid._rows ?? this.sourceRows;
     const actions: DragAlternativeAction[] = [
       {
         label: 'Move up',
         disabled: rowIndex === 0 || !this.canMoveRow(rowIndex, rowIndex - 1),
-        run: () => this.moveRow(rowIndex, rowIndex - 1),
+        run: () => run((index) => this.moveRow(index, index - 1)),
       },
       {
         label: 'Move down',
         disabled: rowIndex >= rows.length - 1 || !this.canMoveRow(rowIndex, rowIndex + 1),
-        run: () => this.moveRow(rowIndex, rowIndex + 1),
+        run: () => run((index) => this.moveRow(index, index + 1)),
       },
       {
         label: 'Move to top',
         disabled: rowIndex === 0 || !this.canMoveRow(rowIndex, 0),
-        run: () => this.moveRow(rowIndex, 0),
+        run: () => run((index) => this.moveRow(index, 0)),
       },
       {
         label: 'Move to bottom',
         disabled: rowIndex >= rows.length - 1 || !this.canMoveRow(rowIndex, rows.length - 1),
-        run: () => this.moveRow(rowIndex, rows.length - 1),
+        run: () => run((index) => this.moveRow(index, this.rows.length - 1)),
       },
     ];
 
@@ -967,12 +1093,14 @@ export class RowDragDropPlugin<T = unknown> extends BaseGridPlugin<RowDragDropCo
     for (const peer of this.peersInDropZone()) {
       actions.push({
         label: `${verb} ${peer.gridLabel}`,
-        run: () => this.transferToPeer(peer, rowIndex),
+        run: () => run((index) => this.transferToPeer(peer, index)),
       });
     }
 
     this.moveMenu ??= createDragAlternativeMenu('tbw-row-move-menu', 'tbw-row-move-menu');
+    this.#moveMenuHandle = handle;
     this.moveMenu.open(handle, `Move row ${rowIndex + 1}`, actions);
+    if (resolveIndex && this.moveMenu.element) markControlBoundary(this.moveMenu.element, this.gridElement);
   }
 
   /**

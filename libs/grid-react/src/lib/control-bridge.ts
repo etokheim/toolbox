@@ -7,6 +7,7 @@ type Output<T> = ReactNode | HTMLElement | ControlView<T>;
 /** A control always belongs to an explicit DataGrid, even before its host mounts. */
 export function createControlBridge<T extends { grid: HTMLElement }>(
   renderer: (context: T) => Output<T>,
+  createContextScope?: (initial: T, isActive: () => boolean) => (context: T) => T,
 ): ControlRenderer<T> {
   return (initial) => {
     const element = document.createElement('span');
@@ -15,13 +16,18 @@ export function createControlBridge<T extends { grid: HTMLElement }>(
     let key: string | undefined;
     let view: ControlView<T> | undefined;
     let disposed = false;
+    let generation = 0;
+    let scopeContext: ((context: T) => T) | undefined;
     const clearPortal = () => {
       if (key) removeFromContainer(key);
       key = undefined;
       portalHost = undefined;
     };
     const render = (context: T) => {
-      const output = renderer(context);
+      // Retire the old output before a successor factory can bind synchronously.
+      const current = ++generation;
+      scopeContext = createContextScope?.(context, () => !disposed && current === generation);
+      const output = renderer(scopeContext ? scopeContext(context) : context);
       if (output === undefined) throw new TypeError('Control renderer must return a control or null, not undefined.');
       if (output instanceof HTMLElement) {
         clearPortal();
@@ -64,7 +70,7 @@ export function createControlBridge<T extends { grid: HTMLElement }>(
       element,
       update(context) {
         if (disposed) return;
-        if (view) view.update(context);
+        if (view) view.update(scopeContext ? scopeContext(context) : context);
         else render(context);
       },
       dispose() {

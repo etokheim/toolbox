@@ -1,0 +1,39 @@
+<div id="row-drag-controls-demo">
+  <p>Drag a grip, click it for move options, or focus it and use Ctrl + Up/Down.</p>
+  <tbw-grid></tbw-grid>
+  <output aria-live="polite" data-event-log>Ready</output>
+</div>
+
+<script>
+  import { queryGrid, type ControlView } from '@toolbox-web/grid';
+  import '@toolbox-web/grid/features/row-drag-drop';
+  import type { RowDragHandleContext } from '@toolbox-web/grid/plugins/row-drag-drop';
+
+  interface Task { id: string; name: string }
+  const grid = queryGrid<Task>('#row-drag-controls-demo tbw-grid');
+  grid.gridConfig = {
+    columns: [{ field: 'name', header: 'Task' }],
+    features: {
+      rowDragDrop: {
+        animation: false,
+        dragHandleRenderer(context): ControlView<RowDragHandleContext<Task>> {
+          const element = document.createElement('button');
+          element.type = 'button';
+          element.textContent = '\u2630';
+          const update = (next: RowDragHandleContext<Task>) => {
+            element.setAttribute('aria-label', next.ariaLabel);
+            element.setAttribute('aria-disabled', String(next.disabled));
+          };
+          update(context);
+          context.bindHandle(element);
+          return { element, update };
+        },
+      },
+    },
+  };
+  grid.rows = [{ id: 'a', name: 'Draft' }, { id: 'b', name: 'Review' }, { id: 'c', name: 'Publish' }];
+  grid.on('row-move', ({ row }) => {
+    const output = document.querySelector('#row-drag-controls-demo output');
+    if (output) output.textContent = `Moved ${row.name}`;
+  });
+</script>

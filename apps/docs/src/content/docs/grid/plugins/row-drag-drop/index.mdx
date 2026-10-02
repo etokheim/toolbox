@@ -8,6 +8,7 @@ import RowDragDropCancelableEventDemo from '@components/demos/row-drag-drop/RowD
 import RowDragDropCrossGridDemo from '@components/demos/row-drag-drop/RowDragDropCrossGridDemo.astro';
 import RowDragDropCrossWindowDemo from '@components/demos/row-drag-drop/RowDragDropCrossWindowDemo.astro';
 import RowDragDropDefaultDemo from '@components/demos/row-drag-drop/RowDragDropDefaultDemo.astro';
+import RowDragDropControlsDemo from '@components/demos/row-drag-drop/RowDragDropControlsDemo.astro';
 import ShowSource from '@components/ShowSource.astro';
 
 The Row Drag-Drop plugin lets users rearrange rows by dragging a grip handle
@@ -187,6 +188,52 @@ You can instead import `GridRowDragDropDirective` and bind `[rowDragDrop]` direc
 
 ## Demos
 
+### Custom drag controls
+
+Omit `dragHandleRenderer` to keep the original grip. Set it when you need a custom
+HTML control or React component; returning `null` intentionally leaves the slot empty.
+The hook changes neither utility width/order/pinning nor drag/transfer policy.
+Tree remains inline and MasterDetail remains a separate utility.
+
+<ShowSource component="row-drag-drop/RowDragDropControlsDemo">
+  <RowDragDropControlsDemo />
+</ShowSource>
+
+The typed `RowDragHandleContext<T>` supplies the row, current processed index,
+optional row ID, owning grid, host, original accessible label, `disabled` and
+`dragging`. Call `bindHandle(element)` on one HTML root (SVG may be nested inside).
+The plugin wires native drag, click-to-menu and keyboard alternatives. Do not add
+duplicate click, key or drag handlers or depend on private CSS classes.
+`ControlView` preserves an element across updates; its optional `dispose` releases
+consumer resources. Binding and portal cleanup are automatic.
+
+React supports the hook on both `rowDragDrop` and `gridConfig.features.rowDragDrop`:
+
+```tsx
+import '@toolbox-web/grid-react/features/row-drag-drop';
+import type { RowDragDropConfig } from '@toolbox-web/grid-react';
+
+const rowDragDrop: RowDragDropConfig<Task> = {
+  dragHandleRenderer: (ctx) => (
+    <button ref={ctx.bindHandle} type="button"
+      aria-label={ctx.ariaLabel} aria-disabled={ctx.disabled}>
+      <GripIcon aria-hidden />
+    </button>
+  ),
+};
+```
+
+Manual core plugins remain DOM-only. Vue/Angular accept the core DOM hook; template
+bridges are not provided. Renderer-only replacement through
+`setDragHandleRenderer` or React props preserves plugin state and columns.
+
+With a custom renderer, `canDrag` also runs during visual refresh: it must be a
+pure predicate. `disabled` describes pickup eligibility, not destination acceptance;
+`canDrop`, query vetoes and cancelable events remain authoritative. Use those
+existing hooks for a consumer's sorted-row policy. Selected rows remain a transfer
+payload; intra-grid dropping retains the existing first-payload-row move, not block
+reordering.
+
 ### Default Drag-Drop
 
 <ShowSource file="demos/row-drag-drop/RowDragDropDefaultDemo.astro">
@@ -365,6 +412,13 @@ The legacy `canMove` callback continues to work — it is mapped internally to
 `canDrop` with a synthesised intra-grid payload.
 
 ## Accessibility
+
+Registered custom buttons retain native Enter/Space activation and Tab behaviour;
+non-native HTML roots receive button semantics when absent. Ctrl + Up/Down moves
+the bound row when keyboard moves are enabled. A canceled native event or a
+disabled control does not activate the plugin. The click-menu alternative supports
+[WCAG 2.2 SC 2.5.7](https://www.w3.org/WAI/WCAG22/Understanding/dragging-movements.html)
+without requiring a drag gesture.
 
 The plugin satisfies [WCAG 2.2 SC 2.5.7 Dragging Movements](https://www.w3.org/WAI/WCAG22/Understanding/dragging-movements.html): every row move — within the grid **and** across grids — can also be made with a single pointer that never drags.
 

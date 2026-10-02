@@ -980,6 +980,10 @@ The patterns that show how to *use* the configuration API live with their respec
 
 ## Accessibility & Keyboard
 
+RowDragDrop's optional `dragHandleRenderer` receives a typed `RowDragHandleContext`
+and registers one HTML control with `bindHandle`. The plugin retains native drag,
+click-menu and Ctrl-arrow routing. See [custom drag controls](/grid/plugins/row-drag-drop/#custom-drag-controls).
+
 Tree and MasterDetail support full-control `disclosureRenderer` hooks with separate
 typed contexts and guarded expansion actions. See
 [Tree disclosure controls](/grid/plugins/tree/#custom-disclosure-controls) and

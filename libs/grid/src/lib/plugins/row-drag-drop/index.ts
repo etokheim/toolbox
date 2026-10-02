@@ -8,6 +8,7 @@
 export { ROW_DRAG_HANDLE_FIELD, RowDragDropPlugin } from './row-drag-drop-plugin';
 export type {
   RowDragDropConfig,
+  RowDragHandleContext,
   RowDragEndDetail,
   RowDragPayload,
   RowDragStartDetail,

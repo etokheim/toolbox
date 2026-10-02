@@ -5,12 +5,34 @@
  * **and** between grids that share a `dropZone` identifier.
  */
 
+import type { ControlRenderer, PublicGrid } from '../../core/types';
 import type { RowDragPayload } from '../shared/drag-drop-protocol';
 
 // Re-exported so consumers can import it from the plugin's public entry point
 // without reaching into `plugins/shared`. The wire format is owned by the
 // protocol module because the encode/decode/validate pair lives there.
 export type { RowDragPayload };
+
+/** State and native binding for one row's drag control. @since 3.9.0 */
+export interface RowDragHandleContext<T = unknown> {
+  grid: PublicGrid<T> & HTMLElement;
+  host: HTMLElement;
+  row: T;
+  /** Existing getRowId / id / _id contract; undefined for rows without identity. */
+  rowId: string | undefined;
+  /** Current processed position, not a durable identity. */
+  rowIndex: number;
+  ariaLabel: string;
+  /** Pickup eligibility only; destinations still run their own validation. */
+  disabled: boolean;
+  dragging: boolean;
+  /**
+   * Register one HTML handle root (a button may contain SVG). Use as a React ref
+   * or call while constructing a DOM control. Null unbinds it. The plugin owns
+   * draggable, click-to-menu and keyboard wiring; do not duplicate those handlers.
+   */
+  bindHandle(element: HTMLElement | null): void;
+}
 
 /**
  * Configuration for {@link RowDragDropPlugin}.
@@ -19,6 +41,15 @@ export type { RowDragPayload };
  */
 export interface RowDragDropConfig<T = unknown> {
   // === Intra-grid ===
+
+  /**
+   * Custom drag control; omitted preserves the original grip, null renders nothing.
+   * Bind the HTML root with context.bindHandle. Persistent ControlViews receive
+   * updates without remounting. Opting in evaluates canDrag during control refresh,
+   * so that callback must be a pure predicate. Moves still validate at activation.
+   * @since 3.9.0
+   */
+  dragHandleRenderer?: ControlRenderer<RowDragHandleContext<T>>;
 
   /**
    * Enable keyboard shortcuts (`Ctrl + ↑` / `Ctrl + ↓`) for moving rows.
@@ -47,9 +78,10 @@ export interface RowDragDropConfig<T = unknown> {
    *   dedicated handle adds visual noise.
    * - `'both'`: either the grip OR any cell starts a drag.
    *
-   * Drags initiated on interactive descendants (inputs, buttons, anchors,
-   * contenteditable, open cell editors, selection checkboxes) are always
-   * suppressed regardless of this setting so native interactions keep working.
+   * Row-origin drags on interactive descendants (inputs, buttons, anchors,
+   * contenteditable, open cell editors, selection checkboxes) are suppressed.
+   * A custom button explicitly registered with bindHandle is an intentional
+   * handle; independent interactive descendants inside it remain excluded.
    * @default 'handle'
    */
   dragFrom?: 'handle' | 'row' | 'both';
@@ -82,8 +114,10 @@ export interface RowDragDropConfig<T = unknown> {
   animation?: false | 'flip';
 
   /**
-   * Validation callback invoked once at `dragstart` (and on intra-grid
-   * keyboard moves) to decide whether a row can be picked up.
+   * Validation callback invoked at `dragstart` and on intra-grid keyboard moves
+   * to decide whether a row can be picked up. Custom drag handle renderers also
+   * evaluate it during visual refresh and activation; keep this predicate pure.
+   * Omitted renderers retain the original lazy evaluation.
    *
    * @param row   The row about to be dragged.
    * @param index The row's current index in the source grid's `_rows`.

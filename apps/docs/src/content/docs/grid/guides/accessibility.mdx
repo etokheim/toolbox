@@ -274,6 +274,11 @@ automation cannot see.
 
 ## Pointer Alternatives to Dragging
 
+Custom RowDragDrop handles use `bindHandle` to retain the same click-menu alternative.
+Native buttons keep their Enter/Space activation; do not add duplicate handlers.
+Use the context's original `ariaLabel`, and reflect `disabled` in the control.
+See [custom drag controls](/grid/plugins/row-drag-drop/#custom-drag-controls).
+
 WCAG 2.2 [SC 2.5.7 Dragging Movements](https://www.w3.org/WAI/WCAG22/Understanding/dragging-movements.html)
 (Level AA) requires every operation that uses a dragging movement to *also* be achievable with a
 single pointer that never drags. It targets people who cannot reliably press, hold, move and

@@ -46,6 +46,14 @@ related: [adapters, adapters-vue, adapters-angular, grid-core, grid-features]
 - INVARIANT: MD JSX detail hosts use `trackFeaturePortal` → adapter `unmount` → `releaseFeaturePortals`; no shared core-factory override or new React roots. Strings/HTMLElement pass through; `GridDetailPanel` retains precedence.
 - READS FROM: the selection-control-bridge memo-payload invariant above; `disclosure-controls.spec.tsx` covers the same A→B→sortable ordering with independent Name/detail portals.
 
+## drag-control bridge
+
+- OWNS: `control-bridge.ts` optional context scope per renderer output evaluation; permission to bind revoked BEFORE the next factory runs. `features/row-drag-drop.ts` alone maps `bindHandle` into that scope and tracks binding owner by core callback in a WeakMap; Selection/disclosure retain unmodified contexts.
+- INVARIANT: a same-callback JSX → synchronous DOM factory handoff must retire the JSX lease before deferred portal ref-null runs. Reusing one callable cannot identify which output a delayed null belongs to; suppressing all nulls also breaks current detach.
+- INVARIANT: persistent `ControlView.update` keeps its output scope and stable bind wrapper. JSX component-only state updates keep theirs; renderer reevaluation creates a successor lease without changing portal keys/remounting components.
+- INVARIANT: retired non-null cannot acquire a binding; null releases ONLY the binding owned by its callback. Active owner null unbinds synchronously; retired-owner null queues at most one microtask and rechecks ownership then. WHY: a same-commit successor keeps attributes/menu without native unbind/rebind churn; factory ref removal still detaches when no successor claims the binding.
+- TESTS: `row-drag-drop-controls.spec.tsx` uses ordinary effect ordering on both feature surfaces; native mixed-output tests cover the same handoffs. Selection/disclosure mixed-output regressions guard the unscoped path. No synchronous flush or per-control roots.
+
 ## react-overlay-editors (`useGridOverlay`)
 
 - OWNS: nothing — pure hook. Delegates to `grid.registerExternalFocusContainer(panel)` / `unregisterExternalFocusContainer(panel)`.

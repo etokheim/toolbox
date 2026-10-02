@@ -48,6 +48,14 @@ setup hooks only for immutable fixture construction). Mirror the style of existi
   timings after an async callback fails. Require positive `sampleCount` and finite `mean` in JSON
   (`samples` may intentionally be empty). DOM benchmarks must assert actual mounted row/portal
   counts after scheduled rendering; a 30-child fixture can virtualize to two children in happy-dom.
+- **Keep lifecycle hooks at file scope.** Vitest 4.1's benchmark runner recurses into nested suites
+  without their `beforeAll`/`afterAll` hooks; uninitialized fixtures can produce timing-free JSON
+  with exit 0. File-level hooks work. For rows replacement, `ready()` only awaits initial readiness:
+  await the queued update and `forceLayout()`, then assert changed cell content on every invocation.
+- **Match framework commit completion.** For paired control-renderer measurements, settle setup,
+  await a commit marker for every live control each iteration, and counterbalance version order.
+  Record ref bind/unbind, attribute mutations and mount counts outside timed samples to distinguish
+  extra lifecycle work from process variance; keep the same fixture when validating a fix.
 
 ## Two ways to run
 
