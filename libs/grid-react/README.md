@@ -85,6 +85,16 @@ function EmployeeGrid() {
 
 ## Enabling Features
 
+Selection's optional `rowCheckboxRenderer` and `headerCheckboxRenderer` accept JSX,
+DOM elements, persistent `ControlView` outputs or `null`. Use the React
+`SelectionConfig<Row>` type and import `@toolbox-web/grid-react/features/selection`.
+Both the `selection` prop and `gridConfig.features.selection` use the shared
+DataGrid portal manager, preserving app providers and component state on updates.
+Callback replacement replaces controls without resetting selection; later changes
+to grid props such as `sortable` retain the latest callbacks. Manually
+constructed core plugins remain DOM-only; omit the hooks for native checkboxes.
+See the [typed contexts, accessibility and lifecycle guide](https://toolboxjs.com/grid/plugins/selection/#react-checkbox-renderers).
+
 Features are enabled using **declarative props** with **side-effect imports**. This gives you the best of both worlds: clean, intuitive JSX and tree-shakeable bundles.
 
 ### How It Works

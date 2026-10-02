@@ -36,6 +36,48 @@ import {
 } from '@toolbox-web/grid/plugins/selection';
 import { useCallback, useContext, useEffect, useState } from 'react';
 import { GridElementContext } from '../lib/grid-element-context';
+import { createControlBridge } from '../lib/control-bridge';
+import { registerFeatureRendererBridge } from '../lib/feature-renderers';
+import type { SelectionConfig } from '../lib/feature-props';
+import type { SelectionConfig as CoreSelectionConfig } from '@toolbox-web/grid/plugins/selection';
+
+export type { SelectionConfig } from '../lib/feature-props';
+export type {
+  SelectionCheckboxModifiers,
+  SelectionHeaderCheckboxContext,
+  SelectionRowCheckboxContext,
+} from '@toolbox-web/grid/plugins/selection';
+
+const rowRenderers = new WeakMap<
+  NonNullable<SelectionConfig['rowCheckboxRenderer']>,
+  NonNullable<CoreSelectionConfig['rowCheckboxRenderer']>
+>();
+const headerRenderers = new WeakMap<
+  NonNullable<SelectionConfig['headerCheckboxRenderer']>,
+  NonNullable<CoreSelectionConfig['headerCheckboxRenderer']>
+>();
+
+function normalizeCheckboxes(config: Record<string, unknown>): CoreSelectionConfig {
+  const selection = config as Partial<SelectionConfig>;
+  const row = selection.rowCheckboxRenderer;
+  const header = selection.headerCheckboxRenderer;
+  if (row && !rowRenderers.has(row)) rowRenderers.set(row, createControlBridge(row));
+  if (header && !headerRenderers.has(header)) headerRenderers.set(header, createControlBridge(header));
+  return {
+    ...config,
+    mode: selection.mode ?? 'cell',
+    rowCheckboxRenderer: row ? rowRenderers.get(row) : undefined,
+    headerCheckboxRenderer: header ? headerRenderers.get(header) : undefined,
+  };
+}
+
+registerFeatureRendererBridge('selection', {
+  keys: ['rowCheckboxRenderer', 'headerCheckboxRenderer'],
+  normalize: (config) => ({ ...normalizeCheckboxes(config) }),
+  update(grid, config) {
+    grid.getPluginByName('selection')?.setCheckboxRenderers(normalizeCheckboxes(config));
+  },
+});
 
 // Delegate to core feature registration
 import '@toolbox-web/grid/features/selection';

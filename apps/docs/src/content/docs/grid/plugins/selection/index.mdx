@@ -9,6 +9,7 @@ import SelectionCheckboxDemo from '@components/demos/SelectionCheckboxDemo.astro
 import SelectionPlaygroundDemo from '@components/demos/SelectionPlaygroundDemo.astro';
 import ConditionalSelectionDemo from '@components/demos/selection/ConditionalSelectionDemo.astro';
 import SelectionEventsDemo from '@components/demos/selection/SelectionEventsDemo.astro';
+import SelectionCustomCheckboxDemo from '@components/demos/selection/SelectionCustomCheckboxDemo.astro';
 
 The Selection plugin adds cell, row, and range selection capabilities to the grid with full keyboard support. Whether you need simple cell highlighting or complex multi-range selections, this plugin has you covered.
 
@@ -55,6 +56,74 @@ tbw-grid[data-has-focus] .cell-focus {
 ```
 
 This mirrors what the Selection plugin does for `row` mode focus — without shipping the plugin's selection-state machinery, keyboard range extension, or click handlers. Reach for the plugin only when something downstream needs to read or react to a selection.
+
+## Custom checkbox controls
+
+With `mode: 'row'` and `checkbox: true`, set `rowCheckboxRenderer` and/or
+`headerCheckboxRenderer` to replace the controls. Leave them unset for the native
+checkboxes. Utility-column ordering and selection rules do not change; single-select
+mode still has an empty header.
+
+<ShowSource component="selection/SelectionCustomCheckboxDemo">
+  <SelectionCustomCheckboxDemo />
+</ShowSource>
+
+Core callbacks return an `HTMLElement`, a persistent `ControlView<Context>`, or
+`null` for an empty slot. A persistent view has `element`, `update(context)` and an
+optional `dispose()`; initialise it with the first context before returning it.
+State changes call `update` without remounting, preserving focus. Plain element
+outputs call the renderer again and replace its previous output. Invalid returns
+or thrown callbacks report `TBW065` and leave the slot empty, never a default fallback.
+
+Row contexts include the row, processed `rowIndex`, optional `rowId`, `checked`,
+`selectable`, `disabled`, localised `ariaLabel`, owning `grid`, and stable `host`.
+`rowId` uses the grid's existing `getRowId` / `id` / `_id` contract; it is not an
+index. Header contexts expose `checked`, `indeterminate`, `disabled`, label and
+ownership. Call `setChecked(checked, { shiftKey, ctrlKey, metaKey })` once per
+activation. Selection eligibility, ranges, broadcasts and events stay plugin-owned.
+
+Views are disposed on replacement, row reassignment, column/header teardown,
+plugin detach and grid disconnect. Do not retain action callbacks after disposal.
+Controls own their accessible name, checkbox role/state, disabled behaviour and
+keyboard activation; the grid retains cell/row ARIA and navigation. Prefer a
+native input or button, use one activation handler (not both click and change),
+provide a visible focus indicator and at least a 24-by-24 CSS-pixel target.
+
+### React checkbox renderers
+
+Import `@toolbox-web/grid-react/features/selection` and use `SelectionConfig<Row>`
+from `@toolbox-web/grid-react` (also exported from its Selection entry). Both
+`<DataGrid selection={config}>` and `gridConfig.features.selection` accept JSX
+alongside the core DOM/view outputs; `undefined`/`void` is not supported.
+JSX stays inside the DataGrid's shared portal manager and inherits app providers
+and grid context. Stable component types keep their state across checkbox updates.
+Keep renderer callbacks stable where possible; replacing a callback replaces its
+controls, but preserves the Selection plugin and its selection.
+
+```tsx
+import { DataGrid, type SelectionConfig } from '@toolbox-web/grid-react';
+import '@toolbox-web/grid-react/features/selection';
+
+type Row = { id: string; name: string };
+const selection: SelectionConfig<Row> = {
+  mode: 'row',
+  checkbox: true,
+  rowCheckboxRenderer: (ctx) => (
+    <input
+      type="checkbox"
+      aria-label={ctx.ariaLabel}
+      checked={ctx.checked}
+      disabled={ctx.disabled}
+      onChange={(event) => ctx.setChecked(event.currentTarget.checked)}
+    />
+  ),
+};
+// <DataGrid<Row> rows={rows} columns={columns} selection={selection} />
+```
+
+Manually constructed `SelectionPlugin` instances always use the core DOM contract,
+including inside React. Vue and Angular can use DOM hooks; native framework-template
+bridges for these hooks are not provided.
 
 ## Installation
 

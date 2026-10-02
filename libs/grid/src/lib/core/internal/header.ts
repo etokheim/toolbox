@@ -10,6 +10,7 @@ import { GridClasses } from '../constants';
 import { toIconAttr } from '../plugin/base-plugin';
 import type { ColumnInternal, GridHost, GridIcons, HeaderCellContext, IconValue, InternalGrid } from '../types';
 import { addPart } from './columns';
+import { releaseControl } from './control-lifecycle';
 import { sanitizeToFragment, setSanitizedHTML } from './sanitize';
 import { toggleSort } from './sorting';
 
@@ -170,6 +171,7 @@ export function renderHeader(grid: GridHost): void {
     return;
   }
 
+  for (const cell of Array.from(headerRow.children)) releaseControl(cell as HTMLElement);
   headerRow.innerHTML = '';
 
   grid._visibleColumns.forEach((col: ColumnInternal, i: number) => {

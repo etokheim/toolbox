@@ -6,6 +6,8 @@ related: [adapters, adapters-vue, adapters-angular, grid-core, grid-features]
 # React Adapter — Mental Model
 
 > Shared adapter facts (conformance, parity, bridge registries, event/feature wiring, shell-content wrappers) live in [adapters.md](adapters.md).
+>
+> Read order for custom Selection checkboxes: `feature-renderers.ts` → `features/selection.ts` → `control-bridge.ts` → portal-manager. Core identity/actions → `grid-plugins-catalog-ui.md`.
 
 ## react-adapter
 
@@ -27,6 +29,15 @@ related: [adapters, adapters-vue, adapters-angular, grid-core, grid-features]
 - DECIDED (#332): every deferred path guarded by `unmountedRef` set in `useLayoutEffect` cleanup (NOT `useEffect` — passive runs after commit, leaves window for queued `flushSync`). WHY: host tree unmount (route change) leaves pending `queueMicrotask(scheduleFlush)` / rAF (`schedulePrune`) which re-enter `createPortal` against torn-down providers → context hooks throw per row × column. Cleanup cancels rAF + clears `portalsRef`; methods become no-ops. Mount re-arms for StrictMode double-invoke. NOT MIRRORED in Vue/Angular. Tests: `portal-manager.spec.tsx > host-tree unmount cleanup` (3 cases).
 - INVARIANT: render-time filter skips portals with `container.isConnected === false`.
 - TESTS: `react-column-config.spec.ts > evicts cache and creates fresh container...`; `react-grid-adapter.spec.ts > evicts stale cache... > also unmounts renderer portals inside the cell`; `rows.spec.ts > releases cells when pool shrinks`; `portal-manager.spec.ts > isolates a crashing portal (#250)`.
+
+## selection-control-bridge
+
+- DECIDED (2026-10, utility-control slice): Selection JSX normalization belongs to adapter-local `feature-renderers.ts`, not the shared core feature factory. WHY: vanilla grids/manual plugins must retain DOM-only hooks. Both feature props and `gridConfig.features` normalize; cached callback wrappers preserve identity.
+- OWNS: `control-bridge.ts` persistent outer element, explicit owning grid, stable portal key; `PortalManager` retains batching/error boundaries/unmount guards. JSX↔DOM/null transitions detach the old portal container intact before allocating another; never wipe React-owned descendants.
+- INVARIANT: `GridElementContext.Provider` wraps BOTH PortalManager and the custom element. App providers alone are insufficient for controls using grid hooks.
+- FLOW: callback-only change → non-renderer config equality → retain config/plugin instances → layout/ready synchronization → `SelectionPlugin.setCheckboxRenderers` → STYLE. Pending ready callbacks are cancelled on rerender/unmount.
+- INVARIANT: stable non-renderer config identity gates memo invalidation, not its payload. `processedGridConfig` rebuilds from the latest config ref; otherwise a later `sortable`/icons change restores old callbacks after the renderer-sync layout effect. `selection-controls.spec.tsx` covers passive-effect ordering outside React `act`.
+- TESTS: `selection-controls.spec.tsx` (both surfaces, providers, focus, isolated grids, header teardown); `control-bridge.spec.tsx` (mixed outputs); `selection-types.spec.tsx` (JSX vs core DOM contract, unrelated feature keys).
 
 ## react-overlay-editors (`useGridOverlay`)
 

@@ -4,6 +4,7 @@
  */
 import { FOCUSABLE_EDITOR_SELECTOR, GridClasses } from '../constants';
 import type { GridHost } from '../types';
+import { isControlEvent } from './control-lifecycle';
 import { clearCellFocus, isRTL } from './utils';
 import { readCellField } from './value-accessor';
 import { fromVirtualScrollTop, toVirtualScrollTop } from './virtualization';
@@ -136,6 +137,7 @@ function emitCellActivate(grid: GridHost, e: KeyboardEvent): boolean {
 }
 
 export function handleGridKeyDown(grid: GridHost, e: KeyboardEvent): void {
+  if (isControlEvent(e, grid)) return;
   // Dispatch to plugin system first - if any plugin handles it, stop here
   if (grid._dispatchKeyDown?.(e)) return;
 

@@ -66,6 +66,8 @@ Auto-applied from `.github/instructions/` when working on matching files:
 
 ### Knowledge Reference
 
+Fork delivery scope and phase gates: [Toolbox roadmap](knowledge/toolbox-roadmap.md).
+
 Loaded on demand from `.github/knowledge/` — read relevant files before starting work to rebuild the mental model:
 
 | Knowledge file              | Domain                      | Content                                                                                                                            |

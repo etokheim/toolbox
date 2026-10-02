@@ -199,6 +199,8 @@ export default defineConfig({
     resolve: {
       alias: {
         ...gridAliases(),
+        '@toolbox-web/grid-react/features/selection': resolve(rootDir, 'libs/grid-react/src/features/selection.ts'),
+        '@toolbox-web/grid-react': resolve(rootDir, 'libs/grid-react/src/index.ts'),
         '@toolbox/themes': resolve(rootDir, 'libs/themes'),
         '@demo/shared/employee-management': resolve(rootDir, 'demos/shared/employee-management'),
         // Alias to the directory (not `index.ts`) so subpaths like

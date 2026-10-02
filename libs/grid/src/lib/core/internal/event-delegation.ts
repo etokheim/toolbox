@@ -16,6 +16,7 @@
 import { GridClasses, GridDataAttrs } from '../constants';
 import type { CellMouseEvent } from '../plugin/types';
 import type { GridHost, InternalGrid } from '../types';
+import { isControlEvent } from './control-lifecycle';
 import { handleGridKeyDown } from './keyboard';
 import { startPointerDrag } from './pointer-drag';
 import { getPrimaryPointer } from './pointer-modality';
@@ -287,7 +288,8 @@ function suppressNextContextMenu(renderRoot: HTMLElement): void {
  * a range-paint. Movement beyond the slop before the timer fires aborts the
  * gesture entirely and lets the browser scroll.
  */
-function handlePointerDown(grid: InternalGrid, renderRoot: HTMLElement, e: PointerEvent): void {
+function handlePointerDown(grid: GridHost, renderRoot: HTMLElement, e: PointerEvent): void {
+  if (isControlEvent(e, grid)) return;
   // Only primary presses start a drag; secondary buttons belong to ContextMenuPlugin.
   if (e.button !== 0 && e.pointerType === 'mouse') return;
   if (dragState.get(grid)) return;
@@ -368,6 +370,7 @@ export function setupCellEventDelegation(grid: GridHost, bodyEl: HTMLElement, si
   bodyEl.addEventListener(
     'mousedown',
     (e) => {
+      if (isControlEvent(e, grid)) return;
       const cell = (e.target as HTMLElement).closest('.cell[data-col]') as HTMLElement | null;
       if (!cell) return;
 
@@ -397,6 +400,7 @@ export function setupCellEventDelegation(grid: GridHost, bodyEl: HTMLElement, si
   bodyEl.addEventListener(
     'click',
     (e) => {
+      if (isControlEvent(e, grid)) return;
       const rowEl = (e.target as HTMLElement).closest('.data-grid-row') as HTMLElement | null;
       if (rowEl) handleRowClick(grid, e as MouseEvent, rowEl);
 
@@ -419,6 +423,7 @@ export function setupCellEventDelegation(grid: GridHost, bodyEl: HTMLElement, si
   bodyEl.addEventListener(
     'dblclick',
     (e) => {
+      if (isControlEvent(e, grid)) return;
       const rowEl = (e.target as HTMLElement).closest('.data-grid-row') as HTMLElement | null;
       if (rowEl) handleRowClick(grid, e as MouseEvent, rowEl);
     },

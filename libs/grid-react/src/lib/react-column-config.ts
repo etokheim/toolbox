@@ -11,6 +11,8 @@ import type {
 } from '@toolbox-web/grid';
 import type { ReactNode } from 'react';
 import { notifyEditorMounted } from './editor-mount-hooks';
+import { normalizeFeatureRenderers } from './feature-renderers';
+import type { FeatureProps } from './feature-props';
 import { removeFromContainer, renderToContainer } from './portal-bridge';
 
 // #region ColumnConfig Interface
@@ -101,8 +103,9 @@ export interface ColumnConfig<TRow = unknown, TField extends string = ColumnFiel
  */
 export type GridConfig<TRow = unknown, TField extends string = ColumnFieldKey<TRow>> = Omit<
   BaseGridConfig<TRow, TField>,
-  'columns' | 'loadingRenderer' | 'emptyRenderer'
+  'columns' | 'loadingRenderer' | 'emptyRenderer' | 'features'
 > & {
+  features?: Omit<NonNullable<BaseGridConfig<TRow>['features']>, 'selection'> & Pick<FeatureProps<TRow>, 'selection'>;
   columns?: ColumnConfig<TRow, TField>[];
   /**
    * Custom loading renderer - can be a vanilla DOM function or a React render function returning JSX.
@@ -381,6 +384,8 @@ export function processGridConfig<TRow>(config: GridConfig<TRow> | undefined): B
 
   // Already processed — return as-is to prevent double-wrapping
   if ((config as any)[REACT_PROCESSED]) return config as BaseGridConfig<TRow>;
+
+  if (config.features) config = { ...config, features: normalizeFeatureRenderers(config.features) };
 
   // Process loadingRenderer at grid config level
   if (config.loadingRenderer && typeof config.loadingRenderer === 'function') {

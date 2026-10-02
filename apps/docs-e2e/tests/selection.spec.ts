@@ -1,7 +1,64 @@
 import { expect, test } from '@playwright/test';
+import type { DataGridElement } from '@toolbox-web/grid';
 import { clickCell, dataRows, grid, openDemo } from './utils';
 
 test.describe('Selection Demos', () => {
+  for (const owner of ['#custom-checkbox-dom', '#custom-checkbox-react tbw-grid']) {
+    test(`SelectionCustomCheckboxDemo — ${owner} owns click and keyboard activation`, async ({ page }) => {
+      const errors: string[] = [];
+      page.on('pageerror', (error) => errors.push(error.message));
+      await openDemo(page, 'selection/SelectionCustomCheckboxDemo');
+      const host = page.locator(owner);
+      const controls = host.locator('.rows').getByRole('checkbox');
+      const header = host.locator('.header-row').getByRole('checkbox');
+      const first = controls.nth(0);
+      await expect(controls).toHaveCount(3);
+      await expect(controls.nth(1)).toBeDisabled();
+      await expect(first).toHaveAccessibleName(/.+/);
+      const box = await first.boundingBox();
+      expect(box?.width).toBeGreaterThanOrEqual(24);
+      expect(box?.height).toBeGreaterThanOrEqual(24);
+      if (owner.includes('react')) await expect(first).toHaveAttribute('data-theme', 'app-checkbox');
+      const log = page.locator('[data-event-log]');
+      await first.click();
+      await expect(first).toBeChecked();
+      await expect(header).toHaveAttribute('aria-checked', 'mixed');
+      await expect(log).toHaveText('1 selection changes');
+      await expect(first).toBeFocused();
+      await first.press('Space');
+      await expect(first).not.toBeChecked();
+      await expect(log).toHaveText('2 selection changes');
+      await first.press('Enter');
+      await expect(first).toBeChecked();
+      await expect(log).toHaveText('3 selection changes');
+      await header.click();
+      await expect(controls.nth(2)).toBeChecked();
+      await expect(header).toBeChecked();
+      await expect(log).toHaveText('4 selection changes');
+      await header.press('Space');
+      await expect(first).not.toBeChecked();
+      await expect(log).toHaveText('5 selection changes');
+
+      await host.evaluate((element) => {
+        const grid = element as DataGridElement;
+        grid.rows = Array.from({ length: 200 }, (_, id) => ({ id, name: `Person ${id}`, locked: false }));
+      });
+      await expect(host.getByText('Person 0', { exact: true })).toBeVisible();
+      await host.evaluate((element) => (element as DataGridElement).scrollToRow(150));
+      await expect(host.getByText('Person 150', { exact: true })).toBeVisible();
+      const recycledRow = host.locator('[role="row"]').filter({ hasText: 'Person 150' });
+      const recycledControl = recycledRow.getByRole('checkbox');
+      const changesBeforeRecycleClick = Number.parseInt(await log.innerText(), 10);
+      await recycledControl.click();
+      await expect(recycledControl).toBeChecked();
+      const selected = await host.evaluate((element) =>
+        (element as DataGridElement).getPluginByName('selection')?.getSelectedRowIndices());
+      expect(selected).toEqual([150]);
+      await expect(log).toHaveText(`${changesBeforeRecycleClick + 1} selection changes`);
+      expect(errors).toEqual([]);
+    });
+  }
+
   test('SelectionPlaygroundDemo — cell selection mode selects a cell', async ({ page }) => {
     await openDemo(page, 'SelectionPlaygroundDemo');
 

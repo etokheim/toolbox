@@ -17,6 +17,7 @@ import { applyColumnDefaults, normalizeColumns, type ColumnShorthand } from './c
 import { EVENT_PROP_MAP, type EventProps } from './event-props';
 import { getFeaturePropKeys } from './feature-prop-keys';
 import { type AllFeatureProps, type FeatureProps } from './feature-props';
+import { sameNonRendererConfig, updateFeatureRenderers } from './feature-renderers';
 import { type GridDetailPanelProps } from './grid-detail-panel';
 import { GridIconContextInternal } from './grid-icon-registry';
 import { GridTypeContextInternal } from './grid-type-registry';
@@ -497,8 +498,13 @@ export const DataGrid = forwardRef<DataGridRef, DataGridProps>(function DataGrid
   // `responsive: true` with no breakpoint) gets converted into a manual plugin
   // and, via core's manual-wins dedup, clobbers the user's full
   // `gridConfig.features.responsive` config.
+  const stableGridConfig = useRef(gridConfig);
+  if (!sameNonRendererConfig(stableGridConfig.current, gridConfig)) stableGridConfig.current = gridConfig;
+  const rendererStableConfig = stableGridConfig.current;
+  const latestGridConfig = useRef(gridConfig);
+  latestGridConfig.current = gridConfig;
   const mergedFeatureProps = useMemo(() => {
-    const configFeatures = gridConfig?.features as Record<string, unknown> | undefined;
+    const configFeatures = rendererStableConfig?.features as Record<string, unknown> | undefined;
     const filteredChildFeatures: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(childFeatures)) {
       if (configFeatures && key in configFeatures && configFeatures[key] !== undefined && configFeatures[key] !== false)
@@ -506,7 +512,7 @@ export const DataGrid = forwardRef<DataGridRef, DataGridProps>(function DataGrid
       filteredChildFeatures[key] = value;
     }
     return { ...filteredChildFeatures, ...featureProps } as FeatureProps<TRow>;
-  }, [featureProps, childFeatures, gridConfig]);
+  }, [featureProps, childFeatures, rendererStableConfig]);
 
   // ═══════════════════════════════════════════════════════════════════
   // PLUGIN INSTANTIATION (sync via feature registry)
@@ -546,7 +552,8 @@ export const DataGrid = forwardRef<DataGridRef, DataGridProps>(function DataGrid
 
   // Process gridConfig to convert React renderers/editors to DOM functions
   const processedGridConfig = useMemo(() => {
-    const processed = processGridConfig(gridConfig);
+    // Stable identity gates rebuilds; their payload must still contain the latest callbacks.
+    const processed = processGridConfig(latestGridConfig.current);
 
     // Build core config overrides from individual props
     const coreConfigOverrides: Record<string, unknown> = {};
@@ -563,7 +570,7 @@ export const DataGrid = forwardRef<DataGridRef, DataGridProps>(function DataGrid
     // Merge icon overrides from context with any existing icons in gridConfig
     // Context icons are base, gridConfig.icons override them
     if (iconOverrides) {
-      const existingIcons = processed?.icons || gridConfig?.icons || {};
+      const existingIcons = processed?.icons || rendererStableConfig?.icons || {};
       coreConfigOverrides['icons'] = { ...iconOverrides, ...existingIcons };
     }
 
@@ -589,7 +596,29 @@ export const DataGrid = forwardRef<DataGridRef, DataGridProps>(function DataGrid
     }
 
     return processed;
-  }, [gridConfig, allPlugins, sortable, filterable, selectable, iconOverrides]);
+  }, [rendererStableConfig, allPlugins, sortable, filterable, selectable, iconOverrides]);
+
+  useLayoutEffect(() => {
+    const grid = gridRef.current;
+    if (!grid) return;
+    const features: Record<string, unknown> = { ...gridConfig?.features };
+    if (!manualPlugins) {
+      for (const key of getFeaturePropKeys()) {
+        if ((rest as Record<string, unknown>)[key] !== undefined)
+          features[key] = (rest as Record<string, unknown>)[key];
+      }
+    }
+    for (const plugin of [...(manualPlugins ?? []), ...(gridConfig?.plugins ?? [])]) delete features[plugin.name];
+    const sync = () => updateFeatureRenderers(grid, features);
+    sync();
+    let active = true;
+    void grid.ready().then(() => {
+      if (active && gridRef.current === grid) sync();
+    });
+    return () => {
+      active = false;
+    };
+  });
 
   // Keep getRowId ref current so the rows diff effect uses the latest function
   // without needing processedGridConfig in its own dependency array.
@@ -874,7 +903,7 @@ export const DataGrid = forwardRef<DataGridRef, DataGridProps>(function DataGrid
   }, []);
 
   return (
-    <>
+    <GridElementContext.Provider value={gridRef}>
       <PortalManager ref={portalManagerRef} />
       {/*
         Render via `createElement(GridElement.activeTag, ...)` instead of the
@@ -910,8 +939,8 @@ export const DataGrid = forwardRef<DataGridRef, DataGridProps>(function DataGrid
           class: className,
           style,
         },
-        <GridElementContext.Provider value={gridRef}>{children}</GridElementContext.Provider>,
+        children,
       )}
-    </>
+    </GridElementContext.Provider>
   );
 }) as <TRow = unknown>(props: DataGridProps<TRow> & { ref?: React.Ref<DataGridRef<TRow>> }) => React.ReactElement;

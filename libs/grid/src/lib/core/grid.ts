@@ -30,6 +30,7 @@ import { RenderPhase, RenderScheduler } from './internal/render-scheduler';
 import { createResizeController } from './internal/resize';
 import { animateRow, animateRowById, animateRows } from './internal/row-animation';
 import { resolveRowIdOrThrow, RowManager, tryResolveRowId } from './internal/row-manager';
+import { releaseCell } from './internal/control-lifecycle';
 import { invalidateCellCache, renderVisibleRows } from './internal/rows';
 import { applySort, reapplyCoreSort, toggleSort } from './internal/sorting';
 import { addPluginStyles, injectStyles } from './internal/style-injector';
@@ -2381,26 +2382,20 @@ export class DataGridElement<T = any> extends HTMLElement implements InternalGri
     // per-cell `flushSync was called from inside a lifecycle method`
     // warning storm on grouping changes (#330).
     const adapter = this.__frameworkAdapter;
-    const release = adapter?.releaseCell;
-    if (release) {
-      adapter?.beginBatch?.(this);
-      try {
-        for (let r = 0; r < this._rowPool.length; r++) {
-          const rowEl = this._rowPool[r];
-          const cells = rowEl.children;
-          for (let c = 0; c < cells.length; c++) {
-            const cell = cells[c] as HTMLElement;
-            if (cell.firstElementChild) release.call(adapter, cell);
-          }
+    adapter?.beginBatch?.(this);
+    try {
+      for (let r = 0; r < this._rowPool.length; r++) {
+        const rowEl = this._rowPool[r];
+        const cells = rowEl.children;
+        for (let c = 0; c < cells.length; c++) {
+          const cell = cells[c] as HTMLElement;
+          if (cell.firstElementChild) releaseCell(this, cell);
         }
-        this._rowPool.length = 0;
-        if (this._bodyEl) this._bodyEl.innerHTML = '';
-      } finally {
-        adapter?.endBatch?.(this);
       }
-    } else {
       this._rowPool.length = 0;
       if (this._bodyEl) this._bodyEl.innerHTML = '';
+    } finally {
+      adapter?.endBatch?.(this);
     }
     this.__rowRenderEpoch++;
   }

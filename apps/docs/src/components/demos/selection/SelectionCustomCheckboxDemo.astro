@@ -1,0 +1,102 @@
+---
+---
+
+<div id="selection-custom-checkbox-demo" class="not-content">
+  <p>DOM controls</p>
+  <tbw-grid id="custom-checkbox-dom" aria-label="DOM selection"></tbw-grid>
+  <p>React controls (sharing the app provider)</p>
+  <div id="custom-checkbox-react"></div>
+  <output aria-live="polite" data-event-log>0 selection changes</output>
+</div>
+
+<script>
+  import { queryGrid, type ControlView } from '@toolbox-web/grid';
+  import {
+    SelectionPlugin,
+    type SelectionHeaderCheckboxContext,
+    type SelectionRowCheckboxContext,
+  } from '@toolbox-web/grid/plugins/selection';
+  import { createContext, createElement, useContext } from 'react';
+  import { createRoot } from 'react-dom/client';
+  import { DataGrid, type SelectionConfig } from '@toolbox-web/grid-react';
+  import '@toolbox-web/grid-react/features/selection';
+
+  type Row = { id: number; name: string; locked: boolean };
+  type Context = SelectionRowCheckboxContext<Row> | SelectionHeaderCheckboxContext<Row>;
+  const rows: Row[] = [
+    { id: 1, name: 'Alice', locked: false },
+    { id: 2, name: 'Bob (locked)', locked: true },
+    { id: 3, name: 'Carol', locked: false },
+  ];
+  const columns = [{ field: 'name' as const, header: 'Name' }];
+  const state = (ctx: Context) => ('indeterminate' in ctx && ctx.indeterminate ? 'mixed' : String(ctx.checked));
+
+  function domCheckbox(initial: Context): ControlView<Context> {
+    const element = document.createElement('button');
+    element.type = 'button';
+    element.setAttribute('role', 'checkbox');
+    let context = initial;
+    const update = (next: Context) => {
+      context = next;
+      element.setAttribute('aria-label', next.ariaLabel);
+      element.setAttribute('aria-checked', state(next));
+      element.disabled = next.disabled;
+      element.textContent = state(next) === 'mixed' ? '-' : next.checked ? 'x' : '';
+    };
+    element.onclick = ({ shiftKey, ctrlKey, metaKey }) =>
+      context.setChecked(!context.checked, { shiftKey, ctrlKey, metaKey });
+    update(initial);
+    return { element, update };
+  }
+
+  const grid = queryGrid<Row>('#custom-checkbox-dom');
+  grid.gridConfig = {
+    columns,
+    plugins: [new SelectionPlugin<Row>({
+      mode: 'row', checkbox: true, isSelectable: (row) => !row.locked,
+      rowCheckboxRenderer: domCheckbox, headerCheckboxRenderer: domCheckbox,
+    })],
+  };
+  grid.rows = rows;
+
+  const Theme = createContext('app');
+  function Checkbox({ context }: { context: Context }) {
+    const theme = useContext(Theme);
+    return createElement('button', {
+      type: 'button', role: 'checkbox', 'aria-label': context.ariaLabel,
+      'aria-checked': state(context) as 'true' | 'false' | 'mixed',
+      disabled: context.disabled, 'data-theme': theme,
+      onClick: ({ shiftKey, ctrlKey, metaKey }) => context.setChecked(!context.checked, { shiftKey, ctrlKey, metaKey }),
+    }, state(context) === 'mixed' ? '-' : context.checked ? 'x' : '');
+  }
+  const selection: SelectionConfig<Row> = {
+    mode: 'row', checkbox: true, isSelectable: (row) => !row.locked,
+    rowCheckboxRenderer: (context) => createElement(Checkbox, { context }),
+    headerCheckboxRenderer: (context) => createElement(Checkbox, { context }),
+  };
+  const root = createRoot(document.getElementById('custom-checkbox-react')!);
+  root.render(createElement(Theme.Provider, { value: 'app-checkbox' },
+    createElement(DataGrid<Row>, { rows, columns, selection })));
+  document.addEventListener('astro:before-swap', () => root.unmount(), { once: true });
+
+  const container = document.getElementById('selection-custom-checkbox-demo')!;
+  let changes = 0;
+  container.addEventListener('selection-change', () => {
+    container.querySelector('output')!.textContent = `${++changes} selection changes`;
+  });
+</script>
+
+<style is:global>
+  #selection-custom-checkbox-demo tbw-grid { height: 190px; }
+  #selection-custom-checkbox-demo button[role='checkbox'] {
+    width: 24px;
+    height: 24px;
+    padding: 0;
+    border: 1px solid currentColor;
+    border-radius: 4px;
+    color: inherit;
+    background: transparent;
+  }
+  #selection-custom-checkbox-demo button[role='checkbox']:focus-visible { outline: 2px solid currentColor; }
+  #selection-custom-checkbox-demo button[role='checkbox']:disabled { opacity: 0.5; }
+</style>

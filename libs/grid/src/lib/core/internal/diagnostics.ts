@@ -117,6 +117,8 @@ export const FORMAT_ERROR = 'TBW062' as const;
 export const VIEW_MOUNT_ERROR = 'TBW063' as const;
 /** External view event dispatch error. */
 export const VIEW_DISPATCH_ERROR = 'TBW064' as const;
+/** Interactive control renderer returned an invalid output or threw. */
+export const CONTROL_RENDER_ERROR = 'TBW065' as const;
 
 // --- Shell (070–079) ---
 /** Tool panel missing required id. */
@@ -202,6 +204,7 @@ export type DiagnosticCode =
   | typeof ROW_CLASS_ERROR
   | typeof CELL_CLASS_ERROR
   | typeof FORMAT_ERROR
+  | typeof CONTROL_RENDER_ERROR
   | typeof VIEW_MOUNT_ERROR
   | typeof VIEW_DISPATCH_ERROR
   | typeof TOOL_PANEL_MISSING_ATTR

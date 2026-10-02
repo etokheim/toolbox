@@ -39,9 +39,16 @@ function gridAliases() {
 
 export default defineConfig({
   vite: {
+    optimizeDeps: {
+      // Demos live outside this app's scan root; discover their React imports before
+      // parallel page loads can invalidate already-served optimized dependency URLs.
+      include: ['react', 'react-dom', 'react-dom/client', 'react/jsx-dev-runtime'],
+    },
     resolve: {
       alias: {
         ...gridAliases(),
+        '@toolbox-web/grid-react/features/selection': resolve(rootDir, 'libs/grid-react/src/features/selection.ts'),
+        '@toolbox-web/grid-react': resolve(rootDir, 'libs/grid-react/src/index.ts'),
         '@toolbox/themes': resolve(rootDir, 'libs/themes'),
         // Per-demo shared aliases — must point at the DIRECTORY (not index.ts)
         // so subpaths like `@demo/shared/calendar/demo-styles.css` resolve

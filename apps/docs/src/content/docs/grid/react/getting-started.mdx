@@ -99,6 +99,12 @@ function EmployeeGrid() {
 
 ## Enabling Features with Props
 
+Selection supports typed `rowCheckboxRenderer` and `headerCheckboxRenderer` JSX
+hooks through both the `selection` prop and `gridConfig.features.selection`.
+They share the DataGrid portal manager and inherit app/grid providers; manually
+instantiated core plugins remain DOM-only. See the
+[checkbox lifecycle and accessibility guide](/grid/plugins/selection/#react-checkbox-renderers).
+
 Features are enabled using **declarative props** combined with **side-effect imports**. This gives you clean JSX and tree-shakeable bundles.
 
 ### How It Works

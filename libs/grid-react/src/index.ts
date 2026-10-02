@@ -53,6 +53,7 @@ export type {
   PanelSlot,
   PinnedRowSlot,
   PinnedRowsConfig,
+  SelectionConfig,
   ResponsivePluginConfig,
   ZonedPanelRender,
 } from './lib/feature-props';

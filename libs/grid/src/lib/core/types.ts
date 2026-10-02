@@ -2675,6 +2675,23 @@ export type Translate = (key: string, fallback: string) => string;
 
 // #endregion
 
+/**
+ * Persistent interactive control. The initial context is passed to the renderer;
+ * subsequent state changes call update without replacing element.
+ * @since 3.9.0
+ */
+export interface ControlView<TContext> {
+  element: HTMLElement;
+  update(context: TContext): void;
+  dispose?(): void;
+}
+
+/**
+ * An interactive slot renderer. null deliberately leaves the slot empty.
+ * @since 3.9.0
+ */
+export type ControlRenderer<TContext> = (context: TContext) => HTMLElement | ControlView<TContext> | null;
+
 // #region Grid Config
 /**
  * Grid configuration object - the **single source of truth** for grid behavior.
