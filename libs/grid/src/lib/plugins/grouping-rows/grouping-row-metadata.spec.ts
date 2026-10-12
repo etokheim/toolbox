@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { GroupingRowMetadata } from './grouping-row-metadata';
+import { RowMetadata as GroupingRowMetadata } from '../../core/plugin/row-metadata';
 
 describe('GroupingRows metadata ownership', () => {
   it('restores pre-existing values and style priority without touching unowned row semantics', () => {

@@ -194,6 +194,13 @@ function EmployeeGrid() {
 | `features/row-drag-drop` | `rowDragDrop` | `rowDragDrop` (cross-grid / external row drag-and-drop) |
 | `features/tooltip` | `tooltip` | `tooltip` (cell / header tooltips) |
 
+For Tree child sections, GroupingRows `childDefaultExpanded` separates child defaults
+from global groups, and `groupOrder({ parent, depth })` supplies semantic category
+ordering. Replacing or clearing only the `groupOrder` callback on either the feature
+prop or `gridConfig.features.groupingRows` preserves plugin instances, selection and
+expansion. Other configuration changes retain their existing lifecycle.
+See [Category Order](/grid/plugins/grouping-rows/#category-order).
+
 ### Core Config Props (no import needed)
 
 These props control core grid behaviour and don't require feature imports. See [`DataGridProps`](/grid/react/api/types/datagridprops/) for the full prop surface and [`AllFeatureProps`](/grid/react/api/types/allfeatureprops/) for every typed feature prop.

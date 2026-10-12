@@ -546,9 +546,12 @@ Key rules: prefer **system color keywords** (`CanvasText`, `Canvas`, `LinkText`,
 
 These patterns are how we keep the grid accessible — and how you should keep your customizations accessible too.
 
-[GroupingRows](/grid/plugins/grouping-rows/#accessibility) restores its owned
-hierarchy and expansion metadata when disabled or removed, so recycled ordinary
-rows do not announce stale group state.
+[Hierarchy](/grid/plugins/hierarchy/#accessibility) owns shared positional metadata
+when Tree and Row Grouping compose. Removing grouping leaves Tree's hierarchy active;
+removing the final contributor releases owned positions and the treegrid role.
+[GroupingRows](/grid/plugins/grouping-rows/#accessibility) separately restores its
+group expansion/depth metadata. Per-row detail eligibility removes unavailable detail
+controls without changing Tree child expansion.
 
 For [checkboxes embedded inside a Name renderer](/grid/plugins/selection/#checkbox-inside-an-existing-column),
 use the Selection context's localized label, checked and disabled state. Native

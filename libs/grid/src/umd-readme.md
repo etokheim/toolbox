@@ -41,3 +41,8 @@
   document.body.appendChild(grid);
 </script>
 ```
+
+### Plugins with dependencies
+
+`tree.umd.js` and `grouping-rows.umd.js` bundle their hierarchy dependency,
+so no extra script is needed. The grid attaches one hierarchy plugin per grid.

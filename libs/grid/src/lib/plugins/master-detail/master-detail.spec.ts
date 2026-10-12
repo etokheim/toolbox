@@ -1302,6 +1302,54 @@ describe('masterDetail', () => {
       return { gridEl, eventListeners, queryCalls };
     }
 
+    it('revokes detail loading and cached data when eligibility disappears, ignoring late responses', () => {
+      const rows = [
+        { id: 1, eligible: true },
+        { id: 2, eligible: false },
+      ];
+      const { gridEl, eventListeners, queryCalls } = createMockGridWithEvents(rows);
+      const plugin = new MasterDetailPlugin<(typeof rows)[number]>({
+        hasDetail: (row) => row.eligible,
+        detailRenderer: () => '<div>Detail</div>',
+      });
+      plugin.attach(gridEl);
+      plugin['toggleAndEmit'](rows[1], 1);
+      expect(queryCalls).toEqual([]);
+      plugin['toggleAndEmit'](rows[0], 0);
+      expect(plugin.isDetailLoading(0)).toBe(true);
+      const firstRequest = queryCalls.find((q) => q.type === 'datasource:fetch-children')!.context as {
+        context: { source: string; row: object };
+      };
+      rows[0].eligible = false;
+      plugin.processRows(rows);
+      expect(plugin.isExpanded(0)).toBe(false);
+      expect(plugin.isDetailLoading(0)).toBe(false);
+      eventListeners.get('datasource:children')?.({
+        rows: [{ id: 10 }],
+        context: { source: 'master-detail', row: rows[0], rowIndex: 0 },
+      });
+      rows[0].eligible = true;
+      expect(plugin.getDetailData(0)).toBeUndefined();
+      expect(plugin.getRowHeight(rows[0], 0)).toBeUndefined();
+      plugin['toggleAndEmit'](rows[0], 0);
+      eventListeners.get('datasource:children')?.({
+        rows: [{ id: 10 }],
+        context: firstRequest.context,
+      });
+      expect(plugin.getDetailData(0)).toBeUndefined();
+      expect(plugin.isDetailLoading(0)).toBe(true);
+      eventListeners.get('datasource:children')?.({
+        rows: [{ id: 11 }],
+        context: { source: 'master-detail', row: rows[0], rowIndex: 0 },
+      });
+      expect(plugin.getDetailData(0)).toEqual([{ id: 11 }]);
+      plugin.collapse(0);
+      rows[0].eligible = false;
+      plugin.processRows(rows);
+      rows[0].eligible = true;
+      expect(plugin.getDetailData(0)).toBeUndefined();
+    });
+
     it('should fire datasource:fetch-children on detail expand when ServerSide is active', () => {
       const rows = [{ id: 1, name: 'Alice' }];
       const { gridEl, queryCalls } = createMockGridWithEvents(rows);

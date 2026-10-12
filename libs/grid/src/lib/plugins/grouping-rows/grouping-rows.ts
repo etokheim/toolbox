@@ -6,10 +6,132 @@
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
-import type { DefaultExpandedValue, GroupDefinition, GroupingRowsConfig, GroupRowModelItem, RenderRow } from './types';
+import type {
+  DefaultExpandedValue,
+  GroupDefinition,
+  GroupingRowsConfig,
+  GroupOnContext,
+  GroupRowModelItem,
+  RenderRow,
+} from './types';
+import type { HierarchyNode, HierarchyRowMeta } from '../hierarchy/types';
+
+/** Context for the root row list (no parent). */
+const ROOT_CONTEXT: GroupOnContext = { parent: null, depth: 0 };
+
+/** @internal Preserve root expansion when adding/removing a structure contributor. */
+export class RootGroupKeys {
+  readonly paths = new Map<string, string[]>();
+  #scoped = false;
+
+  prepare(scoped: boolean, expanded: Set<string>): void {
+    if (scoped !== this.#scoped) {
+      const open = [...this.paths.values()].filter((path) => expanded.has(this.#key(path)));
+      for (const path of this.paths.values()) expanded.delete(this.#key(path));
+      this.#scoped = scoped;
+      for (const path of open) expanded.add(this.#key(path));
+    }
+    this.paths.clear();
+  }
+
+  #key(path: string[]): string {
+    return this.#scoped ? JSON.stringify([null, path]) : path.join('||');
+  }
+}
+
+/** @internal Shared structural header shape for flat and composed models. */
+export function createGroupRow(item: GroupRowModelItem, depth = item.depth, count = getGroupRowCount(item)) {
+  return {
+    __isGroupRow: true,
+    __groupKey: item.key,
+    __groupValue: item.value,
+    __groupDepth: depth,
+    __groupRows: item.rows,
+    __groupExpanded: item.expanded,
+    __groupRowCount: count,
+    __rowCacheKey: `group:${item.key}`,
+  };
+}
+
+/** @internal Re-nest the visible group model for composition with natural children. */
+export function nestGroupRows(
+  flat: RenderRow[],
+  baseDepth: number,
+  dataNode: (row: unknown, index: number) => HierarchyNode,
+  rowCount: (item: GroupRowModelItem) => number,
+  renderItems: WeakMap<object, RenderRow>,
+): HierarchyNode[] {
+  const roots: HierarchyNode[] = [];
+  const open: HierarchyNode[] = [];
+  for (const item of flat) {
+    if (item.kind === 'data') {
+      const node = dataNode(item.row, item.rowIndex);
+      (open.length > 0 ? (open[open.length - 1].children as HierarchyNode[]) : roots).push(node);
+      if (typeof item.row === 'object' && item.row !== null) renderItems.set(item.row, item);
+      continue;
+    }
+    const groupItem: GroupRowModelItem = baseDepth === 0 ? item : { ...item, depth: baseDepth + item.depth };
+    const row = createGroupRow(item, groupItem.depth, rowCount(item));
+    renderItems.set(row, groupItem);
+    const node: HierarchyNode = { row, key: item.key, expanded: item.expanded, shaped: true, children: [] };
+    open.length = item.depth;
+    (item.depth > 0 ? (open[item.depth - 1].children as HierarchyNode[]) : roots).push(node);
+    open.push(node);
+  }
+  return roots;
+}
+
+/** @internal Preserve an already-flat group model without a second node graph. */
+export function flattenGroupRows(flat: readonly RenderRow[], meta: WeakMap<object, HierarchyRowMeta>): unknown[] {
+  const parents = new Array<number>(flat.length);
+  const stack: number[] = [];
+  const counts = new Map<number, number>();
+  for (let i = 0; i < flat.length; i++) {
+    const item = flat[i];
+    if (item.kind === 'group') stack.length = item.depth;
+    const parent = stack.at(-1) ?? -1;
+    parents[i] = parent;
+    counts.set(parent, (counts.get(parent) ?? 0) + 1);
+    if (item.kind === 'group') stack.push(i);
+  }
+  const positions = new Map<number, number>();
+  return flat.map((item, i) => {
+    const parent = parents[i];
+    const parentItem = flat[parent];
+    const level = item.kind === 'group' ? item.depth + 1 : parentItem?.kind === 'group' ? parentItem.depth + 2 : 1;
+    const posInSet = (positions.get(parent) ?? 0) + 1;
+    positions.set(parent, posInSet);
+    const row = item.kind === 'group' ? createGroupRow(item) : item.row;
+    if (typeof row === 'object' && row !== null) {
+      const setSize = counts.get(parent);
+      if (setSize === undefined) throw new Error('Missing sibling count for a grouped row');
+      meta.set(row, { level, setSize, posInSet });
+    }
+    return row;
+  });
+}
+
+/** @internal Track data-row animation keys independently of projection shape. */
+export function collectVisibleDataKeys(
+  flat: readonly RenderRow[],
+  previous: ReadonlySet<string>,
+  newlyVisible: Set<string>,
+): Set<string> {
+  newlyVisible.clear();
+  const current = new Set<string>();
+  flat.forEach((item, index) => {
+    if (item.kind === 'data') {
+      const key = `data-${index}`;
+      current.add(key);
+      if (!previous.has(key)) newlyVisible.add(key);
+    }
+  });
+  return current;
+}
 
 interface GroupNode {
   key: string; // composite key
+  path: string[];
   value: any;
   depth: number;
   rows: any[];
@@ -26,6 +148,13 @@ interface BuildGroupingArgs {
   /** Sort direction per group depth level. 1 = ascending, -1 = descending.
    *  When omitted, groups at all levels sort ascending. */
   groupSortDirections?: Map<number, 1 | -1>;
+  /** Passed to `groupOn` as its second argument (default: the root list). */
+  context?: GroupOnContext;
+  /** Parent occurrence identity for collision-free nested group keys. */
+  scope?: string | null;
+  /** Structural ancestry, independent of the serialized key format. */
+  nestedParents?: Map<string, { scope: string | null; parent: string | null }>;
+  keyPaths?: Map<string, string[]>;
 }
 
 /**
@@ -41,30 +170,38 @@ export function buildGroupedRowModel({
   expanded,
   initialExpanded,
   groupSortDirections,
+  context = ROOT_CONTEXT,
+  scope,
+  nestedParents,
+  keyPaths,
 }: BuildGroupingArgs): RenderRow[] {
   const groupOn = config.groupOn;
   if (typeof groupOn !== 'function') {
     return [];
   }
 
-  const root: GroupNode = { key: '__root__', value: null, depth: -1, rows: [], children: new Map() };
+  const root: GroupNode = { key: '__root__', path: [], value: null, depth: -1, rows: [], children: new Map() };
 
   // Build tree structure — push each row into every ancestor along the path
   // so that each group's `rows` array contains ALL data rows in its subtree.
   // This is required for correct counts and aggregations on multi-level groups.
   rows.forEach((r) => {
-    let path: any = groupOn(r);
+    let path: any = groupOn(r, context);
     if (path == null || path === false) path = ['__ungrouped__'];
     else if (!Array.isArray(path)) path = [path];
 
     let parent = root;
     path.forEach((rawVal: any, depthIdx: number) => {
       const seg = rawVal == null ? '∅' : String(rawVal);
-      const composite = parent.key === '__root__' ? seg : parent.key + '||' + seg;
       let node = parent.children.get(seg);
       if (!node) {
-        node = { key: composite, value: rawVal, depth: depthIdx, rows: [], children: new Map(), parent };
+        const path = [...parent.path, seg];
+        const composite =
+          scope === undefined ? (parent === root ? seg : parent.key + '||' + seg) : JSON.stringify([scope, path]);
+        node = { key: composite, path, value: rawVal, depth: depthIdx, rows: [], children: new Map(), parent };
+        keyPaths?.set(JSON.stringify(path), path);
         parent.children.set(seg, node);
+        if (scope !== undefined) nestedParents?.set(composite, { scope, parent: parent === root ? null : parent.key });
       }
       node.rows.push(r);
       parent = node;
@@ -84,7 +221,13 @@ export function buildGroupedRowModel({
   }
 
   // Merge expanded sets - use initialExpanded on first render, then expanded takes over
-  const effectiveExpanded = new Set([...expanded, ...(initialExpanded ?? [])]);
+  const effectiveExpanded = initialExpanded ? new Set([...expanded, ...initialExpanded]) : expanded;
+
+  const order = config.groupOrder?.(context);
+  const groupRanks = order?.length ? new Map<string, number>() : undefined;
+  if (order && groupRanks) {
+    for (const value of order) if (!groupRanks.has(value)) groupRanks.set(value, groupRanks.size);
+  }
 
   // Sort sibling groups by their group value so that group header order is
   // deterministic and respects the active sort direction for each depth level.
@@ -96,6 +239,11 @@ export function buildGroupedRowModel({
     const childDepth = node === root ? 0 : node.depth + 1;
     const dir = groupSortDirections?.get(childDepth) ?? 1;
     children.sort((a, b) => {
+      if (groupRanks) {
+        const rank =
+          (groupRanks.get(a.path[a.depth]) ?? groupRanks.size) - (groupRanks.get(b.path[b.depth]) ?? groupRanks.size);
+        if (rank !== 0) return rank;
+      }
       const av = a.value;
       const bv = b.value;
       if (av == null && bv == null) return 0;
@@ -140,24 +288,31 @@ export function buildGroupedRowModel({
 /**
  * Discover which column field produces the group value at each depth level.
  *
- * Samples the first row's `groupOn` output to get the group path, then checks
+ * Samples the first grouped row's `groupOn` output to get the group path, then checks
  * which column fields produce matching values for that row. This mapping allows
  * the plugin to apply user-invoked column sort directions to the correct group
  * depth levels.
  *
+ * @param context - Passed to `groupOn` (default: the root list).
  * @returns Map from depth index to column field name, or empty map if unmappable
  */
 export function resolveGroupFields(
   rows: any[],
-  groupOn: (row: any) => any[] | any | null | false,
+  groupOn: NonNullable<GroupingRowsConfig['groupOn']>,
   columnFields: string[],
+  context: GroupOnContext = ROOT_CONTEXT,
 ): Map<number, string> {
   const depthToField = new Map<number, string>();
-  if (rows.length === 0) return depthToField;
-
-  const sampleRow = rows[0];
-  let path: any = groupOn(sampleRow);
-  if (path == null || path === false) return depthToField;
+  let sampleRow: any;
+  let path: any = null;
+  for (const row of rows) {
+    path = groupOn(row, context);
+    if (path != null && path !== false) {
+      sampleRow = row;
+      break;
+    }
+  }
+  if (sampleRow === undefined) return depthToField;
   if (!Array.isArray(path)) path = [path];
 
   for (let depth = 0; depth < path.length; depth++) {
@@ -187,6 +342,48 @@ export function toggleGroupExpansion(expandedKeys: Set<string>, key: string): Se
     newSet.add(key);
   }
   return newSet;
+}
+
+/** @internal Preserve legacy standalone accordion ancestry and depth rules. */
+export function collapseUnscopedPeers(
+  expandedKeys: ReadonlySet<string>,
+  key: string,
+  depth: number,
+  rows: readonly RenderRow[],
+): Set<string> {
+  const retained = new Set<string>();
+  for (const existingKey of expandedKeys) {
+    if (key.startsWith(existingKey + '||')) {
+      retained.add(existingKey);
+      continue;
+    }
+    if (existingKey.startsWith(key + '||')) continue;
+    const group = rows.find((row): row is GroupRowModelItem => row.kind === 'group' && row.key === existingKey);
+    if (group && group.depth !== depth) retained.add(existingKey);
+  }
+  return retained;
+}
+
+/** Collapse only peers of a scoped group and their descendants; retain other parents' state. */
+export function collapseScopedPeers(
+  expandedKeys: Set<string>,
+  key: string,
+  parents: ReadonlyMap<string, { scope: string | null; parent: string | null }>,
+): Set<string> {
+  const result = new Set(expandedKeys);
+  const target = parents.get(key);
+  if (!target) return result;
+  for (const expanded of expandedKeys) {
+    let candidate = expanded;
+    let meta = parents.get(candidate);
+    if (meta?.scope !== target.scope) continue;
+    while (meta && meta.parent !== target.parent && meta.parent !== null) {
+      candidate = meta.parent;
+      meta = parents.get(candidate);
+    }
+    if (meta?.parent === target.parent && candidate !== key) result.delete(expanded);
+  }
+  return result;
 }
 
 /**

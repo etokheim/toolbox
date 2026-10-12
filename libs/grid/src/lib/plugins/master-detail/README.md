@@ -30,6 +30,15 @@ grid.gridConfig = {
 };
 ```
 
+## Per-row eligibility
+
+`MasterDetailConfig<T>.hasDetail?: (row: T) => boolean` gates native/custom disclosures,
+clicks, keyboard and API expansion, loading and heights. Omitted allows all real rows;
+group headers and loading placeholders are excluded. Refresh after eligibility changes
+to release detail state, cached data, heights and controls. Retained actions recheck
+eligibility. A real Tree parent may have independent child and detail expansion.
+See [Hierarchy composition](https://toolboxjs.com/grid/plugins/hierarchy/).
+
 ## Custom disclosures
 
 `MasterDetailConfig<T>.disclosureRenderer` replaces the standalone expander control only.

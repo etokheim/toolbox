@@ -990,6 +990,16 @@ The patterns that show how to *use* the configuration API live with their respec
 
 ## Accessibility & Keyboard
 
+Tree and Row Grouping compose through [Hierarchy](/grid/plugins/hierarchy/).
+`GroupOnContext` supplies the real `parent` and structural `depth`;
+`HierarchyPlugin.getRowMeta(row)` returns the shared positional metadata.
+`MasterDetailConfig<T>.hasDetail` controls per-row detail eligibility independently
+of Tree children. These are additive; standalone defaults are retained.
+GroupingRows `childDefaultExpanded` overrides child-section defaults without changing
+global groups; `groupOrder` ranks categories per natural sibling scope.
+`GroupingRowsPlugin.setGroupOrder()` replaces or clears that ranking without resetting
+expansion. See [Row Grouping](/grid/plugins/grouping-rows/).
+
 RowDragDrop's optional `dragHandleRenderer` receives a typed `RowDragHandleContext`
 and registers one HTML control with `bindHandle`. The plugin retains native drag,
 click-menu and Ctrl-arrow routing. See [custom drag controls](/grid/plugins/row-drag-drop/#custom-drag-controls).

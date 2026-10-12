@@ -168,6 +168,21 @@ You can instead import `GridTreeDirective` and bind `[tree]` directly on `<tbw-g
   </TabItem>
 </Tabs>
 
+## Grouping and Detail Expansion
+
+Tree composes with [Row Grouping](/grid/plugins/grouping-rows/) through the automatic
+[Hierarchy](/grid/plugins/hierarchy/) dependency. Use
+`groupOn: (row, { parent }) => parent === null ? null : row.category` to leave real
+roots ungrouped and group each parent's children separately.
+
+Tree keys honour configured `getRowId`; otherwise the existing `id`/reference/path
+fallback applies. Repeated business entities require distinct occurrence objects
+and IDs. MultiSort orders each sibling list using its complete model.
+
+A real parent can also have [details](/grid/plugins/master-detail/#per-row-eligibility):
+child expansion and detail expansion are independent. Filtering projections and
+complete-hierarchy totals remain consumer-owned; see the hierarchy contract.
+
 ## Demos
 
 Toggle the controls to explore animation, indentation, and expand behavior.

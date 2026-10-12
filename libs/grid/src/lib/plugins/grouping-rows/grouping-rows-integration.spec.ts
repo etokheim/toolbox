@@ -75,7 +75,38 @@ describe('grouping-rows plugin integration', () => {
       expect(rows[4].getAttribute('aria-setsize')).toBe('1');
     });
 
-    it('restores rows-body role to grid on detach()', async () => {
+    it('does not re-write unchanged aria position attributes on subsequent renders', async () => {
+      const grid = document.createElement('tbw-grid') as GridElement;
+      document.body.appendChild(grid);
+
+      const plugin = new GroupingRowsPlugin({
+        groupOn: (row: any) => row.category,
+        defaultExpanded: true,
+      });
+
+      grid.gridConfig = {
+        columns: [{ field: 'category', header: 'Category' }],
+        plugins: [plugin],
+      };
+      grid.rows = [
+        { id: 1, category: 'A' },
+        { id: 2, category: 'A' },
+      ];
+
+      await waitUpgrade(grid);
+
+      const dataRow = grid.querySelector('.data-grid-row:not(.group-row)') as HTMLElement;
+      expect(dataRow.getAttribute('aria-level')).toBe('2');
+
+      const setAttribute = vi.spyOn(dataRow, 'setAttribute');
+      grid.getPluginByName('hierarchy')?.afterRender();
+
+      const ariaWrites = setAttribute.mock.calls.filter(([name]) => String(name).startsWith('aria-'));
+      expect(ariaWrites).toEqual([]);
+      setAttribute.mockRestore();
+    });
+
+    it('restores rows-body role to grid when the hierarchy detaches', async () => {
       const grid = document.createElement('tbw-grid') as GridElement;
       document.body.appendChild(grid);
 
@@ -93,7 +124,7 @@ describe('grouping-rows plugin integration', () => {
 
       expect(grid.querySelector('.rows-body')?.getAttribute('role')).toBe('treegrid');
 
-      plugin.detach();
+      grid.getPluginByName('hierarchy')?.detach();
 
       expect(grid.querySelector('.rows-body')?.getAttribute('role')).toBe('grid');
     });

@@ -1,0 +1,62 @@
+---
+---
+
+<div id="hierarchy-tree-grouping-demo" class="grid-demo not-content">
+  <tbw-grid style="height: 360px;"></tbw-grid>
+</div>
+
+<script>
+  import { queryGrid } from '@toolbox-web/grid';
+  import '@toolbox-web/grid/features/tree';
+  import '@toolbox-web/grid/features/grouping-rows';
+  import '@toolbox-web/grid/features/master-detail';
+
+  interface Item {
+    id: string;
+    name: string;
+    category?: string;
+    children?: Item[];
+    detail?: string;
+  }
+
+  const container = document.getElementById('hierarchy-tree-grouping-demo');
+  if (container) {
+    const grid = queryGrid<Item>('tbw-grid', container);
+    if (!grid) throw new Error('Hierarchy demo grid not found');
+    grid.gridConfig = {
+      columns: [{ field: 'name', header: 'Name' }],
+      features: {
+        tree: { treeColumn: 'name', defaultExpanded: true, animation: false },
+        groupingRows: {
+          groupOn: (row, { parent }) => (parent === null ? null : row.category),
+          defaultExpanded: true,
+          animation: false,
+        },
+        masterDetail: {
+          hasDetail: (row) => !!row.detail,
+          detailRenderer: (row) => {
+            const content = document.createElement('p');
+            content.textContent = String(row.detail);
+            return content;
+          },
+          animation: false,
+        },
+      },
+    };
+    grid.rows = [
+      {
+        id: 'Alpha',
+        name: 'Alpha',
+        detail: 'Alpha parent details',
+        children: [{ id: 'Alpha/item', name: 'Alpha item', category: 'Shared' }],
+      },
+      {
+        id: 'Beta',
+        name: 'Beta',
+        detail: 'Beta parent details',
+        children: [{ id: 'Beta/item', name: 'Beta item', category: 'Shared' }],
+      },
+      { id: 'Empty', name: 'Empty destination', children: [] },
+    ];
+  }
+</script>

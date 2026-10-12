@@ -116,6 +116,22 @@ export interface GroupCollapseDetail {
 export type DefaultExpandedValue = boolean | number | string | string[];
 
 /**
+ * Second argument passed to {@link GroupingRowsConfig.groupOn}.
+ *
+ * Grouping applies to every list of sibling rows. Without TreePlugin there is
+ * only the root list (`parent: null`, `depth: 0`); with TreePlugin the
+ * children of every expanded tree node form their own list.
+ *
+ * @since 3.9.0
+ */
+export interface GroupOnContext {
+  /** The tree row whose children are being grouped, or `null` for the root rows. */
+  parent: unknown;
+  /** Nesting depth of the rows being grouped (0 = root rows). */
+  depth: number;
+}
+
+/**
  * Configuration options for the row grouping plugin
  *
  * @since 0.1.1
@@ -138,9 +154,37 @@ export interface GroupingRowsConfig {
    * Callback to determine group path for a row.
    * Return an array of group keys, a single key, null/false to skip grouping.
    *
+   * The second argument tells which list of sibling rows is being grouped.
+   * Combined with TreePlugin, `groupOn` runs for the children of every
+   * expanded tree node — return `null` for a whole list to leave that level
+   * ungrouped.
+   *
    * Mutually exclusive with `groups` — when `groups` is provided, `groupOn` is ignored.
+   *
+   * @example Group only the children of tree nodes
+   * ```ts
+   * groupOn: (row, { depth }) => (depth > 0 ? row.kind : null)
+   * ```
    */
-  groupOn?: (row: any) => any[] | any | null | false;
+  groupOn?: (row: any, context: GroupOnContext) => any[] | any | null | false;
+  /**
+   * Ordered category segments for groups in a natural sibling list.
+   * Return `undefined` to retain normal value/direction ordering in that scope.
+   * Segments use the same string normalization as `groupOn` keys (null becomes
+   * `"∅"`). This changes ordering only, not category values, labels or group keys.
+   *
+   * Listed categories form a fixed prefix, independent of column sort direction.
+   * Unlisted categories follow in normal sort order; absent categories create no
+   * groups. Duplicate entries use the first position.
+   *
+   * Resolved once per sibling-list model build using the same parent/depth context
+   * as `groupOn`; that ranking is reused across nested group-path levels within
+   * the list. Does not reorder data rows or predefined groups.
+   * @example Keep child sections ordered without changing global group ordering
+   * groupOrder: ({ parent }) => parent === null ? undefined : ['Primary', 'Secondary']
+   * @since 3.9.0
+   */
+  groupOrder?: (context: GroupOnContext) => readonly string[] | undefined;
   /**
    * Pre-defined group structure for server-side grouping.
    *
@@ -168,9 +212,31 @@ export interface GroupingRowsConfig {
    * - `number`: Expand group at this index (0-based)
    * - `string`: Expand group with this key (composite key format: "parent||child")
    * - `string[]`: Expand groups with these keys
+   *
+   * Beneath real Tree parents, a numeric default is resolved independently
+   * against each parent's first nonempty list of top-level child groups.
+   * `0` opens its first group and `1` its second. Empty lists do not consume
+   * the default; an out-of-range index on a nonempty list opens nothing.
+   * Later rebuilds do not reapply it, preserving explicit user collapses.
    * @default false
    */
   defaultExpanded?: DefaultExpandedValue;
+  /**
+   * Override initial expansion for top-level groups beneath each real Tree parent.
+   * Root/global groups still use {@link defaultExpanded}. When omitted, child
+   * groups retain the existing `defaultExpanded` behavior.
+   *
+   * `true` opens newly encountered child groups; `false` leaves them collapsed.
+   * A numeric index is resolved once per parent's first nonempty group list,
+   * preserving explicit collapses across rebuilds. Explicit expansion actions,
+   * including the pending override in `setGroupOn`, take precedence.
+   *
+   * Does not expand real Tree rows. Ignored without Tree or in predefined-group mode.
+   * @example Open global groups, but keep sections beneath Tree parents closed
+   * { defaultExpanded: true, childDefaultExpanded: false }
+   * @since 3.9.0
+   */
+  childDefaultExpanded?: boolean | number;
   /** Custom group row renderer - takes full control of group row rendering */
   groupRowRenderer?: (params: GroupRowRenderParams) => HTMLElement | string | void;
   /** Show row count in group headers (default: true) */
@@ -194,9 +260,11 @@ export interface GroupingRowsConfig {
   /**
    * Accordion mode - only one group can be expanded at a time.
    * Expanding a group will automatically collapse all other groups at the same depth.
+   *
+   * Pass a function to choose per depth, e.g. `(depth) => depth === 0`.
    * @default false
    */
-  accordion?: boolean;
+  accordion?: boolean | ((depth: number) => boolean);
   /**
    * Height of group header rows in pixels.
    * Used by the variable row height system to provide consistent heights

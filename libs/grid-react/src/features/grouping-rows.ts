@@ -61,6 +61,7 @@ function normalizeDisclosure(config: GroupingRowsConfig): CoreGroupingRowsConfig
 
 registerFeatureRendererBridge('groupingRows', {
   keys: ['disclosureRenderer'],
+  liveConfigKeys: ['groupOrder'],
   normalize(config, owner) {
     const options = config as GroupingRowsConfig;
     const renderer = options.groupRowRenderer;
@@ -80,6 +81,9 @@ registerFeatureRendererBridge('groupingRows', {
     return { ...config, disclosureRenderer: normalizeDisclosure(options), groupRowRenderer };
   },
   update(grid, config) {
-    grid.getPluginByName('groupingRows')?.setDisclosureRenderer(normalizeDisclosure(config as GroupingRowsConfig));
+    const plugin = grid.getPluginByName('groupingRows');
+    const options = config as GroupingRowsConfig;
+    plugin?.setDisclosureRenderer(normalizeDisclosure(options));
+    plugin?.setGroupOrder(options.groupOrder);
   },
 });

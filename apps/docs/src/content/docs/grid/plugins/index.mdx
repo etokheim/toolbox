@@ -59,6 +59,7 @@ Editing is opt-in. To enable `editable` and `editor` column properties, you must
 | [Row Grouping](/grid/plugins/grouping-rows/) | Group rows by field values with expand/collapse |
 | [Column Grouping](/grid/plugins/grouping-columns/) | Visual column grouping with nested headers |
 | [Tree](/grid/plugins/tree/) | Hierarchical tree data display |
+| [Hierarchy](/grid/plugins/hierarchy/) | Automatically composes Tree and parent-scoped Row Grouping |
 | [Master-Detail](/grid/plugins/master-detail/) | Expandable detail rows |
 | [Pivot](/grid/plugins/pivot/) | Pivot table transformation with aggregations |
 
@@ -434,7 +435,6 @@ Some plugin combinations conflict and should not be used together. A development
 
 | Plugin A | Plugin B | Reason |
 |----------|----------|--------|
-| GroupingRowsPlugin | TreePlugin | Both transform the entire row model in different ways |
 | GroupingRowsPlugin | PivotPlugin | Pivot creates its own aggregated row/column structure |
 | TreePlugin | PivotPlugin | Pivot replaces the data structure; tree hierarchy cannot coexist |
 | ServerSidePlugin | GroupingRowsPlugin | Grouping needs the full dataset; server-side loads blocks lazily |

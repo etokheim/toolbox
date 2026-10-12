@@ -5,6 +5,8 @@ export type GridOwner = () => HTMLElement | null;
 
 interface FeatureRendererBridge {
   keys: readonly string[];
+  /** Config keys with explicit state-preserving setters, not renderer callbacks. */
+  liveConfigKeys?: readonly string[];
   normalize(config: Record<string, unknown>, owner?: GridOwner): Record<string, unknown>;
   update(grid: DataGridElement, config: Record<string, unknown>): void;
 }
@@ -64,7 +66,7 @@ function sameConfig(a: unknown, b: unknown, omitted: readonly string[] = []): bo
   return true;
 }
 
-/** Only renderer-only changes bypass the normal config rebuild. */
+/** Renderer and explicitly supported live-config changes bypass the normal config rebuild. */
 export function sameNonRendererConfig(a: unknown, b: unknown): boolean {
   if (a === b) return true;
   if (!a || !b || typeof a !== 'object' || typeof b !== 'object') return false;
@@ -73,7 +75,9 @@ export function sameNonRendererConfig(a: unknown, b: unknown): boolean {
   if (!sameConfig(a, b, ['features'])) return false;
   const names = new Set([...Object.keys(left.features ?? {}), ...Object.keys(right.features ?? {})]);
   for (const name of names) {
-    if (!sameConfig(left.features?.[name], right.features?.[name], bridges.get(name)?.keys)) return false;
+    const bridge = bridges.get(name);
+    const liveKeys = bridge?.liveConfigKeys ? [...bridge.keys, ...bridge.liveConfigKeys] : bridge?.keys;
+    if (!sameConfig(left.features?.[name], right.features?.[name], liveKeys)) return false;
   }
   return true;
 }

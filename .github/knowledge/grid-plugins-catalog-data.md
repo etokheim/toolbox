@@ -1,13 +1,18 @@
 ---
 domain: grid-plugins-catalog-data
-related: [grid-plugins, grid-plugins-catalog-ui, grid-core, grid-data-pipeline, grid-features]
+related: [grid-plugins, grid-hierarchy, grid-plugins-catalog-ui, grid-core, grid-data-pipeline, grid-features]
 ---
 
 # Plugin Catalog — Data & Model Plugins
 
-> Plugin system (manager, lifecycle, hooks, manifest) → grid-plugins.md. Shell → grid-plugins-shell.md. Interaction/display plugins (Selection, MasterDetail, Reordering, Responsive, Tooltip, StickyRows, ContextMenu) → grid-plugins-catalog-ui.md. Editing/UndoRedo → grid-plugins-editing.md.
->
-> Read order for grouping teardown: `grouping-rows-plugin.ts` → `grouping-row-metadata.ts` → `grouping-disclosures.ts`.
+Data plugins outside the Tree/GroupingRows hierarchy: source loading, pivot, columns, sort/filter, pinned totals and export.
+
+- Tree, GroupingRows, shared Hierarchy/metadata generations → `grid-hierarchy.md`.
+- Plugin system (manager, lifecycle, hooks, manifest) → `grid-plugins.md`; Shell → `grid-plugins-shell.md`.
+- Selection, MasterDetail, Reordering, Responsive, Tooltip, StickyRows, ContextMenu → `grid-plugins-catalog-ui.md`.
+- Editing/UndoRedo → `grid-plugins-editing.md`.
+
+Read order for incorrect rows/totals: row-identity invariants → owning transform/filter plugin → PinnedRows aggregation scope.
 
 ## Row-Transforming (`modifiesRowStructure: true`)
 
@@ -25,33 +30,6 @@ EVENTS: `datasource:data|children|loading|error`. QUERIES: `datasource:fetch-chi
 - DECIDED (#369): `FeatureConfig.serverSide` widened to `boolean | ServerSideConfig`; factory normalizes `true` → `new ServerSidePlugin()`. `{...true}` yields `{}`, no throw.
 - TENSION: tall grid + small `pageSize` + no threshold needs a scroll to fill the viewport.
 - Tests: `server-side.spec.ts` (AbortSignal, Subscribable, `loadBlock`, `createUrlDataSource`, `data-src`, boolean shorthand).
-
-### Tree
-
-OWNS: expanded keys, flattened rows, `rowKeyMap`, `#rowMeta` `WeakMap<row,FlattenedTreeRow>`, `#rowKeys` `WeakMap<row,string>`, animation state, `loadingKeys`/`loadedKeys`, `#childRequests: Map<key,AbortController>`.
-HOOKS: processRows(10), processColumns, afterCellRender, afterRender, onCellClick, onHeaderClick, renderRow, getRowHeight, adjustVirtualStart.
-QUERIES: `canMoveRow`, `datasource:viewport-mapping`, `sort:get-model`. EVENTS: `tree-expand`, `tree-load-start|end|error`. FIRES: `datasource:fetch-children`. LISTENS: `datasource:children|error` (filtered on `context.source === 'tree'`).
-
-- DECIDED (v3.4.0, lazy loading): two routes, ServerSide wins. `requestLazyChildren` checks `datasource:is-active` **via `queryBoolean`** (#430 — raw `query()` returns a truthy `[]`). Else `TreeConfig.loadChildren` (Promise or `Subscribable`, per-request `AbortController`, aborted on `detach()`). `Subscribable` is **take-one** — `finish()` removes the controller `detach()` would abort; a `settled` flag covers synchronous emission. Ref: `TreePlugin.#loadChildrenLocally`, `tree-integration.spec.ts`.
-- INVARIANT (#430): `detectTreeStructure(rows, childrenField, hasChildren)` MUST receive `config.hasChildren` (predicate-only lazy trees have no `children` field), else detection returns false. File: [tree-detect.ts](libs/grid/src/lib/plugins/tree/tree-detect.ts).
-- INVARIANT: lazy children are signalled by a truthy non-array `childrenField` or a `TreeConfig.hasChildren` predicate; single-batch (no pagination). `loadedKeys` (NOT `row[childrenField].length`) gates re-fetch; fetched at most once per attach, errors do NOT mark loaded. `datasource:error` MUST be handled — else the key stays in `loadingKeys` forever and retries short-circuit.
-- INVARIANT: loading UI reuses core `createDefaultSpinner('small')` (+ `.tree-loading` sizing in `@layer tbw-plugins`). `afterRender` sets AND removes `aria-busy` (explicit negative branch).
-- DECIDED (#264, WAI-ARIA treegrid): active hierarchy → `.rows-body` `role="treegrid"` + visible-row `aria-level`/`aria-setsize`/`aria-posinset`. Tree restores `role="grid"` on detach; GroupingRows restores owned metadata (below). Tree uses `FlattenedTreeRow`; GroupingRows uses `flatMeta` (`computeFlatMeta`). INVARIANT: `posInSet`/`setSize` are 1-based PER PARENT, not global rowIndex.
-- INVARIANT (async rows): `processColumns` is a no-op while `flattenedRows` is empty, and a ROWS-only render never re-runs COLUMNS — so rows arriving asynchronously (`grid.rows = …` after `ready()`, or a ServerSide block) would leave the tree column undecorated. `processRows` (BOTH branches) calls `#syncTreeColumn()`, which microtask-defers a `#treeColumnWrapped !== flattenedRows.length > 0` check and `requestColumnsRender()`s on mismatch.
-- INVARIANT: `_schedulerMergeConfig` reseeds `#baseColumns` from `_columns`; columns handed to plugins are NOT pristine. Tree tracks its installed wrapper and both original renderer aliases: core resolves `renderer || viewRenderer`, so wrapping only `viewRenderer` bypasses decoration for React config cells. Restore both aliases when unwrapping; repeated merges must not nest wrappers.
-- OWNS (disclosures): `#cells` maps cells to row/key, persistent outer wrapper, independent content element and optional `ControlSlot<TreeDisclosureContext<T>>`. Same logical row keeps wrapper/content; recycle calls `releaseCell` inside an adapter batch BEFORE invoking the cached Name renderer, then detaches the old wrapper intact. `afterCellRender` registers cleanup after output installation.
-- INVARIANT: `disclosureRenderer` applies only to eligible parents with visible icons; loading disables its action. `setExpanded` rechecks slot, grid attachment, live row/key and loading, then calls existing `toggle`. Callback setter requests STYLE only. DOM controls own names/native activation; no default Tree label exists. Navigation boundary contract → `grid-plugins-catalog-ui.md`.
-- INVARIANT (perf): `flattenTree` allocates one result array; recursive `appendFlattenedRows` appends preorder rows into it. Do NOT return/spread child arrays: wide expanded nodes can exceed the JS argument limit. Bench: `tree-data.bench.ts`.
-
-### GroupingRows
-
-OWNS: grouped row model, expanded keys, animation state. HOOKS: processRows(10), onHeaderClick(-1), renderRow. QUERIES: `canMoveRow`, `grouping:get-grouped-fields`, `datasource:viewport-mapping`. EVENTS: `group-toggle|expand|collapse`.
-
-- DECIDED (#335, deferred expansion): `setGroupOn(fn, expanded?)` takes `DefaultExpandedValue: boolean|number|string|string[]` seeding expansion against the NEW group set on the next rebuild (sets `groupConfigDirty`); `expandAll`/`collapseAll` called right after it ALSO defer via `pendingExpansion`. `processRows` snapshots+clears `pendingExpansion` at the top, resolves against fresh `getGroupKeys(initialBuild)` and broadcasts `group-toggle` once.
-- INVARIANT: bulk `group-toggle` emissions MUST use `broadcast<GroupToggleDetail>`, not `emitPluginEvent`. `GroupToggleDetail.{key,expanded,value,depth}` are optional (bulk carries only `expandedKeys`).
-- OWNS: disclosure `ControlSlot`s by row element + existing group key/depth; guarded positional lookup reads the current flattened model. Same-key headers preserve host/cell/focus, regenerate only generated siblings. Recycle, regroup, removal, callback replacement and disconnect revoke actions/dispose; whole-header renderer results take precedence.
-- DECIDED (grouping disclosure slice): plugin-local `disclosureLabel` shares native/custom localization without growing unrelated entry defaults (Editing budget has 6 bytes spare). Custom hosts are semantics-free and never use `.group-toggle`; native pseudo-target stays intact. Loading does not disable native collapse, so custom `disabled` matches.
-- OWNS: `GroupingRowMetadata` leases grouping attributes/styles and rows-body role; release on disable/detach/recycle restores prior values only while still owned and unchanged. Successor leases inherit the original baseline; external replacement values survive. Header→data/loading clears old cells even with matching child counts; active `afterRender` prunes detached leases. Tests: `disclosure-controls.spec.ts`, `grouping-row-metadata.spec.ts`.
 
 ### Pivot
 

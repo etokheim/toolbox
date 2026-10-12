@@ -69,7 +69,7 @@ setup hooks only for immutable fixture construction). Mirror the style of existi
 
 The `bench-vs-tag.ts` orchestrator materialises the baseline ref in a sibling git worktree,
 runs `vitest bench` on **both** sides on this machine (same CPU / kernel / thermal state — the
-whole point of the methodology), merges max-of-N per side via `tools/merge-bench-runs.ts`, and
+whole point of the methodology), selects the highest-Hz run per case on each side via `tools/merge-bench-runs.ts`, and
 compares via `tools/compare-benches.ts`. Artifacts land under `tmp/` (`bench-current-*.json`,
 `bench-baseline-*.json`).
 
@@ -79,7 +79,7 @@ compares via `tools/compare-benches.ts`. Artifacts land under `tmp/` (`bench-cur
 bun .github/skills/bench/bench-vs-tag.ts                    # default: last tag, all projects, 1 iter
 bun .github/skills/bench/bench-vs-tag.ts --ref grid-2.7.0   # explicit tag/SHA baseline
 bun .github/skills/bench/bench-vs-tag.ts --project grid     # subset (repeatable)
-bun .github/skills/bench/bench-vs-tag.ts --iterations 3     # max-of-N per side (noisy suites)
+bun .github/skills/bench/bench-vs-tag.ts --iterations 3     # highest Hz per side (noisy suites)
 bun .github/skills/bench/bench-vs-tag.ts --threshold 0.20   # tighter regression gate (default 0.30)
 bun .github/skills/bench/bench-vs-tag.ts --keep-worktree    # don't delete ../base on exit
 bun .github/skills/bench/bench-vs-tag.ts --help             # full flag list
@@ -105,8 +105,24 @@ Echo the resolved tag back before starting (e.g. _"Resolved `2.7.0` → `grid-2.
 ## Reading the results
 
 Read the JSON / comparison-Markdown artifacts directly for precise numbers — do not parse console
-output. For each suite compare current vs baseline mean and flag any regression above the script's
-threshold (default `0.30` for vs-tag). When asked for a report, produce:
+output. The script's threshold (default `0.30` for vs-tag) is a **throughput loss**:
+`current.hz / baseline.hz - 1 < -threshold`, with slower disjoint confidence intervals.
+It is not a duration-increase threshold. Report mean-duration deltas separately.
+
+- **Name the aggregation and units before claiming qualification.** Highest-Hz selection keeps
+  the winning entry's mean/error/sample count together, independently per side. It is not a ratio
+  of largest means or the worst paired delta. Never abbreviate these different methods as just
+  "max-of-three".
+- **Preserve an explicitly agreed duration criterion.** A 30% throughput loss corresponds
+  approximately to a 42.86% duration increase, not 30%. Repository PASS does not waive a stricter
+  duration requirement. If earlier reporting used another aggregation, disclose the change and
+  show both methods on the same retained runs; do not silently switch acceptance metrics.
+- **Keep every paired result available.** For alternating runs, record baseline/candidate
+  absolute means, duration and Hz deltas, and aggregate selected run IDs. Identify any paired
+  threshold crossings even when the aggregate passes. Preserve first failures rather than
+  replacing them with favorable repeats.
+
+When asked for a report, produce:
 
 - **Check comparability before diagnosing a flagged row.** Diff the benchmark file and compare the
   Git blob hashes of the implementation and dependency lockfile against the baseline. If the

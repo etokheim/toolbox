@@ -423,6 +423,13 @@ its plugin without requiring an empty `gridConfig`. Removing an explicit `gridCo
 clears the configuration last applied by that DataGrid, but not a later imperative
 replacement. An initially unconfigured grid keeps its declarative columns.
 
+For native Tree child sections, GroupingRows supports `childDefaultExpanded` and
+`groupOrder({ parent, depth })`. Callback-only replacement or clearing of `groupOrder`
+on either `groupingRows` or `gridConfig.features.groupingRows` preserves the existing
+plugins, selection and expansion; an unchanged callback does not invalidate the model.
+Other config changes retain the normal initialization lifecycle. See
+[category ordering](https://toolboxjs.com/grid/plugins/grouping-rows/#category-order).
+
 Create expandable row details using the `GridDetailPanel` component:
 
 ```tsx

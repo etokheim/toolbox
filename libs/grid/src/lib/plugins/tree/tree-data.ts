@@ -90,18 +90,19 @@ export function expandAll(
   config: TreeConfig,
   parentKey: string | null = null,
   depth = 0,
+  keyFor: typeof generateRowKey = generateRowKey,
 ): Set<string> {
   const childrenField = config.childrenField ?? 'children';
   const keys = new Set<string>();
 
   for (let i = 0; i < rows.length; i++) {
     const row = rows[i];
-    const key = generateRowKey(row, i, parentKey);
+    const key = keyFor(row, i, parentKey);
     const children = row[childrenField];
 
     if (Array.isArray(children) && children.length > 0) {
       keys.add(key);
-      const childKeys = expandAll(children as TreeRow[], config, key, depth + 1);
+      const childKeys = expandAll(children as TreeRow[], config, key, depth + 1, keyFor);
       for (const k of childKeys) keys.add(k);
     }
   }
@@ -155,12 +156,13 @@ export function getPathToKey(
   config: TreeConfig,
   parentKey: string | null = null,
   depth = 0,
+  keyFor: typeof generateRowKey = generateRowKey,
 ): string[] | null {
   const childrenField = config.childrenField ?? 'children';
 
   for (let i = 0; i < rows.length; i++) {
     const row = rows[i];
-    const key = generateRowKey(row, i, parentKey);
+    const key = keyFor(row, i, parentKey);
 
     if (key === targetKey) {
       return [key];
@@ -168,7 +170,7 @@ export function getPathToKey(
 
     const children = row[childrenField];
     if (Array.isArray(children) && children.length > 0) {
-      const childPath = getPathToKey(children as TreeRow[], targetKey, config, key, depth + 1);
+      const childPath = getPathToKey(children as TreeRow[], targetKey, config, key, depth + 1, keyFor);
       if (childPath) {
         return [key, ...childPath];
       }
@@ -187,8 +189,9 @@ export function expandToKey(
   targetKey: string,
   config: TreeConfig,
   existingExpanded: Set<string>,
+  keyFor: typeof generateRowKey = generateRowKey,
 ): Set<string> {
-  const path = getPathToKey(rows, targetKey, config);
+  const path = getPathToKey(rows, targetKey, config, null, 0, keyFor);
   if (!path) return existingExpanded;
 
   const newExpanded = new Set(existingExpanded);

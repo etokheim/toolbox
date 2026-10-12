@@ -1,7 +1,7 @@
 const METADATA = Symbol.for('tbw.grid.grouping-row-metadata');
 
 interface Entry {
-  owner: GroupingRowMetadata;
+  owner: RowMetadata;
   previous: string | null;
   priority: string;
   value: string;
@@ -9,8 +9,8 @@ interface Entry {
 
 type TrackedElement = HTMLElement & { [METADATA]?: Map<string, Entry> };
 
-/** Compare-and-restore leases for the attributes and styles written by GroupingRows. */
-export class GroupingRowMetadata {
+/** Compare-and-restore leases for plugin-owned row attributes and styles. */
+export class RowMetadata {
   readonly elements = new Set<HTMLElement>();
 
   set(element: HTMLElement, name: string, value: string): void {

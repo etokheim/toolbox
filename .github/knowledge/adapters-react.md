@@ -50,6 +50,7 @@ related: [adapters, adapters-vue, adapters-angular, grid-core, grid-features]
 - READS FROM: the selection-control-bridge memo-payload invariant above; `disclosure-controls.spec.tsx` covers the same A→B→sortable ordering with independent Name/detail portals.
 - OWNS: `features/grouping-rows.ts` uses the same adapter-local bridge for both config surfaces; whole-header JSX uses explicit owner + `trackFeaturePortal`, released by adapter `releaseCell`. No global core-factory replacement. `GroupingRowsConfig` accepts `ReactElement`, not `Exclude<ReactNode, string>` (strings still satisfy the iterable branch); source/emitted negative fixtures enforce this.
 - INVARIANT: Selection automatic `afterRender` focus sync skips focused disclosure boundaries; click guards alone cannot prevent reselection after `group-toggle` clears sync markers. Normal native/row focus remains unchanged. Browser fixture verifies nested button activation, provider context, auto-height bounds and commit-inclusive updates; await the PortalManager microtask, not merely scheduling time.
+- OWNS: grouping bridge `liveConfigKeys: ['groupOrder']` explicitly separates state-preserving config setters from renderer keys. Both prop/canonical updates call equality-guarded `setGroupOrder`; replacement/clearing reorder without detach, unchanged identity does not invalidate. WHY: props JSON serialization omits functions; ordinary canonical config reapplication retires group expansion. Other config retains existing lifecycle. `features/group-order.spec.tsx`.
 
 ## drag-control bridge
 

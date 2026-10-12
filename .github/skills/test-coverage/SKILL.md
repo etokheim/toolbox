@@ -49,6 +49,17 @@ Vitest targets (for example grid-vue) forward CLI options and require
 `bun nx test grid-vue --run src/features/cell-entry.spec.ts` instead.
 Do not assume a positional path filtered a legacy target: check its test-file count.
 
+For isolated configs or a legacy executor that exits before starting Vitest, use
+`bun nx exec --projects=<project> --excludeTaskDependencies -- vitest run --config <absolute-config-path>`.
+Nx exec changes cwd and otherwise traverses dependency projects, repeating the same
+fixture; use absolute paths for any configs they load too. The same flags apply to
+`tsc -p <absolute-config-path>`. Count distinct cases, not repeated dependency runs.
+
+For built-public-package proofs, resolve imports using the built package's actual
+`exports` paths, reject accidental `/libs/.../src/` imports, and separately typecheck
+against emitted declarations. Source-alias adapter tests do not prove packaged API
+compatibility. Do not repoint shared dependency links merely to run a proof.
+
 Review the coverage report to identify uncovered:
 
 - **Branches** (if/else, switch, ternary)
@@ -165,6 +176,9 @@ rebuilt emitted package declarations; include direct adapter props and canonical
 `GridConfig<Row>.features` so generic feature augmentation cannot silently erase `Row`.
 Auxiliary source configs should retain each source project's compiler assumptions rather
 than applying an adapter-only restriction to the entire core dependency graph.
+For selected grid specs, extend `tsconfig.lib.json`, retain its runtime `include` set,
+and add the selected specs through `files`. Following imports alone can miss plugin
+module augmentations (for example `ColumnConfig.filterable`) and report fixture-only errors.
 
 ### happy-dom gotchas (layout, timers, plugin identity)
 
@@ -210,3 +224,12 @@ Then re-run coverage to confirm improvement.
   than its declaration. Fallow can consequently still mark an executed method as estimated
   zero coverage. Inspect the actual `fnMap` locations and `f` hit counts before concluding
   that the method is untested; do not suppress genuine complexity findings.
+- Genuine Istanbul can also omit direct private-method `fnMap` entries. Statement-range
+  hits are supplemental evidence, not function coverage or a replacement CRAP score.
+  Preserve missing/invalid source coordinates, including `end.column: null`; use separately
+  labelled source-line context instead of fabricating ranges.
+- For compound guards, inspect raw `branchMap`/`b` counts: `if`/ternary arms count outcomes,
+  while `binary-expr` arms count operand evaluations. Equal nonzero operand counts do not
+  prove independent rejection. Map missing cases to public lifecycle scenarios versus
+  defensive hook fixtures, and assert observable results. Exercise positive behavior before
+  a rejection test so an always-skipping setup cannot falsely establish safety.
