@@ -22,37 +22,64 @@
  * @packageDocumentation
  */
 
-import {
-  GroupingRowsPlugin,
-  type GroupingRowsConfig,
-  type GroupRowRenderParams,
-} from '@toolbox-web/grid/plugins/grouping-rows';
-// Named type re-export surfaces the core `FeatureConfig` augmentation to dist
-// consumers (this module registers via factory override, not the core feature
-// module, so the augmentation must be pulled in explicitly). See adapters.md.
+import '@toolbox-web/grid/features/grouping-rows';
+import type { GroupingRowsConfig as CoreGroupingRowsConfig } from '@toolbox-web/grid/plugins/grouping-rows';
 export type { _Augmentation as _GroupingRowsAugmentation } from '@toolbox-web/grid/features/grouping-rows';
-import type { ReactNode } from 'react';
-import { registerFeature } from '../lib/feature-registry';
-import { createNodeBridge } from '../lib/portal-bridge';
+export type { GroupingRowsDisclosureContext } from '@toolbox-web/grid/plugins/grouping-rows';
+export type { GroupingRowsConfig } from '../lib/feature-props';
+import type { GroupingRowsConfig } from '../lib/feature-props';
+import { createControlBridge } from '../lib/control-bridge';
+import { registerFeatureRendererBridge, trackFeaturePortal } from '../lib/feature-renderers';
+import { getPortalManager, renderToContainer } from '../lib/portal-bridge';
+import { isValidElement } from 'react';
 
-registerFeature(
-  'groupingRows',
-  (rawConfig) => {
-    if (typeof rawConfig === 'boolean') return new GroupingRowsPlugin();
-    if (!rawConfig) return new GroupingRowsPlugin();
+const disclosures = new WeakMap<
+  NonNullable<GroupingRowsConfig['disclosureRenderer']>,
+  NonNullable<CoreGroupingRowsConfig['disclosureRenderer']>
+>();
 
-    const config = rawConfig as GroupingRowsConfig & { groupRowRenderer?: unknown };
-    const options = { ...config } as GroupingRowsConfig;
+function normalizeDisclosure(config: GroupingRowsConfig): CoreGroupingRowsConfig['disclosureRenderer'] {
+  const renderer = config.disclosureRenderer;
+  if (renderer && !disclosures.has(renderer)) {
+    disclosures.set(
+      renderer,
+      createControlBridge((context) => {
+        const result = renderer(context);
+        if (
+          result !== null &&
+          !(result instanceof HTMLElement) &&
+          !isValidElement(result) &&
+          !(typeof result === 'object' && 'element' in result)
+        )
+          throw new TypeError('Expected a disclosure control or null.');
+        return result;
+      }),
+    );
+  }
+  return renderer ? disclosures.get(renderer) : undefined;
+}
 
-    // Bridge React groupRowRenderer (returns ReactNode) to vanilla (returns HTMLElement | string | void)
-    if (typeof config.groupRowRenderer === 'function') {
-      const reactFn = config.groupRowRenderer as unknown as (params: GroupRowRenderParams) => ReactNode;
-      const bridged = createNodeBridge<GroupRowRenderParams>(reactFn);
-      // Group rows always need an element; coerce null → empty wrapper.
-      options.groupRowRenderer = (params) => bridged(params) ?? document.createElement('div');
-    }
-
-    return new GroupingRowsPlugin(options);
+registerFeatureRendererBridge('groupingRows', {
+  keys: ['disclosureRenderer'],
+  normalize(config, owner) {
+    const options = config as GroupingRowsConfig;
+    const renderer = options.groupRowRenderer;
+    const groupRowRenderer: CoreGroupingRowsConfig['groupRowRenderer'] = renderer
+      ? (params) => {
+          const result = renderer(params);
+          if (result instanceof HTMLElement || typeof result === 'string' || result === undefined) return result;
+          const host = document.createElement('span');
+          host.style.display = 'contents';
+          if (result === null || result === false) return host;
+          const grid = owner?.();
+          if (!grid || !getPortalManager(grid)) throw new Error('Group JSX requires an owning DataGrid PortalManager.');
+          trackFeaturePortal(host, renderToContainer(host, result, undefined, grid));
+          return host;
+        }
+      : undefined;
+    return { ...config, disclosureRenderer: normalizeDisclosure(options), groupRowRenderer };
   },
-  { override: true },
-);
+  update(grid, config) {
+    grid.getPluginByName('groupingRows')?.setDisclosureRenderer(normalizeDisclosure(config as GroupingRowsConfig));
+  },
+});

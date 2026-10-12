@@ -43,6 +43,66 @@ grid.gridConfig = {
 | `groupRowRenderer` | `(params) => HTMLElement \| string \| void` | -         | Custom group row renderer              |
 | `formatLabel`      | `(value, depth, key) => string`             | -         | Custom format function for group label |
 
+## Disclosure Controls
+
+Use `disclosureRenderer` to customize only the expand/collapse control, preserving
+generated labels, counts, aggregates and group-row navigation. `groupRowRenderer`
+still takes precedence when it returns a whole header.
+
+```typescript
+new GroupingRowsPlugin({
+  groupOn: (row) => row.category,
+  disclosureRenderer(initial) {
+    const element = document.createElement('button');
+    element.type = 'button';
+    let current = initial;
+    element.onclick = () => current.setExpanded(!current.expanded);
+    const update = (context: typeof initial) => {
+      current = context;
+      element.textContent = context.expanded ? '-' : '+';
+      element.setAttribute('aria-label', context.ariaLabel);
+      element.setAttribute('aria-expanded', String(context.expanded));
+      element.disabled = context.disabled;
+    };
+    update(initial);
+    return { element, update };
+  },
+});
+```
+
+`GroupingRowsDisclosureContext` supplies the owning `grid`, stable `host`, existing
+group `key`, `value`, `depth`, read-only `rows`, `rowCount`, `expanded`, `disabled`,
+`ariaLabel` and guarded `setExpanded(boolean)`. Keys are the existing composite
+group keys (or explicit predefined keys), not data-row IDs or display indexes.
+
+Return an `HTMLElement` to replace output, a `ControlView` for mount-once/update
+behavior, or `null` for deliberately empty output. Strings, `undefined` and thrown
+errors are reported through control diagnostics; they do not restore a default
+button. Views dispose on replacement, recycling, removal or disconnect; obsolete
+actions cannot change a new group. `setDisclosureRenderer` replaces or removes the
+hook without resetting expansion.
+
+Use `disclosureLabel: (expanded) => ...` for localized native and custom labels.
+Custom controls own their accessible name, expanded/disabled semantics and native
+click/Space/Enter behavior. Give buttons an adequate target size (at least 24px);
+do not reuse private `.group-toggle` markup. Native controls retain their existing
+minimum target and behavior when the hook is omitted.
+
+The React feature entry accepts JSX elements on both `groupingRows` and
+`gridConfig.features.groupingRows`, preserving surrounding React providers.
+Manually constructed core plugins, Vue and Angular use the DOM/`ControlView`
+contract; native Vue/Angular template disclosure facades are not provided.
+
+## Accessibility
+
+For [SC 1.3.1: Info and Relationships](https://www.w3.org/WAI/WCAG22/Understanding/info-and-relationships.html),
+active grouping supplies treegrid hierarchy metadata. Disabling grouping or removing
+the plugin restores grouping-owned row attributes, depth styles and the container role;
+ordinary rows do not retain stale group expansion or hierarchy metadata.
+For [SC 4.1.2: Name, Role, Value](https://www.w3.org/WAI/WCAG22/Understanding/name-role-value.html),
+native controls expose expansion state automatically; custom controls must apply
+their own semantics from the disclosure context.
+
 ## Multi-Level Grouping
 
 Return an array from `groupOn` for nested groups:

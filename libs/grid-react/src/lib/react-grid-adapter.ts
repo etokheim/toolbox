@@ -955,6 +955,7 @@ export class GridAdapter implements FrameworkAdapter {
    * bypass the adapter's own portal tracking.
    */
   releaseCell(cellEl: HTMLElement): void {
+    releaseFeaturePortals(cellEl);
     // Resolve only the portal containers actually inside this cell — avoids
     // an O(total portals) scan per cell teardown, which the core can call
     // many times during a render. Scoped DOM query is O(cell descendants),

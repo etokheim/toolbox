@@ -546,6 +546,10 @@ Key rules: prefer **system color keywords** (`CanvasText`, `Canvas`, `LinkText`,
 
 These patterns are how we keep the grid accessible — and how you should keep your customizations accessible too.
 
+[GroupingRows](/grid/plugins/grouping-rows/#accessibility) restores its owned
+hierarchy and expansion metadata when disabled or removed, so recycled ordinary
+rows do not announce stale group state.
+
 For [checkboxes embedded inside a Name renderer](/grid/plugins/selection/#checkbox-inside-an-existing-column),
 use the Selection context's localized label, checked and disabled state. Native
 click is the sole activation path (including checkbox Space and button Enter/Space);

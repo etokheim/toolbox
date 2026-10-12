@@ -10,7 +10,33 @@
 export type { AggregatorFn, AggregatorRef } from '../../core/internal/aggregators';
 export type { ExpandCollapseAnimation } from '../../core/types';
 
-import type { ExpandCollapseAnimation } from '../../core/types';
+import type { ControlRenderer, ExpandCollapseAnimation, PublicGrid } from '../../core/types';
+
+/**
+ * Plugin-owned group identity, state and action for a custom disclosure.
+ * Controls own their accessible name, expanded/disabled semantics and native activation.
+ * The grid retains row/cell navigation. Actions expire when the header is retired.
+ * @since 3.9.0
+ */
+export interface GroupingRowsDisclosureContext {
+  grid: PublicGrid & HTMLElement;
+  /** Stable, semantics-free control host; do not replace or reparent it. */
+  host: HTMLElement;
+  /** Existing group key (composite for groupOn, explicit for pre-defined groups). */
+  key: string;
+  value: unknown;
+  depth: number;
+  /** Loaded data rows, not synthetic group headers. */
+  rows: readonly unknown[];
+  /** Display count, including a pre-defined group's server-reported count. */
+  rowCount: number;
+  /** Localized action label from disclosureLabel, with the native default otherwise. */
+  ariaLabel: string;
+  expanded: boolean;
+  disabled: boolean;
+  /** Uses the same toggle, accordion and broadcast path as the native control. */
+  setExpanded(expanded: boolean): void;
+}
 
 /**
  * Map of field names to aggregator references
@@ -95,6 +121,19 @@ export type DefaultExpandedValue = boolean | number | string | string[];
  * @since 0.1.1
  */
 export interface GroupingRowsConfig {
+  /**
+   * Replace only the disclosure, retaining generated labels, counts and aggregates.
+   * HTMLElement outputs are replaceable; ControlView mounts once and receives updates;
+   * null deliberately leaves the slot empty. Ignored when groupRowRenderer handles the row.
+   * @since 3.9.0
+   */
+  disclosureRenderer?: ControlRenderer<GroupingRowsDisclosureContext>;
+  /**
+   * Localize native and custom disclosure action labels.
+   * Defaults to "Collapse group" / "Expand group". Kept plugin-local like the control itself.
+   * @since 3.9.0
+   */
+  disclosureLabel?: (expanded: boolean) => string;
   /**
    * Callback to determine group path for a row.
    * Return an array of group keys, a single key, null/false to skip grouping.

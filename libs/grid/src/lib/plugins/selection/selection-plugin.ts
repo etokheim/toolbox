@@ -10,6 +10,7 @@
 
 import { GridClasses } from '../../core/constants';
 import { announce, getA11yMessage } from '../../core/internal/aria';
+import { isDisclosureFocused } from '../../core/internal/control-lifecycle';
 import { CONTROL_RENDER_ERROR, throwDiagnostic } from '../../core/internal/diagnostics';
 import { getPrimaryPointer } from '../../core/internal/pointer-modality';
 import { tryResolveRowId } from '../../core/internal/row-manager';
@@ -1739,6 +1740,7 @@ export class SelectionPlugin<TRow = unknown> extends BaseGridPlugin<SelectionCon
    * landing on the default cell must not select it).
    */
   #syncSelectionToFocus(mode: string): void {
+    if (isDisclosureFocused(this.gridElement)) return;
     const focusRow = this.grid._focusRow;
     const focusCol = this.grid._focusCol;
 

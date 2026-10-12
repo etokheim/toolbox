@@ -67,6 +67,16 @@ export function markDisclosureBoundary(host: HTMLElement, grid: HTMLElement): vo
   (host as ControlElement)[DISCLOSURE] = true;
 }
 
+/** Disclosure focus is not a request to select its owning row. */
+export function isDisclosureFocused(grid: HTMLElement): boolean {
+  let element = grid.ownerDocument.activeElement as ControlElement | null;
+  while (element && element !== grid) {
+    if (element[BOUNDARY] === grid && element[DISCLOSURE]) return true;
+    element = element.parentElement;
+  }
+  return false;
+}
+
 export function disclosureNavigationCell(event: KeyboardEvent, grid: HTMLElement): HTMLElement | null {
   if (
     !['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Home', 'End', 'PageUp', 'PageDown', 'Tab'].includes(event.key)

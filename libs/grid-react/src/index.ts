@@ -60,6 +60,7 @@ export type {
   ZonedPanelRender,
 } from './lib/feature-props';
 export type { TreeDisclosureContext } from '@toolbox-web/grid/plugins/tree';
+export type { GroupingRowsDisclosureContext } from '@toolbox-web/grid/plugins/grouping-rows';
 export type { MasterDetailDisclosureContext } from '@toolbox-web/grid/plugins/master-detail';
 export type { RowDragHandleContext } from '@toolbox-web/grid/plugins/row-drag-drop';
 

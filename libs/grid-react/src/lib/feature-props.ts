@@ -49,10 +49,10 @@ import type {
 import type { EditingConfig } from '@toolbox-web/grid/plugins/editing';
 import type { FilterPanelParams } from '@toolbox-web/grid/plugins/filtering';
 import type { ColumnGroupDefinition as CoreColumnGroupDefinition } from '@toolbox-web/grid/plugins/grouping-columns';
-import type { GroupRowRenderParams } from '@toolbox-web/grid/plugins/grouping-rows';
+import type { GroupRowRenderParams, GroupingRowsDisclosureContext } from '@toolbox-web/grid/plugins/grouping-rows';
 import type { AggregationSlot, PanelZone, PinnedRowsContext } from '@toolbox-web/grid/plugins/pinned-rows';
 import type { ShellConfig } from '@toolbox-web/grid/plugins/shell';
-import type { ReactNode } from 'react';
+import type { ReactElement, ReactNode } from 'react';
 import type { ControlView } from '@toolbox-web/grid';
 import type { SelectionHeaderCheckboxContext, SelectionRowCheckboxContext } from '@toolbox-web/grid/plugins/selection';
 import type { TreeDisclosureContext } from '@toolbox-web/grid/plugins/tree';
@@ -132,8 +132,12 @@ export type GroupingColumnsConfig = Omit<CoreGroupingColumnsConfig, 'groupHeader
  *
  * @since 1.8.0
  */
-export type GroupingRowsConfig = Omit<CoreGroupingRowsConfig, 'groupRowRenderer'> & {
+export type GroupingRowsConfig = Omit<CoreGroupingRowsConfig, 'groupRowRenderer' | 'disclosureRenderer'> & {
   groupRowRenderer?: CoreGroupingRowsConfig['groupRowRenderer'] | ((params: GroupRowRenderParams) => ReactNode);
+  /** Disclosure content rendered through this DataGrid's providers. @since 2.7.0 */
+  disclosureRenderer?: (
+    context: GroupingRowsDisclosureContext,
+  ) => ReactElement | HTMLElement | ControlView<GroupingRowsDisclosureContext> | null;
 };
 
 /**

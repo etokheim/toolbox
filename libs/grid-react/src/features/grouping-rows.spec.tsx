@@ -13,6 +13,7 @@ import type { ReactNode } from 'react';
 import { afterEach, beforeEach, describe, expect, expectTypeOf, it } from 'vitest';
 import type { GroupingRowsConfig as ReactGroupingRowsConfig } from '../lib/feature-props';
 import { resetBridge } from '../lib/portal-bridge';
+import { normalizeFeatureRenderers } from '../lib/feature-renderers';
 import './grouping-rows';
 
 const sampleParams: GroupRowRenderParams = {
@@ -51,11 +52,12 @@ describe('@toolbox-web/grid-react/features/grouping-rows', () => {
     expect(plugin).toBeDefined();
   });
 
-  it('wraps a React groupRowRenderer to produce an HTMLElement', () => {
+  it('normalizes DOM groupRowRenderer locally without overriding the core factory', () => {
     const cfg: ReactGroupingRowsConfig = {
-      groupRowRenderer: (params) => <strong>{params.value}</strong>,
+      groupRowRenderer: () => document.createElement('strong'),
     };
-    const plugin = createPluginFromFeature('groupingRows', cfg);
+    const normalized = normalizeFeatureRenderers({ groupingRows: cfg }).groupingRows;
+    const plugin = createPluginFromFeature('groupingRows', normalized as ReactGroupingRowsConfig);
     const bridged = userConfigOf<{ groupRowRenderer?: (p: GroupRowRenderParams) => HTMLElement }>(
       plugin,
     )?.groupRowRenderer;

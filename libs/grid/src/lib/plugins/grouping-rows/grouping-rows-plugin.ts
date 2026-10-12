@@ -7,6 +7,7 @@
 import { GridClasses } from '../../core/constants';
 import { aggregatorRegistry } from '../../core/internal/aggregators';
 import { announce, getA11yMessage } from '../../core/internal/aria';
+import { isControlEvent, releaseCell } from '../../core/internal/control-lifecycle';
 import { setRowLoadingState } from '../../core/internal/loading';
 import { setSanitizedHTML } from '../../core/internal/sanitize';
 import {
@@ -18,7 +19,7 @@ import {
   type PluginQuery,
 } from '../../core/plugin/base-plugin';
 import { isExpanderColumn } from '../../core/plugin/utility-column';
-import type { RowElementInternal } from '../../core/types';
+import type { PublicGrid, RowElementInternal } from '../../core/types';
 import type {
   DataSourceChildrenDetail,
   DataSourceDataDetail,
@@ -39,6 +40,8 @@ import {
   toggleGroupExpansion,
 } from './grouping-rows';
 import styles from './grouping-rows.css?inline';
+import { GroupingDisclosures } from './grouping-disclosures';
+import { GroupingRowMetadata } from './grouping-row-metadata';
 import type {
   DefaultExpandedValue,
   ExpandCollapseAnimation,
@@ -46,6 +49,7 @@ import type {
   GroupDefinition,
   GroupExpandDetail,
   GroupingRowsConfig,
+  GroupingRowsDisclosureContext,
   GroupRowModelItem,
   GroupToggleDetail,
   RenderRow,
@@ -270,6 +274,14 @@ export class GroupingRowsPlugin extends BaseGridPlugin<GroupingRowsConfig> {
    * by {@link afterRender} on every visible row.
    */
   private flatMeta: Array<{ level: number; setSize: number; posInSet: number }> = [];
+  #metadata = new GroupingRowMetadata();
+  #disclosures = new GroupingDisclosures({
+    grid: () => this.grid as PublicGrid & HTMLElement,
+    config: () => this.config,
+    state: (index) => this.#disclosureState(index),
+    toggle: (key) => this.toggle(key),
+    nativeButton: (key) => this.createToggleButton(this.isExpanded(key), () => this.toggle(key)),
+  });
   // #endregion
 
   // #region Animation
@@ -289,11 +301,8 @@ export class GroupingRowsPlugin extends BaseGridPlugin<GroupingRowsConfig> {
 
   /** @internal */
   override detach(): void {
-    // Restore default `role="grid"` on the rows-body so the grid stays
-    // ARIA-valid after the plugin is removed (template default lives in
-    // `core/internal/dom-builder.ts`). See WAI-ARIA Treegrid pattern.
-    const rowsBody = this.gridElement?.querySelector('.rows-body');
-    rowsBody?.setAttribute('role', 'grid');
+    this.#disclosures.releaseAll();
+    this.#releaseRowMetadata();
 
     this.expandedKeys.clear();
     this.flattenedRows = [];
@@ -654,6 +663,7 @@ export class GroupingRowsPlugin extends BaseGridPlugin<GroupingRowsConfig> {
 
   /** @internal */
   override onCellClick(event: CellClickEvent): boolean | void {
+    if (isControlEvent(event.originalEvent, this.gridElement)) return;
     const row = event.row as Record<string, unknown> | undefined;
 
     // Check if this is a group row toggle
@@ -668,6 +678,7 @@ export class GroupingRowsPlugin extends BaseGridPlugin<GroupingRowsConfig> {
 
   /** @internal */
   override onKeyDown(event: KeyboardEvent): boolean | void {
+    if (isControlEvent(event, this.gridElement)) return;
     // SPACE toggles expansion on group rows
     if (event.key !== ' ') return;
 
@@ -690,12 +701,14 @@ export class GroupingRowsPlugin extends BaseGridPlugin<GroupingRowsConfig> {
    * @internal
    */
   override renderRow(row: any, rowEl: HTMLElement, _rowIndex: number): boolean {
+    this.#disclosures.syncRow(row, rowEl, _rowIndex);
     // Handle loading placeholder rows for pre-defined groups
     // Uses the grid's built-in row loading API for consistent, customizable spinners
     if (row?.__loading === true && row?.__groupKey) {
+      this.#metadata.release(rowEl);
       rowEl.className = 'data-grid-row';
       (rowEl as RowElementInternal).__isCustomRow = true;
-      rowEl.innerHTML = '';
+      this.#clearGroupRow(rowEl);
       const cell = document.createElement('div');
       cell.className = 'cell';
       cell.style.gridColumn = '1 / -1';
@@ -708,6 +721,7 @@ export class GroupingRowsPlugin extends BaseGridPlugin<GroupingRowsConfig> {
 
     // Only handle group rows
     if (!row?.__isGroupRow) {
+      this.#resetRecycledGroup(rowEl);
       return false;
     }
 
@@ -729,9 +743,11 @@ export class GroupingRowsPlugin extends BaseGridPlugin<GroupingRowsConfig> {
       });
 
       if (result) {
+        this.#metadata.release(rowEl);
+        this.#clearGroupRow(rowEl);
         rowEl.className = 'data-grid-row group-row';
         (rowEl as RowElementInternal).__isCustomRow = true; // Mark for proper class reset on recycle
-        rowEl.setAttribute('data-group-depth', String(row.__groupDepth));
+        this.#metadata.set(rowEl, 'data-group-depth', String(row.__groupDepth));
         if (typeof result === 'string') {
           setSanitizedHTML(rowEl, result);
         } else {
@@ -749,27 +765,27 @@ export class GroupingRowsPlugin extends BaseGridPlugin<GroupingRowsConfig> {
     // Default group row rendering - keep data-grid-row class for focus/keyboard navigation
     rowEl.className = 'data-grid-row group-row';
     (rowEl as RowElementInternal).__isCustomRow = true; // Mark for proper class reset on recycle
-    rowEl.setAttribute('data-group-depth', String(row.__groupDepth));
+    this.#metadata.set(rowEl, 'data-group-depth', String(row.__groupDepth));
     rowEl.setAttribute('role', 'row');
-    rowEl.setAttribute('aria-expanded', String(row.__groupExpanded));
+    this.#metadata.set(rowEl, 'aria-expanded', String(row.__groupExpanded));
     // Public theming hook — see also TreePlugin / MasterDetailPlugin.
     rowEl.classList.toggle('tbw-row-expanded', !!row.__groupExpanded);
     // WAI-ARIA Treegrid: group rows announce their hierarchical position.
     const groupMeta = this.flatMeta[_rowIndex];
     if (groupMeta) {
-      rowEl.setAttribute('aria-level', String(groupMeta.level));
-      rowEl.setAttribute('aria-setsize', String(groupMeta.setSize));
-      rowEl.setAttribute('aria-posinset', String(groupMeta.posInSet));
+      this.#metadata.set(rowEl, 'aria-level', String(groupMeta.level));
+      this.#metadata.set(rowEl, 'aria-setsize', String(groupMeta.setSize));
+      this.#metadata.set(rowEl, 'aria-posinset', String(groupMeta.posInSet));
     }
     // Use CSS variable for depth-based indentation
-    rowEl.style.setProperty('--tbw-group-depth', String(row.__groupDepth || 0));
+    this.#metadata.set(rowEl, '--tbw-group-depth', String(row.__groupDepth || 0));
     if (config.indentWidth !== undefined) {
-      rowEl.style.setProperty('--tbw-group-indent-width', `${config.indentWidth}px`);
+      this.#metadata.set(rowEl, '--tbw-group-indent-width', `${config.indentWidth}px`);
     }
     // Clear any inline height from previous use (e.g., responsive card mode sets height: auto)
     // This ensures group rows use CSS-defined height, not stale inline styles from recycled elements
     rowEl.style.height = '';
-    rowEl.innerHTML = '';
+    if (!this.#disclosures.records.has(rowEl)) this.#clearGroupRow(rowEl);
 
     const isFullWidth = config.fullWidth !== false; // default true
 
@@ -778,34 +794,36 @@ export class GroupingRowsPlugin extends BaseGridPlugin<GroupingRowsConfig> {
     } else {
       this.renderPerColumnGroupRow(row, rowEl, handleToggle);
     }
+    this.#disclosures.update(rowEl, _rowIndex);
 
     return true;
   }
 
   /** @internal */
   override afterRender(): void {
+    this.#disclosures.refresh();
+    this.#releaseRowMetadata(this.isActive);
+    if (!this.isActive) return;
     const body = this.gridElement?.querySelector('.rows');
     if (!body) return;
 
     // Hierarchy is now in play \u2192 swap the rows-body role from `grid` to
     // `treegrid` per WAI-ARIA so per-row level/setsize/posinset are valid
     // in context. Idempotent on the hot path.
-    const rowsBody = this.gridElement?.querySelector('.rows-body');
-    if (rowsBody && rowsBody.getAttribute('role') !== 'treegrid') {
-      rowsBody.setAttribute('role', 'treegrid');
-    }
+    const rowsBody = this.gridElement?.querySelector<HTMLElement>('.rows-body');
+    if (rowsBody) this.#metadata.set(rowsBody, 'role', 'treegrid');
 
     // Apply ARIA position metadata to every visible DATA row (group rows are
     // populated by `renderRow` directly since they bypass the default cell
     // template that exposes `data-row`).
-    for (const rowEl of body.querySelectorAll('.data-grid-row:not(.group-row)')) {
+    for (const rowEl of body.querySelectorAll<HTMLElement>('.data-grid-row:not(.group-row)')) {
       const cell = rowEl.querySelector('.cell[data-row]');
       const idx = cell ? parseInt(cell.getAttribute('data-row') ?? '-1', 10) : -1;
       const meta = this.flatMeta[idx];
       if (!meta) continue;
-      rowEl.setAttribute('aria-level', String(meta.level));
-      rowEl.setAttribute('aria-setsize', String(meta.setSize));
-      rowEl.setAttribute('aria-posinset', String(meta.posInSet));
+      this.#metadata.set(rowEl, 'aria-level', String(meta.level));
+      this.#metadata.set(rowEl, 'aria-setsize', String(meta.setSize));
+      this.#metadata.set(rowEl, 'aria-posinset', String(meta.posInSet));
     }
 
     const style = this.animationStyle;
@@ -1000,6 +1018,76 @@ export class GroupingRowsPlugin extends BaseGridPlugin<GroupingRowsConfig> {
 
   // #region Private Rendering Helpers
 
+  #resetRecycledGroup(rowEl: HTMLElement): void {
+    if (!(rowEl as RowElementInternal).__isCustomRow || !rowEl.classList.contains('group-row')) return;
+    this.#clearGroupRow(rowEl);
+    this.#metadata.release(rowEl);
+  }
+
+  #releaseRowMetadata(detachedOnly = false): void {
+    for (const element of this.#metadata.elements) {
+      if (detachedOnly && this.gridElement.contains(element)) continue;
+      if (this.#metadata.owns(element, 'data-group-depth') && element.classList.contains('group-row')) {
+        this.#clearGroupRow(element);
+      }
+      this.#metadata.release(element);
+    }
+  }
+
+  #clearGroupRow(rowEl: HTMLElement): void {
+    this.grid.__frameworkAdapter?.beginBatch?.();
+    try {
+      for (const cell of Array.from(rowEl.children)) releaseCell(this.grid, cell as HTMLElement);
+      rowEl.replaceChildren();
+    } finally {
+      this.grid.__frameworkAdapter?.endBatch?.();
+    }
+  }
+
+  #disclosureLabel(expanded: boolean): string {
+    return this.config.disclosureLabel?.(expanded) ?? (expanded ? 'Collapse group' : 'Expand group');
+  }
+
+  #disclosureState(rowIndex: number): Omit<GroupingRowsDisclosureContext, 'host' | 'setExpanded'> | undefined {
+    const group = this.flattenedRows[rowIndex];
+    if (group?.kind !== 'group' || this.groupConfigDirty) return;
+    const expanded = this.isExpanded(group.key);
+    return {
+      grid: this.grid as PublicGrid & HTMLElement,
+      key: group.key,
+      value: group.value,
+      depth: group.depth,
+      rows: group.rows,
+      rowCount: this.findGroupDefinition(this.getActiveGroups(), group.key)?.rowCount ?? group.rows.length,
+      ariaLabel: this.#disclosureLabel(expanded),
+      expanded,
+      // Loading does not disable native group collapse; retain that policy.
+      disabled: false,
+    };
+  }
+
+  #appendDisclosure(
+    row: { __groupKey: string; __groupDepth: number; __groupExpanded: boolean },
+    rowEl: HTMLElement,
+    cell: HTMLElement,
+    handleToggle: () => void,
+  ): void {
+    const renderer = this.config.disclosureRenderer;
+    const disclosure = renderer
+      ? this.#disclosures.create(row.__groupKey, row.__groupDepth, rowEl, cell, renderer)
+      : this.createToggleButton(row.__groupExpanded, handleToggle);
+    if (disclosure.parentElement !== cell) cell.appendChild(disclosure);
+  }
+
+  #groupCell(rowEl: HTMLElement, index: number): HTMLElement {
+    const record = this.#disclosures.records.get(rowEl);
+    const cell = record ? (rowEl.children[index] as HTMLElement | undefined) : undefined;
+    if (!cell) return document.createElement('div');
+    // Only generated content is replaced. The control and its focused descendants stay mounted.
+    for (const child of Array.from(cell.childNodes)) if (child !== record?.slot.host) child.remove();
+    return cell;
+  }
+
   /**
    * Create a toggle button for expanding/collapsing a group.
    */
@@ -1007,7 +1095,7 @@ export class GroupingRowsPlugin extends BaseGridPlugin<GroupingRowsConfig> {
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.className = `${GridClasses.GROUP_TOGGLE}${expanded ? ` ${GridClasses.EXPANDED}` : ''}`;
-    btn.setAttribute('aria-label', expanded ? 'Collapse group' : 'Expand group');
+    btn.setAttribute('aria-label', this.#disclosureLabel(expanded));
     this.setIcon(btn, expanded ? 'collapse' : 'expand');
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -1030,14 +1118,14 @@ export class GroupingRowsPlugin extends BaseGridPlugin<GroupingRowsConfig> {
     const groupRows = row.__groupRows ?? [];
 
     // Full-width mode: single spanning cell with toggle + label + count + aggregates
-    const cell = document.createElement('div');
+    const cell = this.#groupCell(rowEl, 0);
     cell.className = 'cell group-full';
     cell.style.gridColumn = '1 / -1';
     cell.setAttribute('role', 'gridcell');
     cell.setAttribute('data-col', '0'); // Required for focus/click delegation
 
     // Toggle button
-    cell.appendChild(this.createToggleButton(row.__groupExpanded, handleToggle));
+    this.#appendDisclosure(row, rowEl, cell, handleToggle);
 
     // Group label
     const label = document.createElement('span');
@@ -1078,7 +1166,7 @@ export class GroupingRowsPlugin extends BaseGridPlugin<GroupingRowsConfig> {
       }
     }
 
-    rowEl.appendChild(cell);
+    if (cell.parentElement !== rowEl) rowEl.appendChild(cell);
   }
 
   private renderPerColumnGroupRow(row: any, rowEl: HTMLElement, handleToggle: () => void): void {
@@ -1099,7 +1187,7 @@ export class GroupingRowsPlugin extends BaseGridPlugin<GroupingRowsConfig> {
     let toggleRendered = false;
 
     columns.forEach((col, colIdx) => {
-      const cell = document.createElement('div');
+      const cell = this.#groupCell(rowEl, colIdx);
       cell.className = 'cell group-cell';
       cell.setAttribute('data-col', String(colIdx));
       cell.setAttribute('role', 'gridcell');
@@ -1108,14 +1196,14 @@ export class GroupingRowsPlugin extends BaseGridPlugin<GroupingRowsConfig> {
       // but still render an empty cell to maintain grid structure
       if (isExpanderColumn(col)) {
         cell.setAttribute('data-field', col.field);
-        rowEl.appendChild(cell);
+        if (cell.parentElement !== rowEl) rowEl.appendChild(cell);
         return;
       }
 
       // First non-expander column gets the toggle button + label
       if (!toggleRendered) {
         toggleRendered = true;
-        cell.appendChild(this.createToggleButton(row.__groupExpanded, handleToggle));
+        this.#appendDisclosure(row, rowEl, cell, handleToggle);
 
         const label = document.createElement('span');
         const firstColAgg = aggregators[col.field];
@@ -1144,12 +1232,21 @@ export class GroupingRowsPlugin extends BaseGridPlugin<GroupingRowsConfig> {
         }
       }
 
-      rowEl.appendChild(cell);
+      if (cell.parentElement !== rowEl) rowEl.appendChild(cell);
     });
   }
   // #endregion
 
   // #region Public API
+
+  /** Replace disclosure controls without resetting groups or expansion. @since 3.9.0 */
+  setDisclosureRenderer(renderer: GroupingRowsConfig['disclosureRenderer']): void {
+    if (this.config.disclosureRenderer === renderer) return;
+    const hadRenderer = !!this.config.disclosureRenderer;
+    this.config.disclosureRenderer = this.userConfig.disclosureRenderer = renderer;
+    if (hadRenderer) this.requestAfterRender();
+    else this.requestRender();
+  }
 
   /**
    * Expand all groups.
@@ -1395,6 +1492,7 @@ export class GroupingRowsPlugin extends BaseGridPlugin<GroupingRowsConfig> {
    * ```
    */
   setGroupOn(fn: ((row: any) => any[] | any | null | false) | undefined, expanded?: DefaultExpandedValue): void {
+    this.#disclosures.releaseAll();
     (this.config as GroupingRowsConfig).groupOn = fn;
     this.groupConfigDirty = true;
     if (expanded !== undefined) {
@@ -1417,6 +1515,7 @@ export class GroupingRowsPlugin extends BaseGridPlugin<GroupingRowsConfig> {
    * @param groups - Array of group definitions, or empty array to clear
    */
   setGroups(groups: GroupDefinition[]): void {
+    this.#disclosures.releaseAll();
     this.preDefinedGroups = groups;
     this.groupRowsMap.clear();
     this.loadingGroups.clear();

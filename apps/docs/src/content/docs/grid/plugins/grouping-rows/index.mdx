@@ -20,6 +20,73 @@ The Row Grouping plugin organizes your rows into collapsible hierarchical groups
 import '@toolbox-web/grid/features/grouping-rows';
 ```
 
+## Custom Disclosure Controls
+
+`disclosureRenderer` customizes only the expand/collapse control. Generated labels,
+counts, aggregates and group navigation remain plugin-owned. A whole-header
+`groupRowRenderer` result still takes precedence.
+
+```tsx
+import { DataGrid, type GroupingRowsConfig } from '@toolbox-web/grid-react';
+import '@toolbox-web/grid-react/features/grouping-rows';
+
+const groupingRows: GroupingRowsConfig = {
+  groupOn: (row) => row.category,
+  disclosureRenderer: (context) => (
+    <span className="app-disclosure">
+      <button
+        type="button"
+        aria-label={context.ariaLabel}
+        aria-expanded={context.expanded}
+        disabled={context.disabled}
+        style={{ minWidth: 24, minHeight: 24 }}
+        onClick={() => context.setExpanded(!context.expanded)}
+      >
+        {context.expanded ? '-' : '+'}
+      </button>
+    </span>
+  ),
+};
+
+<DataGrid rows={items} columns={[{ field: 'name' }]} groupingRows={groupingRows} />;
+```
+
+The same typed config works in `gridConfig.features.groupingRows`. Import the
+React feature entry to normalize JSX through the grid's provider-preserving portal
+manager. Manually constructed core plugins remain DOM-only.
+
+In React, setting the last `groupingRows` feature prop to `undefined` removes the
+plugin even without a `gridConfig` prop. Removing an explicit `gridConfig` also
+clears configuration last applied by that DataGrid; a later imperative config
+replacement is not erased.
+
+Core renderers return an `HTMLElement`, a persistent `ControlView<GroupingRowsDisclosureContext>`
+(`element`, `update`, optional `dispose`), or deliberate empty `null`; React also
+accepts JSX elements. Strings, `undefined` and thrown errors are diagnostic failures,
+not default-control fallbacks. Same-group updates preserve persistent views and
+focus; replacement, recycling, removal and disconnect dispose them and revoke stale
+actions. Vue/Angular retain the DOM contract without a native template facade.
+
+The context contains `grid`, stable `host`, existing group `key`, `value`, `depth`,
+read-only `rows`, `rowCount`, `expanded`, `disabled`, `ariaLabel` and
+`setExpanded(boolean)`. Identity is the composite grouping key or explicit predefined
+key, not a row ID or view index. Use `disclosureLabel: (expanded) => ...` to localize
+the shared native/custom label. Custom controls own their name, expanded/disabled
+semantics and native click/Space/Enter activation; the grid retains navigation and
+row/cell ARIA. Keep adequate button targets and avoid private `.group-toggle`
+markup. Omitting the hook preserves the native control and its minimum target size.
+
+## Accessibility
+
+[SC 1.3.1: Info and Relationships](https://www.w3.org/WAI/WCAG22/Understanding/info-and-relationships.html):
+grouping supplies treegrid hierarchy metadata while active. Disabling grouping or
+removing the plugin restores its owned row attributes, depth styles and container
+role, rather than leaving ordinary rows marked as expandable groups.
+
+[SC 4.1.2: Name, Role, Value](https://www.w3.org/WAI/WCAG22/Understanding/name-role-value.html):
+native controls expose their state automatically. Custom disclosure controls must
+apply their own name, role and expanded/disabled state from the context.
+
 ## Basic Usage
 
 The `groupOn` callback receives each row and should return an array representing the group path. For single-level grouping, return a one-element array. For multi-level grouping, return multiple elements (e.g., `['Region', 'Department']`).

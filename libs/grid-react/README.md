@@ -386,9 +386,9 @@ const config: GridConfig<Employee> = {
 
 ## Master-Detail with GridDetailPanel
 
-Tree and MasterDetail also accept typed `disclosureRenderer` callbacks returning JSX,
+Tree, MasterDetail and GroupingRows accept typed `disclosureRenderer` callbacks returning JSX,
 DOM elements, persistent `ControlView` objects, or `null`. Import the corresponding React
-feature module and use `TreeConfig<T>` / `MasterDetailConfig<T>` from this package.
+feature module and use `TreeConfig<T>` / `MasterDetailConfig<T>` / `GroupingRowsConfig` from this package.
 Both feature props and `gridConfig.features` normalize these hooks; manually supplied
 core plugins remain DOM-only.
 
@@ -412,8 +412,16 @@ Providers are shared with Name renderers and detail panels, using separate mount
 Replacing only disclosure callbacks preserves plugin expansion state. Keep the native
 control mounted across state updates; do not add a second Space/Enter toggle handler.
 MasterDetail exposes `context.ariaLabel` and remains in its standalone utility column.
-Its config-level `detailRenderer` still supports JSX/string/HTMLElement, while a
+GroupingRows also exposes `ariaLabel`, with existing group keys rather than row IDs.
+It preserves generated labels/counts/aggregates; use `disclosureLabel` for localization
+and keep custom markup independent of private `.group-toggle` classes.
+MasterDetail's config-level `detailRenderer` still supports JSX/string/HTMLElement, while a
 `GridDetailPanel` child takes precedence.
+
+Removing the last feature prop (for example, `groupingRows={undefined}`) also removes
+its plugin without requiring an empty `gridConfig`. Removing an explicit `gridConfig`
+clears the configuration last applied by that DataGrid, but not a later imperative
+replacement. An initially unconfigured grid keeps its declarative columns.
 
 Create expandable row details using the `GridDetailPanel` component:
 
