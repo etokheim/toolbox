@@ -17,6 +17,8 @@
  * 4. **Row Measurement**: Measures rendered row heights from DOM
  */
 
+import type { RowElementInternal } from '../types';
+
 // #region Types
 
 /**
@@ -395,7 +397,7 @@ export interface RowMeasurementContext<T> {
  * Returns measurement statistics for updating virtualization state.
  *
  * @param context - Measurement context with all dependencies
- * @param rowElements - NodeList of rendered row elements
+ * @param rowElements - Direct body rows in current render-window order
  * @returns Measurement result with flags and statistics
  */
 export function measureRenderedRowHeights<T>(
@@ -407,14 +409,24 @@ export function measureRenderedRowHeights<T>(
   let hasChanges = false;
   const heightChanges: RowHeightChange[] = [];
 
-  rowElements.forEach((rowEl) => {
-    const rowIndexStr = (rowEl as HTMLElement).dataset.rowIndex;
+  rowElements.forEach((rowEl, slot) => {
+    const rowIndexStr = rowEl.querySelector(':scope > .cell[data-row]')?.getAttribute('data-row');
     if (!rowIndexStr) return;
 
-    const rowIndex = parseInt(rowIndexStr, 10);
-    if (rowIndex < start || rowIndex >= end || rowIndex >= rows.length) return;
+    const rowIndex = Number(rowIndexStr);
+    if (
+      !Number.isInteger(rowIndex) ||
+      String(rowIndex) !== rowIndexStr ||
+      rowIndex !== start + slot ||
+      rowIndex < start ||
+      rowIndex >= end ||
+      rowIndex >= rows.length ||
+      !positionCache[rowIndex]
+    )
+      return;
 
     const row = rows[rowIndex];
+    if ((rowEl as RowElementInternal).__rowDataRef !== row) return;
 
     // Check if a plugin provides the height for this row
     const pluginHeight = getPluginHeight?.(row, rowIndex);

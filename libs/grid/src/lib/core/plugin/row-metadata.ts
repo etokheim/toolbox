@@ -4,7 +4,7 @@ interface Entry {
   owner: RowMetadata;
   previous: string | null;
   priority: string;
-  value: string;
+  value: string | null;
 }
 
 type TrackedElement = HTMLElement & { [METADATA]?: Map<string, Entry> };
@@ -13,7 +13,7 @@ type TrackedElement = HTMLElement & { [METADATA]?: Map<string, Entry> };
 export class RowMetadata {
   readonly elements = new Set<HTMLElement>();
 
-  set(element: HTMLElement, name: string, value: string): void {
+  set(element: HTMLElement, name: string, value: string | null): void {
     const tracked = element as TrackedElement;
     const entries = (tracked[METADATA] ??= new Map());
     const previous = entries.get(name);

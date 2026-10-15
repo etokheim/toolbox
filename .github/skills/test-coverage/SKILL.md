@@ -182,6 +182,12 @@ module augmentations (for example `ColumnConfig.filterable`) and report fixture-
 
 ### happy-dom gotchas (layout, timers, plugin identity)
 
+For geometry/recycling regressions, inspect the real rendered DOM before building
+the fixture: an invented index attribute can make measurement tests pass while
+production skips every row. Prove current slot identity after reuse and include
+nested headers as well as nested body rows; nearest-row ownership alone does not
+exclude a nested grid's header cells.
+
 happy-dom does **no layout**: `clientHeight` / `offsetHeight` / `getBoundingClientRect()` all
 report `0`. Any code that measures the viewport short-circuits, so **scroll/positioning math is
 unreachable through the integration suite**. Test it as a unit with a hand-built mock host:

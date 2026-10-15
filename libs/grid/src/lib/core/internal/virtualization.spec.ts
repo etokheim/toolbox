@@ -5,23 +5,23 @@
  */
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
-    calculateAverageHeight,
-    computeScrollMapping,
-    computeVirtualWindow,
-    createHeightCache,
-    fromVirtualScrollTop,
-    getCachedHeight,
-    getRowIndexAtOffset,
-    getTotalHeight,
-    MAX_ELEMENT_HEIGHT_PX,
-    rebuildPositionCache,
-    setCachedHeight,
-    shouldBypassVirtualization,
-    toVirtualScrollTop,
-    updateRowHeight,
-    updateRowHeights,
-    type HeightCache,
-    type RowPosition,
+  calculateAverageHeight,
+  computeScrollMapping,
+  computeVirtualWindow,
+  createHeightCache,
+  fromVirtualScrollTop,
+  getCachedHeight,
+  getRowIndexAtOffset,
+  getTotalHeight,
+  MAX_ELEMENT_HEIGHT_PX,
+  rebuildPositionCache,
+  setCachedHeight,
+  shouldBypassVirtualization,
+  toVirtualScrollTop,
+  updateRowHeight,
+  updateRowHeights,
+  type HeightCache,
+  type RowPosition,
 } from './virtualization';
 
 // #region HeightCache Tests
@@ -109,9 +109,7 @@ describe('PositionCache', () => {
       heightCache.byKey.set('id:r1', 40);
       heightCache.byKey.set('id:r3', 60);
 
-      const positions = rebuildPositionCache(rows, heightCache, 28, {
-        defaultHeight: 28,
-      });
+      const positions = rebuildPositionCache(rows, heightCache, 28, {});
 
       expect(positions[0]).toEqual({ offset: 0, height: 40, measured: true });
       expect(positions[1]).toEqual({ offset: 40, height: 28, measured: false });
@@ -122,7 +120,7 @@ describe('PositionCache', () => {
       const rows = [{ id: 1 }, { id: 2 }];
       const heightCache = createHeightCache();
 
-      const positions = rebuildPositionCache(rows, heightCache, 28, { defaultHeight: 28 }, (_row, index) =>
+      const positions = rebuildPositionCache(rows, heightCache, 28, {}, (_row, index) =>
         index === 0 ? 50 : undefined,
       );
 
@@ -334,14 +332,20 @@ describe('measureRenderedRowHeights', () => {
     measureRenderedRowHeights = module.measureRenderedRowHeights;
   });
 
-  function createMockRowElements(heights: number[]): NodeListOf<Element> {
-    const elements: Element[] = heights.map((height, index) => {
+  function createMockRowElements(heights: number[], rows: unknown[], start = 0): NodeListOf<Element> {
+    const body = document.createElement('div');
+    heights.forEach((height, index) => {
       const el = document.createElement('div');
-      el.dataset.rowIndex = String(index);
+      el.className = 'data-grid-row';
+      Object.assign(el, { __rowDataRef: rows[start + index] });
+      const cell = document.createElement('div');
+      cell.className = 'cell';
+      cell.dataset.row = String(start + index);
+      el.append(cell);
       Object.defineProperty(el, 'offsetHeight', { value: height, configurable: true });
-      return el;
+      body.append(el);
     });
-    return elements as unknown as NodeListOf<Element>;
+    return body.querySelectorAll(':scope > .data-grid-row');
   }
 
   it('measures row heights from DOM elements', () => {
@@ -361,7 +365,7 @@ describe('measureRenderedRowHeights', () => {
         start: 0,
         end: 2,
       },
-      createMockRowElements([40, 50]),
+      createMockRowElements([40, 50], rows),
     );
 
     expect(result.hasChanges).toBe(true);
@@ -390,7 +394,7 @@ describe('measureRenderedRowHeights', () => {
         start: 1,
         end: 2,
       },
-      createMockRowElements([40, 50, 60]),
+      createMockRowElements([50, 60], rows, 1),
     );
 
     // Row 0 and 2 should be unchanged
@@ -417,7 +421,7 @@ describe('measureRenderedRowHeights', () => {
         end: 1,
         getPluginHeight: () => 100, // Plugin says row is 100px
       },
-      createMockRowElements([40]), // DOM says 40px
+      createMockRowElements([40], rows), // DOM says 40px
     );
 
     expect(result.hasChanges).toBe(true);
@@ -439,7 +443,7 @@ describe('measureRenderedRowHeights', () => {
         start: 0,
         end: 1,
       },
-      createMockRowElements([40]), // Same height as cached
+      createMockRowElements([40], rows), // Same height as cached
     );
 
     expect(result.hasChanges).toBe(false);
@@ -458,12 +462,74 @@ describe('measureRenderedRowHeights', () => {
       end: 1,
     };
 
-    const first = measureRenderedRowHeights(context, createMockRowElements([40]));
+    const first = measureRenderedRowHeights(context, createMockRowElements([40], rows));
     expect(first.hasChanges).toBe(true);
     expect(positionCache[0].measured).toBe(true);
 
-    const second = measureRenderedRowHeights(context, createMockRowElements([40]));
+    const second = measureRenderedRowHeights(context, createMockRowElements([40], rows));
     expect(second.hasChanges).toBe(false);
+  });
+
+  it.each(['', ' ', '-1', '0.5', '0junk', 'NaN', 'Infinity', '1', '99'])(
+    'ignores invalid or out-of-range direct cell index %j',
+    (index) => {
+      const rows = [{}];
+      const elements = createMockRowElements([80], rows);
+      const positions: RowPosition[] = [{ offset: 0, height: 28, measured: false }];
+      elements[0].firstElementChild!.setAttribute('data-row', index);
+      measureRenderedRowHeights(
+        { rows, positionCache: positions, heightCache: createHeightCache(), defaultHeight: 28, start: 0, end: 1 },
+        elements,
+      );
+      expect(positions[0]).toEqual({ offset: 0, height: 28, measured: false });
+    },
+  );
+
+  it('ignores stale recycled indexes and nested-only cells rather than measuring another owner', () => {
+    const rows = [{ id: 1 }, { id: 2 }];
+    const positions: RowPosition[] = [
+      { offset: 0, height: 28, measured: false },
+      { offset: 28, height: 28, measured: false },
+    ];
+    const context = {
+      rows,
+      positionCache: positions,
+      heightCache: createHeightCache(),
+      defaultHeight: 28,
+      start: 0,
+      end: 2,
+    };
+    const elements = createMockRowElements([49, 67], rows);
+    measureRenderedRowHeights(context, elements);
+    expect(positions.map((position) => position.height)).toEqual([49, 67]);
+    const cell = elements[0].firstElementChild!;
+    cell.setAttribute('data-row', '1');
+    Object.defineProperty(elements[0], 'offsetHeight', { value: 200 });
+    expect(measureRenderedRowHeights(context, elements).hasChanges).toBe(false);
+    const nested = document.createElement('tbw-grid');
+    nested.append(cell);
+    cell.setAttribute('data-row', '0');
+    elements[0].append(nested);
+    expect(measureRenderedRowHeights(context, elements).hasChanges).toBe(false);
+    expect(positions.map((position) => position.height)).toEqual([49, 67]);
+  });
+
+  it('rejects a stale slot index even when repeated occurrences share the same row reference', () => {
+    const shared = { id: 1 };
+    const rows = [shared, shared];
+    const elements = createMockRowElements([49, 67], rows);
+    const positions: RowPosition[] = [
+      { offset: 0, height: 49, measured: true },
+      { offset: 49, height: 67, measured: true },
+    ];
+    elements[0].firstElementChild!.setAttribute('data-row', '1');
+    Object.defineProperty(elements[0], 'offsetHeight', { value: 200 });
+    const result = measureRenderedRowHeights(
+      { rows, positionCache: positions, heightCache: createHeightCache(), defaultHeight: 28, start: 0, end: 2 },
+      elements,
+    );
+    expect(result.hasChanges).toBe(false);
+    expect(positions.map((position) => position.height)).toEqual([49, 67]);
   });
 });
 // #endregion

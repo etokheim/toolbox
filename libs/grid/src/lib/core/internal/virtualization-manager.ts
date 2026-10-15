@@ -171,25 +171,12 @@ export class VirtualizationManager<T = any> {
     const grid = this.#grid;
     const rows = grid._rows;
     const estimatedHeight = s.rowHeight || 28;
-    // `rowHeight` may be a number — a plugin with `getRowHeight()` enables variable heights
-    // regardless of its form, so the callable form must be checked, not assumed.
-    const userRowHeight = grid.effectiveConfig?.rowHeight;
-    const rowHeightFn =
-      typeof userRowHeight === 'function'
-        ? (userRowHeight as (row: T, index: number) => number | undefined)
-        : undefined;
     const getRowId = grid.effectiveConfig?.getRowId;
     const rowIdFn = getRowId ? (row: T) => getRowId(row) : undefined;
 
-    s.positionCache = rebuildPositionCache(rows, s.heightCache, estimatedHeight, { rowId: rowIdFn }, (row, index) => {
-      const pluginHeight = grid._getPluginRowHeight(row, index);
-      if (pluginHeight !== undefined) return pluginHeight;
-      if (rowHeightFn) {
-        const height = rowHeightFn(row, index);
-        if (height !== undefined && height > 0) return height;
-      }
-      return undefined;
-    });
+    s.positionCache = rebuildPositionCache(rows, s.heightCache, estimatedHeight, { rowId: rowIdFn }, (row, index) =>
+      this.#resolveRowHeight(row, index),
+    );
 
     const stats = computeAverageExcludingPluginRows(s.positionCache, rows, estimatedHeight, (row, index) =>
       grid._getPluginRowHeight(row, index),
@@ -198,6 +185,14 @@ export class VirtualizationManager<T = any> {
     if (stats.measuredCount > 0) {
       s.averageHeight = stats.averageHeight;
     }
+  }
+
+  #resolveRowHeight(row: T, index: number): number | undefined {
+    const pluginHeight = this.#grid._getPluginRowHeight(row, index);
+    if (pluginHeight !== undefined) return pluginHeight;
+    const configured = this.#grid.effectiveConfig?.rowHeight;
+    const height = typeof configured === 'function' ? configured(row, index) : configured;
+    return height !== undefined && height > 0 ? height : undefined;
   }
 
   /**
@@ -249,15 +244,24 @@ export class VirtualizationManager<T = any> {
    * Only runs when variable heights mode is enabled.
    */
   measureRenderedRowHeights(start: number, end: number): void {
+    if (!this.#measureRenderedRowHeights(start, end)) return;
     const s = this.state;
-    if (!s.variableHeights) return;
-    if (!s.positionCache) return;
+    if (s.totalHeightEl) {
+      const newTotalHeight = this.calculateTotalSpacerHeight(this.#grid._rows.length);
+      s.totalHeightEl.style.height = `${newTotalHeight}px`;
+    }
+  }
+
+  #measureRenderedRowHeights(start: number, end: number): boolean {
+    const s = this.state;
+    if (!s.variableHeights) return false;
+    if (!s.positionCache) return false;
 
     const grid = this.#grid;
     const bodyEl = grid._bodyEl;
-    if (!bodyEl) return;
+    if (!bodyEl) return false;
 
-    const rowElements = bodyEl.querySelectorAll('.data-grid-row');
+    const rowElements = bodyEl.querySelectorAll(':scope > .data-grid-row');
     const getRowId = grid.effectiveConfig?.getRowId;
     const rows = grid._rows;
 
@@ -269,7 +273,7 @@ export class VirtualizationManager<T = any> {
         defaultHeight: s.rowHeight,
         start,
         end,
-        getPluginHeight: (row, index) => grid._getPluginRowHeight(row, index),
+        getPluginHeight: (row, index) => this.#resolveRowHeight(row, index),
         getRowId: getRowId ? (row: T) => getRowId(row) : undefined,
       },
       rowElements,
@@ -278,12 +282,8 @@ export class VirtualizationManager<T = any> {
     if (result.hasChanges) {
       s.measuredCount = result.measuredCount;
       s.averageHeight = result.averageHeight;
-
-      if (s.totalHeightEl) {
-        const newTotalHeight = this.calculateTotalSpacerHeight(rows.length);
-        s.totalHeightEl.style.height = `${newTotalHeight}px`;
-      }
     }
+    return result.hasChanges;
   }
 
   // #endregion
@@ -315,7 +315,10 @@ export class VirtualizationManager<T = any> {
     s.end = totalRows;
     grid._renderVisibleRows(0, totalRows, grid.__rowRenderEpoch);
     if (force) {
-      if (s.variableHeights) this.initializePositionCache();
+      if (s.variableHeights) {
+        this.initializePositionCache();
+        this.#measureRenderedRowHeights(0, totalRows);
+      }
       // Both layout reads happen before either write, so the whole force path
       // costs a single reflow.
       let offset = s.container?.scrollTop ?? 0;

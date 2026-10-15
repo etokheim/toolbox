@@ -445,6 +445,11 @@ do not also toggle on Space/Enter. Supply a localized Tree name (there is no def
 in the context). The grid continues to own cell navigation. `showExpandIcons: false` suppresses
 custom controls too; leaves do not receive a disclosure.
 
+Tree owns row-level `aria-expanded` and `aria-busy` separately from custom controls.
+It retires those values when a row element is recycled into a fixed group section
+or Tree is removed, without clearing shared Hierarchy positions or another owner's
+replacement attributes. No post-render attribute cleanup is needed in application code.
+
 ## Configuration Options
 
 See [`TreeConfig`](./interfaces/treeconfig/) for the full list of options and defaults.

@@ -17,6 +17,7 @@ import { setSanitizedHTML } from '../../core/internal/sanitize';
 import { builtInSort } from '../../core/internal/sorting';
 import type { GridElement } from '../../core/plugin/base-plugin';
 import { ControlSlot } from '../../core/plugin/control-view';
+import { RowMetadata } from '../../core/plugin/row-metadata';
 import {
   BaseGridPlugin,
   CellClickEvent,
@@ -274,6 +275,7 @@ export class TreePlugin<TRow = unknown> extends BaseGridPlugin<TreeConfig<TRow>>
   #treeColumnWrapped = false;
   /** Guards `#syncTreeColumn` against queueing more than one microtask. */
   #treeColumnSyncScheduled = false;
+  #rowMetadata = new RowMetadata();
   #cells = new Map<
     HTMLElement,
     {
@@ -291,6 +293,7 @@ export class TreePlugin<TRow = unknown> extends BaseGridPlugin<TreeConfig<TRow>>
     this.#retirePositions?.();
     this.#retirePositions = undefined;
     for (const cell of this.#cells.keys()) this.#releaseTreeCell(cell);
+    this.#retireRowMetadata();
     this.expandedKeys.clear();
     this.initialExpansionDone = false;
     this.flattenedRows = [];
@@ -1214,42 +1217,26 @@ export class TreePlugin<TRow = unknown> extends BaseGridPlugin<TreeConfig<TRow>>
   override afterRender(): void {
     this.#refreshDisclosures();
     const body = this.gridElement?.querySelector('.rows');
+    this.#retireRowMetadata(body);
     if (!body) return;
 
     const style = this.animationStyle;
     const shouldAnimate = style !== false && this.keysToAnimate.size > 0;
     const animClass = style === 'fade' ? 'tbw-tree-fade-in' : 'tbw-tree-slide-in';
 
-    for (const rowEl of body.querySelectorAll('.data-grid-row')) {
+    for (const rowEl of body.querySelectorAll<HTMLElement>(':scope > .data-grid-row')) {
       // Look up by row identity: other hierarchy contributors (group rows)
       // may be interleaved with tree rows in the rendered list.
       const treeRow = this.#rowMeta.get((rowEl as RowElementInternal).__rowDataRef as object);
       if (!treeRow) continue;
 
-      // Set aria-expanded on parent rows for screen readers. MUST clear it
-      // on leaf rows: virtualization recycles row DOM elements, so a leaf
-      // row reusing a previously-expanded parent's element would otherwise
-      // inherit a stale `aria-expanded="true"` (issue #282). The matching
-      // `.tbw-row-expanded` class is the public hook for theming expanded
-      // rows — devs should style against the class, not the ARIA attribute.
-      if (treeRow.hasChildren) {
-        rowEl.setAttribute('aria-expanded', String(treeRow.isExpanded));
-      } else if (rowEl.hasAttribute('aria-expanded')) {
-        rowEl.removeAttribute('aria-expanded');
-      }
+      this.#rowMetadata.set(rowEl, 'aria-expanded', treeRow.hasChildren ? String(treeRow.isExpanded) : null);
       rowEl.classList.toggle(
         'tbw-row-expanded',
         (treeRow.hasChildren && treeRow.isExpanded) || rowEl.classList.contains('tbw-detail-expanded'),
       );
 
-      // Announce in-flight lazy child loading. MUST clear on the negative
-      // branch — virtualization recycles row elements, so a row reusing a
-      // previously-loading element would inherit a stale `aria-busy`.
-      if (this.loadingKeys.has(treeRow.key)) {
-        rowEl.setAttribute('aria-busy', 'true');
-      } else if (rowEl.hasAttribute('aria-busy')) {
-        rowEl.removeAttribute('aria-busy');
-      }
+      this.#rowMetadata.set(rowEl, 'aria-busy', this.loadingKeys.has(treeRow.key) ? 'true' : null);
 
       if (shouldAnimate && treeRow.key && this.keysToAnimate.has(treeRow.key)) {
         rowEl.classList.add(animClass);
@@ -1257,6 +1244,14 @@ export class TreePlugin<TRow = unknown> extends BaseGridPlugin<TreeConfig<TRow>>
       }
     }
     this.keysToAnimate.clear();
+  }
+
+  #retireRowMetadata(body?: Element | null): void {
+    for (const element of this.#rowMetadata.elements) {
+      const row = (element as RowElementInternal).__rowDataRef as object;
+      if (element.parentElement === body && this.#rowMeta.has(row)) continue;
+      this.#rowMetadata.release(element);
+    }
   }
 
   // #endregion

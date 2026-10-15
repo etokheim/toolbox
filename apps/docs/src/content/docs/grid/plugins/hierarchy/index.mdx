@@ -53,6 +53,12 @@ groups while sections beneath real Tree parents start collapsed. Tree's own
 `defaultExpanded` independently controls the real parents. Omit the child override
 to retain the shared grouping default.
 
+For non-collapsible sections instead, set `childGroupsCollapsible: false`.
+All child group-path levels stay open while their real parent is open, even under
+bulk collapse or accordion. Root/global grouping and Tree expansion remain independent.
+See [Fixed Child Sections](/grid/plugins/grouping-rows/#fixed-child-sections) for
+the public model, custom-header policy and existing StickyRows push integration.
+
 Numeric grouping defaults apply once per real parent: `childDefaultExpanded: 0` opens
 the first group when that parent's groups first appear; `1` opens its second.
 Empty group lists wait for data. Later rebuilds preserve user collapses.

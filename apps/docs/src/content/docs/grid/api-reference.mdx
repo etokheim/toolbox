@@ -999,6 +999,9 @@ GroupingRows `childDefaultExpanded` overrides child-section defaults without cha
 global groups; `groupOrder` ranks categories per natural sibling scope.
 `GroupingRowsPlugin.setGroupOrder()` replaces or clears that ranking without resetting
 expansion. See [Row Grouping](/grid/plugins/grouping-rows/).
+`childGroupsCollapsible: false` makes groups beneath real parents fixed open,
+without changing Tree or global group expansion. Group models and whole-header
+render parameters expose optional `collapsible: false` for these sections.
 
 RowDragDrop's optional `dragHandleRenderer` receives a typed `RowDragHandleContext`
 and registers one HTML control with `bindHandle`. The plugin retains native drag,

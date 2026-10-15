@@ -102,6 +102,9 @@ ordinary rows do not retain stale group expansion or hierarchy metadata.
 For [SC 4.1.2: Name, Role, Value](https://www.w3.org/WAI/WCAG22/Understanding/name-role-value.html),
 native controls expose expansion state automatically; custom controls must apply
 their own semantics from the disclosure context.
+Fixed child sections (`childGroupsCollapsible: false`) keep hierarchy metadata but
+omit plugin-owned expansion state and controls. Whole-header renderers receive
+`collapsible: false` and must not add misleading expansion controls of their own.
 
 ## Multi-Level Grouping
 
@@ -135,6 +138,47 @@ Real rows retain their original references. Supply distinct occurrence objects a
 Grouping counts and aggregators use the direct sibling members in each group, not implicit recursive Tree membership. Keep complete-hierarchy totals and ancestor-retaining filtering in the consumer's eager projection. Native Filtering still filters the root input; this composition does not introduce descendant-filter semantics. Empty real parents remain rows; empty semantic groups are omitted. Existing standalone predefined/server-count groups are unchanged.
 
 Both plugins depend on `HierarchyPlugin`, which the grid attaches automatically.
+
+### Fixed Child Sections and Sticky Headers
+
+Set `childGroupsCollapsible: false` to keep all group-path levels beneath real Tree
+parents open. This is a policy, unlike `childDefaultExpanded: true`: defaults,
+pending expansion, accordion and bulk collapse cannot hide their members. Single-group
+`expand`, `collapse` and `toggle` calls are no-ops for fixed sections. Their public
+model reports `expanded: true`, `collapsible: false`; Tree parents can still hide
+the whole subtree, and root/global groups remain independently collapsible.
+Omitted/true preserves existing behaviour; standalone and predefined groups ignore it.
+
+Use the existing StickyRows push mode with the public processed row model:
+
+```typescript
+const grouping = new GroupingRowsPlugin({
+  groupOn: (row) => row.category,
+  defaultExpanded: true,
+  childGroupsCollapsible: false,
+});
+const sticky = new StickyRowsPlugin({
+  mode: 'push',
+  isSticky: (_row, index) => {
+    const item = grouping.getFlattenedRows()[index];
+    return item?.kind === 'group' && item.collapsible === false;
+  },
+});
+// Include TreePlugin({ defaultExpanded: false }), grouping and sticky in plugins.
+```
+
+StickyRows predates native parent-local groups. Native group cell-index stamping
+now makes generated and `.cell`-based whole-header output capturable at current
+processed indexes, including recycled headers. No consumer `data-row` patch is needed.
+Nested grids' header and body cells retain their own indexes. Content-measured
+variable-height rows are measured on forced layout refreshes even in small datasets
+that bypass virtualization, keeping sticky push offsets aligned with actual row
+heights. Explicit configured/plugin heights remain authoritative; no private cache
+repair is needed.
+Whole-header custom cells should be direct children of the row; StickyRows' existing
+clone lookup uses the matched cell's parent. Push mode follows the latest preceding
+qualifying row, not the current ancestor path, and has no automatic parent-boundary
+expiry. Rich headers never rendered into the viewport may not be synthesizable.
 
 ### Category Order
 

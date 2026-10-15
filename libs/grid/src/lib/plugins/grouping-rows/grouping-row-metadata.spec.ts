@@ -67,4 +67,29 @@ describe('GroupingRows metadata ownership', () => {
     metadata.release(row);
     expect(row.getAttribute('aria-level')).toBe('8');
   });
+
+  it.each([null, 'true'])('transfers an absence lease to a successor writing %s', (value) => {
+    const previous = new GroupingRowMetadata();
+    const successor = new GroupingRowMetadata();
+    const row = document.createElement('div');
+    row.setAttribute('aria-expanded', 'false');
+    previous.set(row, 'aria-expanded', null);
+    previous.set(row, 'aria-expanded', null);
+    expect(previous.owns(row, 'aria-expanded')).toBe(true);
+    expect(row.hasAttribute('aria-expanded')).toBe(false);
+    successor.set(row, 'aria-expanded', value);
+    previous.release(row);
+    expect(row.getAttribute('aria-expanded')).toBe(value);
+    successor.release(row);
+    expect(row.getAttribute('aria-expanded')).toBe('false');
+  });
+
+  it('preserves an external replacement of a leased absence', () => {
+    const metadata = new GroupingRowMetadata();
+    const row = document.createElement('div');
+    metadata.set(row, 'aria-busy', null);
+    row.setAttribute('aria-busy', 'true');
+    metadata.release(row);
+    expect(row.getAttribute('aria-busy')).toBe('true');
+  });
 });

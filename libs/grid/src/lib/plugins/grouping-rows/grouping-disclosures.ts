@@ -32,7 +32,8 @@ export class GroupingDisclosures {
   constructor(private readonly owner: Owner) {}
 
   syncRow(
-    row: { __isGroupRow?: boolean; __groupKey?: string; __groupDepth?: number } | undefined,
+    row:
+      { __isGroupRow?: boolean; __groupKey?: string; __groupDepth?: number; __groupCollapsible?: boolean } | undefined,
     rowEl: HTMLElement,
     rowIndex: number,
   ): void {
@@ -40,6 +41,7 @@ export class GroupingDisclosures {
     if (!record) return;
     if (
       !row?.__isGroupRow ||
+      row.__groupCollapsible === false ||
       record.key !== row.__groupKey ||
       record.depth !== row.__groupDepth ||
       !rowEl.contains(record.slot.host) ||

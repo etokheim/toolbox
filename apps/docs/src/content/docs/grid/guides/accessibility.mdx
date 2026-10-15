@@ -552,6 +552,12 @@ removing the final contributor releases owned positions and the treegrid role.
 [GroupingRows](/grid/plugins/grouping-rows/#accessibility) separately restores its
 group expansion/depth metadata. Per-row detail eligibility removes unavailable detail
 controls without changing Tree child expansion.
+Fixed child sections (`childGroupsCollapsible: false`) retain structural metadata
+and ordinary navigation but have no plugin-owned expansion ARIA or controls.
+Whole-header renderers receive `collapsible: false` to express the same policy.
+Tree retires its previous row-level `aria-expanded` and `aria-busy` when a recycled
+element becomes one of these sections, while preserving shared positional metadata
+and successor or application-owned attributes.
 
 For [checkboxes embedded inside a Name renderer](/grid/plugins/selection/#checkbox-inside-an-existing-column),
 use the Selection context's localized label, checked and disabled state. Native

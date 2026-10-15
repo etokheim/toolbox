@@ -30,7 +30,6 @@ import {
   collapseUnscopedPeers,
   buildGroupedRowModel,
   buildPreDefinedGroupModel,
-  collapseAllGroups,
   nestGroupRows,
   collectVisibleDataKeys,
   expandAllGroups,
@@ -45,6 +44,7 @@ import {
 } from './grouping-rows';
 import styles from './grouping-rows.css?inline';
 import { GroupingDisclosures } from './grouping-disclosures';
+import { ChildGroupExpansion } from './child-group-expansion';
 import type {
   DefaultExpandedValue,
   ExpandCollapseAnimation,
@@ -292,10 +292,7 @@ export class GroupingRowsPlugin extends BaseGridPlugin<GroupingRowsConfig> imple
   /** Render-model item of every row emitted by this rebuild, keyed by row object. */
   #renderItems = new WeakMap<object, RenderRow>();
   #anyGroup = false;
-  /** Top-level keys of nested (tree child) lists already seen, for `defaultExpanded: true`. */
-  #seenNestedKeys = new Set<string>();
-  /** Parent occurrence keys whose numeric initial default has been consumed. */
-  #numericDefaultParents = new Set<string>();
+  #childExpansion = new ChildGroupExpansion();
   #nestedParents = new Map<string, { scope: string | null; parent: string | null }>();
   #rootKeys = new RootGroupKeys();
   // #endregion
@@ -333,8 +330,7 @@ export class GroupingRowsPlugin extends BaseGridPlugin<GroupingRowsConfig> imple
     this.loadingGroups.clear();
     this.groupedFields = [];
     this.userGroupSortDirections.clear();
-    this.#seenNestedKeys.clear();
-    this.#numericDefaultParents.clear();
+    this.#childExpansion.clear();
     this.#rootKeys = new RootGroupKeys();
   }
 
@@ -622,7 +618,10 @@ export class GroupingRowsPlugin extends BaseGridPlugin<GroupingRowsConfig> imple
         keyPaths: isRoot ? this.#rootKeys.paths : undefined,
       });
 
-    const grouped = isRoot ? this.#buildRootGroups(build) : this.#buildNestedGroups(build, context.parentKey ?? '');
+    const grouped = isRoot
+      ? this.#buildRootGroups(build)
+      : this.#childExpansion.build(build, config, this.expandedKeys, context.parentKey ?? '', this.#pending);
+    if (!isRoot && this.#pending !== undefined) this.#pendingApplied = true;
     if (grouped.length === 0) return nodes;
 
     this.#anyGroup = true;
@@ -731,43 +730,6 @@ export class GroupingRowsPlugin extends BaseGridPlugin<GroupingRowsConfig> imple
     return build(this.expandedKeys, initialExpanded);
   }
 
-  /**
-   * Group a tree node's children. A pending expansion (`setGroupOn(fn, expanded)`, deferred
-   * `expandAll`/`collapseAll`) resolves against each list's own groups; otherwise
-   * `true` opens new top-level groups, while numeric defaults apply once per parent.
-   */
-  #buildNestedGroups(build: (expanded: Set<string>) => RenderRow[], parentKey: string): RenderRow[] {
-    const grouped = build(this.expandedKeys);
-    const pending = this.#pending;
-    const defaultExpanded = this.config.childDefaultExpanded ?? this.config.defaultExpanded;
-    const numericDefault = typeof defaultExpanded === 'number';
-    if (
-      pending === undefined &&
-      defaultExpanded !== true &&
-      (!numericDefault || this.#numericDefaultParents.has(parentKey))
-    )
-      return grouped;
-    const listKeys: string[] = [];
-    for (const item of grouped) if (item.kind === 'group' && item.depth === 0) listKeys.push(item.key);
-    const open =
-      pending !== undefined
-        ? resolveDefaultExpanded(pending, listKeys)
-        : numericDefault
-          ? resolveDefaultExpanded(defaultExpanded, listKeys)
-          : new Set(listKeys.filter((key) => !this.#seenNestedKeys.has(key)));
-    if (numericDefault && listKeys.length > 0) this.#numericDefaultParents.add(parentKey);
-    if (pending !== undefined) this.#pendingApplied = true;
-    let added = false;
-    for (const key of listKeys) {
-      this.#seenNestedKeys.add(key);
-      if (open.has(key) && !this.expandedKeys.has(key)) {
-        this.expandedKeys.add(key);
-        added = true;
-      }
-    }
-    return added ? build(this.expandedKeys) : grouped;
-  }
-
   /** @internal */
   override onCellClick(event: CellClickEvent): boolean | void {
     if (isControlEvent(event.originalEvent, this.gridElement)) return;
@@ -793,7 +755,7 @@ export class GroupingRowsPlugin extends BaseGridPlugin<GroupingRowsConfig> imple
     const row = this.rows[focusRow] as Record<string, unknown> | undefined;
 
     // Only handle SPACE on group rows
-    if (!row?.__isGroupRow) return;
+    if (!row?.__isGroupRow || row.__groupCollapsible === false) return;
 
     event.preventDefault();
     this.toggle(row.__groupKey as string);
@@ -846,6 +808,7 @@ export class GroupingRowsPlugin extends BaseGridPlugin<GroupingRowsConfig> imple
         depth: row.__groupDepth,
         rows: row.__groupRows,
         expanded: row.__groupExpanded,
+        collapsible: row.__groupCollapsible,
         toggleExpand,
       });
 
@@ -860,6 +823,7 @@ export class GroupingRowsPlugin extends BaseGridPlugin<GroupingRowsConfig> imple
         } else {
           rowEl.replaceChildren(result);
         }
+        this.#indexGroupCells(rowEl, _rowIndex);
         return true;
       }
     }
@@ -872,11 +836,12 @@ export class GroupingRowsPlugin extends BaseGridPlugin<GroupingRowsConfig> imple
     // Default group row rendering - keep data-grid-row class for focus/keyboard navigation
     rowEl.className = 'data-grid-row group-row';
     (rowEl as RowElementInternal).__isCustomRow = true; // Mark for proper class reset on recycle
+    if (row.__groupCollapsible === false) this.#metadata.release(rowEl);
     this.#metadata.set(rowEl, 'data-group-depth', String(row.__groupDepth));
     rowEl.setAttribute('role', 'row');
-    this.#metadata.set(rowEl, 'aria-expanded', String(row.__groupExpanded));
+    if (row.__groupCollapsible !== false) this.#metadata.set(rowEl, 'aria-expanded', String(row.__groupExpanded));
     // Public theming hook — see also TreePlugin / MasterDetailPlugin.
-    rowEl.classList.toggle('tbw-row-expanded', !!row.__groupExpanded);
+    rowEl.classList.toggle('tbw-row-expanded', row.__groupCollapsible !== false && !!row.__groupExpanded);
     // Use CSS variable for depth-based indentation
     this.#metadata.set(rowEl, '--tbw-group-depth', String(row.__groupDepth || 0));
     if (config.indentWidth !== undefined) {
@@ -894,9 +859,17 @@ export class GroupingRowsPlugin extends BaseGridPlugin<GroupingRowsConfig> imple
     } else {
       this.renderPerColumnGroupRow(row, rowEl, handleToggle);
     }
+    this.#indexGroupCells(rowEl, _rowIndex);
     this.#disclosures.update(rowEl, _rowIndex);
 
     return true;
+  }
+
+  #indexGroupCells(rowEl: HTMLElement, index: number): void {
+    const value = String(index);
+    rowEl.querySelectorAll(':scope > .cell').forEach((cell) => {
+      cell.setAttribute('data-row', value);
+    });
   }
 
   /** @internal */
@@ -1032,7 +1005,7 @@ export class GroupingRowsPlugin extends BaseGridPlugin<GroupingRowsConfig> imple
 
   #disclosureState(rowIndex: number): Omit<GroupingRowsDisclosureContext, 'host' | 'setExpanded'> | undefined {
     const group = this.flattenedRows[rowIndex];
-    if (group?.kind !== 'group' || this.groupConfigDirty) return;
+    if (group?.kind !== 'group' || group.collapsible === false || this.groupConfigDirty) return;
     const expanded = this.isExpanded(group.key);
     return {
       grid: this.grid as PublicGrid & HTMLElement,
@@ -1049,11 +1022,12 @@ export class GroupingRowsPlugin extends BaseGridPlugin<GroupingRowsConfig> imple
   }
 
   #appendDisclosure(
-    row: { __groupKey: string; __groupDepth: number; __groupExpanded: boolean },
+    row: { __groupKey: string; __groupDepth: number; __groupExpanded: boolean; __groupCollapsible?: boolean },
     rowEl: HTMLElement,
     cell: HTMLElement,
     handleToggle: () => void,
   ): void {
+    if (row.__groupCollapsible === false) return;
     const renderer = this.config.disclosureRenderer;
     const disclosure = renderer
       ? this.#disclosures.create(row.__groupKey, row.__groupDepth, rowEl, cell, renderer)
@@ -1249,7 +1223,8 @@ export class GroupingRowsPlugin extends BaseGridPlugin<GroupingRowsConfig> imple
       this.requestRender();
       return;
     }
-    this.expandedKeys = expandAllGroups(this.flattenedRows);
+    this.expandedKeys = new Set([...this.expandedKeys].filter((key) => this.#isFixedGroup(key)));
+    for (const key of expandAllGroups(this.flattenedRows)) this.expandedKeys.add(key);
     this.broadcast<GroupToggleDetail>('group-toggle', { expandedKeys: [...this.expandedKeys] });
     this.requestRender();
   }
@@ -1268,7 +1243,7 @@ export class GroupingRowsPlugin extends BaseGridPlugin<GroupingRowsConfig> imple
       this.requestRender();
       return;
     }
-    this.expandedKeys = collapseAllGroups();
+    this.expandedKeys = new Set([...this.expandedKeys].filter((key) => this.#isFixedGroup(key)));
     this.broadcast<GroupToggleDetail>('group-toggle', { expandedKeys: [...this.expandedKeys] });
     this.requestRender();
   }
@@ -1279,6 +1254,7 @@ export class GroupingRowsPlugin extends BaseGridPlugin<GroupingRowsConfig> imple
    * @param key - The group key to toggle
    */
   toggle(key: string): void {
+    if (this.#isFixedGroup(key)) return;
     const isExpanding = !this.expandedKeys.has(key);
     const config = this.config;
 
@@ -1349,7 +1325,15 @@ export class GroupingRowsPlugin extends BaseGridPlugin<GroupingRowsConfig> imple
    * @returns Whether the group is expanded
    */
   isExpanded(key: string): boolean {
-    return this.expandedKeys.has(key);
+    return this.#isFixedGroup(key) || this.expandedKeys.has(key);
+  }
+
+  #isFixedGroup(key: string): boolean {
+    return (
+      this.config.childGroupsCollapsible === false &&
+      this.#mode === 'groupOn' &&
+      this.#childExpansion.fixedKeys.has(key)
+    );
   }
 
   /**
@@ -1357,10 +1341,7 @@ export class GroupingRowsPlugin extends BaseGridPlugin<GroupingRowsConfig> imple
    * @param key - The group key to expand
    */
   expand(key: string): void {
-    if (!this.expandedKeys.has(key)) {
-      this.expandedKeys = new Set([...this.expandedKeys, key]);
-      this.requestRender();
-    }
+    this.#setGroupExpanded(key, true);
   }
 
   /**
@@ -1368,12 +1349,16 @@ export class GroupingRowsPlugin extends BaseGridPlugin<GroupingRowsConfig> imple
    * @param key - The group key to collapse
    */
   collapse(key: string): void {
-    if (this.expandedKeys.has(key)) {
-      const newKeys = new Set(this.expandedKeys);
-      newKeys.delete(key);
-      this.expandedKeys = newKeys;
-      this.requestRender();
-    }
+    this.#setGroupExpanded(key, false);
+  }
+
+  #setGroupExpanded(key: string, expanded: boolean): void {
+    if (this.#isFixedGroup(key) || this.expandedKeys.has(key) === expanded) return;
+    const keys = new Set(this.expandedKeys);
+    if (expanded) keys.add(key);
+    else keys.delete(key);
+    this.expandedKeys = keys;
+    this.requestRender();
   }
 
   /**

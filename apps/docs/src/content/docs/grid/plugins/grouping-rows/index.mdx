@@ -86,6 +86,9 @@ role, rather than leaving ordinary rows marked as expandable groups.
 [SC 4.1.2: Name, Role, Value](https://www.w3.org/WAI/WCAG22/Understanding/name-role-value.html):
 native controls expose their state automatically. Custom disclosure controls must
 apply their own name, role and expanded/disabled state from the context.
+Fixed child sections keep hierarchy metadata without plugin-owned expansion ARIA
+or disclosure controls. Whole-header renderers receive `collapsible: false` and
+must omit their own expansion affordances; ordinary cell navigation is unchanged.
 
 ## Grouping Tree Children
 
@@ -437,6 +440,49 @@ replacing the plugin configuration follows the existing detach/reinitialize life
 When using `accordion: true`, prefer `defaultExpanded` with a single value
 (number or string) rather than `true` or an array with multiple values.
 :::
+
+### Fixed Child Sections
+
+With Tree, `childGroupsCollapsible: false` makes every group-path level beneath a
+real parent non-collapsible. Members stay projected whenever the Tree parent is
+open. Root/global groups, Tree parent expansion, standalone and predefined grouping
+retain their existing behaviour. Omitted/true keeps child groups collapsible.
+
+This overrides child defaults, pending expansion, accordion and bulk collapse;
+single-group `expand`, `collapse` and `toggle` calls are no-ops for fixed sections.
+Unlike an always-expanded default, user actions cannot collapse them. Their public
+model reports `expanded: true` and `collapsible: false`, with unchanged keys,
+counts and category order. Rebuilding or reparenting data needs no reopening repair.
+
+The plugin omits expansion ARIA and disclosure controls for fixed sections.
+Whole-header `groupRowRenderer` receives `collapsible: false`; use it to omit your
+own expansion controls. Ordinary cell navigation remains available.
+
+For sticky sections, use the existing [StickyRows](/grid/plugins/sticky-rows/) push
+mode and identify fixed groups through the current public model:
+
+```ts
+const sticky = new StickyRowsPlugin({
+  mode: 'push',
+  isSticky: (_row, index) => {
+    const item = grouping.getFlattenedRows()[index];
+    return item?.kind === 'group' && item.collapsible === false;
+  },
+});
+```
+
+Here `grouping` is the attached `GroupingRowsPlugin` instance. Native header cells
+and `.cell`-based whole-header output receive current processed indexes from
+GroupingRows, including after recycling. Do not stamp `data-row` in consumer code.
+Custom cells must be direct row children for StickyRows' existing capture lookup.
+Nested grids' header and body cells are not stamped with the outer group's index.
+For content-measured variable-height rows, the grid measures owned rendered rows
+on forced layout refreshes, including small datasets that bypass virtualization.
+Sticky push boundaries therefore use those measured offsets rather than repeating
+the first row's estimated height. Explicit configured and plugin-provided heights
+remain authoritative; application code should not repair the private position cache.
+StickyRows push mode is not ancestor stacking or automatic parent-boundary expiry;
+rich headers that have never rendered may not be synthesized.
 
 ### Category Order
 

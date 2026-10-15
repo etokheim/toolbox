@@ -48,6 +48,7 @@ export function createGroupRow(item: GroupRowModelItem, depth = item.depth, coun
     __groupDepth: depth,
     __groupRows: item.rows,
     __groupExpanded: item.expanded,
+    __groupCollapsible: item.collapsible,
     __groupRowCount: count,
     __rowCacheKey: `group:${item.key}`,
   };
@@ -222,6 +223,7 @@ export function buildGroupedRowModel({
 
   // Merge expanded sets - use initialExpanded on first render, then expanded takes over
   const effectiveExpanded = initialExpanded ? new Set([...expanded, ...initialExpanded]) : expanded;
+  const fixed = config.childGroupsCollapsible === false && context.parent !== null;
 
   const order = config.groupOrder?.(context);
   const groupRanks = order?.length ? new Map<string, number>() : undefined;
@@ -262,7 +264,7 @@ export function buildGroupedRowModel({
       return;
     }
 
-    const isExpanded = effectiveExpanded.has(node.key);
+    const isExpanded = fixed || effectiveExpanded.has(node.key);
     flat.push({
       kind: 'group',
       key: node.key,
@@ -270,6 +272,7 @@ export function buildGroupedRowModel({
       depth: node.depth,
       rows: node.rows,
       expanded: isExpanded,
+      ...(fixed ? { collapsible: false } : {}),
     });
 
     if (isExpanded) {

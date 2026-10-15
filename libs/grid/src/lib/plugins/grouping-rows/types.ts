@@ -237,6 +237,19 @@ export interface GroupingRowsConfig {
    * @since 3.9.0
    */
   childDefaultExpanded?: boolean | number;
+  /**
+   * Whether groups beneath real Tree parents can collapse.
+   * `false` makes every group-path level in those child lists a fixed, open
+   * section, without disclosure controls or expansion ARIA. The Tree parent
+   * still controls visibility. Root/global and predefined groups are unchanged.
+   *
+   * Fixed sections override initial/pending expansion, bulk collapse and accordion.
+   * Their keys remain expanded; single-group expansion actions are no-ops.
+   * Omitted or `true` preserves existing collapsible grouping.
+   * @default true
+   * @since 3.9.0
+   */
+  childGroupsCollapsible?: boolean;
   /** Custom group row renderer - takes full control of group row rendering */
   groupRowRenderer?: (params: GroupRowRenderParams) => HTMLElement | string | void;
   /** Show row count in group headers (default: true) */
@@ -300,6 +313,8 @@ export interface GroupRowRenderParams {
   rows: any[];
   /** Whether the group is expanded */
   expanded: boolean;
+  /** `false` for fixed child sections; omit expansion controls. @since 3.9.0 */
+  collapsible?: boolean;
   /** Toggle expand/collapse */
   toggleExpand: () => void;
 }
@@ -342,6 +357,8 @@ export interface GroupRowModelItem {
   rows: any[];
   /** Whether this group is currently expanded (children visible). */
   expanded: boolean;
+  /** `false` for fixed child sections; omitted means collapsible. @since 3.9.0 */
+  collapsible?: boolean;
 }
 
 /**

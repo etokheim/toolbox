@@ -56,6 +56,11 @@ activation ([WCAG 4.1.2](https://www.w3.org/WAI/WCAG22/Understanding/name-role-v
 Use click only to call `setExpanded`; a native button supplies Space/Enter activation.
 Return a `ControlView` to preserve focus across state updates. The grid owns cell navigation.
 
+Tree automatically retires its row-level `aria-expanded` and `aria-busy` when a
+recycled row becomes a fixed group section or Tree is removed. Shared Hierarchy
+positions and attributes subsequently owned by another plugin or application
+are preserved; consumers should not scrub row attributes after rendering.
+
 ## Configuration
 
 | Option            | Type                                                  | Default      | Description                                 |
