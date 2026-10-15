@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { GridElement } from '../../core/plugin/base-plugin';
 import type { ScrollEvent } from '../../core/plugin/types';
 import type { ColumnConfig } from '../../core/types';
 import { StickyRowsPlugin } from './sticky-rows-plugin';
@@ -19,8 +20,8 @@ interface MockGridOpts {
   rowHeight?: number;
 }
 
-function createMockGrid(opts: MockGridOpts = {}): HTMLElement {
-  const grid = document.createElement('div');
+function createMockGrid(opts: MockGridOpts = {}): HTMLElement & GridElement {
+  const grid: HTMLElement = document.createElement('div');
 
   const root = document.createElement('div');
   root.className = 'tbw-grid-root';
@@ -51,10 +52,13 @@ function createMockGrid(opts: MockGridOpts = {}): HTMLElement {
   // Seed pool rows for the requested indices so `findRenderedRow` can locate
   // them. Each row needs a single cell whose `data-row` matches.
   const rendered = opts.renderedIndices ?? [];
+  const pool: HTMLElement[] = [];
   const cols = opts.columns ?? [];
   for (const idx of rendered) {
     const rowEl = document.createElement('div');
     rowEl.className = 'data-grid-row';
+    Object.assign(rowEl, { __rowDataRef: opts.rows?.[idx] });
+    pool[idx] = rowEl;
     rowEl.setAttribute('role', 'row');
     rowEl.dataset['testRow'] = String(idx);
     for (let c = 0; c < Math.max(1, cols.length); c++) {
@@ -79,19 +83,26 @@ function createMockGrid(opts: MockGridOpts = {}): HTMLElement {
     configurable: true,
   });
   Object.defineProperty(grid, '_virtualization', {
-    value: { start: 0, end: rendered.length, rowHeight: opts.rowHeight ?? 28, positionCache: null },
+    value: { start: 0, end: Math.max(-1, ...rendered) + 1, rowHeight: opts.rowHeight ?? 28, positionCache: null },
     writable: true,
     configurable: true,
   });
   Object.defineProperty(grid, '_hostElement', { get: () => grid, configurable: true });
+  Object.defineProperty(grid, '_bodyEl', { value: rowsEl, configurable: true });
+  Object.defineProperty(grid, '_rowPool', { value: pool, configurable: true });
   Object.defineProperty(grid, 'getPluginState', { value: () => null, configurable: true });
 
   document.body.appendChild(grid);
-  return grid;
+  return grid as HTMLElement & GridElement;
 }
 
 function scrollEvent(scrollTop: number): ScrollEvent {
   return { scrollTop, scrollLeft: 0, scrollHeight: 0, scrollWidth: 0, clientHeight: 0, clientWidth: 0 };
+}
+
+async function settleSnapshots() {
+  await Promise.resolve();
+  await Promise.resolve();
 }
 
 describe('StickyRowsPlugin', () => {
@@ -111,8 +122,8 @@ describe('StickyRowsPlugin', () => {
       const plugin = new StickyRowsPlugin({ isSticky: () => false });
       const grid = createMockGrid();
       plugin.attach(grid);
-      expect(plugin.config.mode).toBe('push');
-      expect(plugin.config.maxStacked).toBe(Infinity);
+      expect(plugin.resolvedConfig.mode).toBe('push');
+      expect(plugin.resolvedConfig.maxStacked).toBe(Infinity);
     });
   });
 
@@ -294,7 +305,7 @@ describe('StickyRowsPlugin', () => {
       expect(Array.from(stuck).map((el) => (el as HTMLElement).dataset['stickyRow'])).toEqual(['8', '15']);
     });
 
-    it('synthesizes a stand-in for a sticky row that was never rendered', () => {
+    it('synthesizes a stand-in for a sticky row that was never rendered', async () => {
       // Repro for the stuck-at-one-row bug: a config/data change wipes the
       // clone cache while the grid is scrolled deep, so only the sticky rows
       // still inside the window get re-primed. Scrolling further DOWN never
@@ -308,6 +319,7 @@ describe('StickyRowsPlugin', () => {
       const grid = createMockGrid({ rows: data, renderedIndices: [15], columns: [{ field: 'name' }] });
       plugin.attach(grid);
       plugin.afterRender();
+      await settleSnapshots();
       plugin.onScroll(scrollEvent(15 * 28 + 1));
 
       const stuck = Array.from(grid.querySelectorAll<HTMLElement>('.tbw-sticky-rows .tbw-sticky-row'));
@@ -517,7 +529,7 @@ describe('StickyRowsPlugin', () => {
       expect(requestAfterRender).toHaveBeenCalledTimes(2);
     });
 
-    it('re-captures the correct clone after stale framework content settles', () => {
+    it('re-captures the correct clone after stale framework content settles', async () => {
       const plugin = new StickyRowsPlugin({ isSticky: 'flag', mode: 'push' });
       const { grid } = gridWithSpy(allRendered);
       plugin.attach(grid);
@@ -544,6 +556,7 @@ describe('StickyRowsPlugin', () => {
       // re-captures the now-correct clone.
       liveCell(0).textContent = 'SETTLED-0';
       plugin.afterRender();
+      await settleSnapshots();
 
       // Row 0 scrolls out of the pool again — only the cached clone remains.
       liveCell(0).parentElement?.remove();
@@ -602,6 +615,125 @@ describe('StickyRowsPlugin', () => {
   });
 
   // #endregion
+
+  describe('normal-render snapshot settlement', () => {
+    const settle = settleSnapshots;
+
+    function fixture() {
+      const rows = [{ flag: true, name: 'original' }];
+      const grid = createMockGrid({ rows, renderedIndices: [0] });
+      const scroll = document.createElement('div');
+      scroll.scrollTop = 10;
+      Object.defineProperty(grid, '_virtualization', {
+        value: { start: 0, end: 1, rowHeight: 28, container: scroll },
+      });
+      const request = vi.fn();
+      Object.defineProperty(grid, 'requestAfterRender', { value: request });
+      const plugin = new StickyRowsPlugin({ isSticky: 'flag' });
+      plugin.attach(grid);
+      const cell = grid.querySelector<HTMLElement>('.rows > .data-grid-row > .cell')!;
+      const text = () => grid.querySelector('.tbw-sticky-row .cell')?.textContent;
+      return { grid, rows, plugin, cell, request, text };
+    }
+
+    it('coalesces bounded capture after later hooks commit without scheduling STYLE', async () => {
+      const { plugin, cell, request, text } = fixture();
+      plugin.afterRender();
+      await settle();
+      const capture = vi.spyOn(cell.parentElement!, 'cloneNode');
+      plugin.afterRender();
+      plugin.afterRender();
+      plugin.afterRender();
+      expect(capture).not.toHaveBeenCalled();
+      // A later plugin hook may queue its adapter commit after StickyRows.
+      queueMicrotask(() => {
+        cell.textContent = 'settled';
+      });
+      await settle();
+      expect(text()).toBe('settled');
+      expect(capture).toHaveBeenCalledTimes(2);
+      expect(request).not.toHaveBeenCalled();
+      const count = capture.mock.calls.length;
+      for (let i = 0; i < 20; i++) plugin.onScroll(scrollEvent(10));
+      await settle();
+      expect(capture).toHaveBeenCalledTimes(count);
+      plugin.detach();
+    });
+
+    it('accepts settled empty/native content and never restores stale last-good DOM', async () => {
+      const { plugin, cell, text } = fixture();
+      plugin.afterRender();
+      await settle();
+      expect(text()).toBe('R0C0');
+      plugin.afterRender();
+      queueMicrotask(() => cell.replaceChildren());
+      await settle();
+      expect(text()).toBe('');
+      const native = document.createElement('span');
+      native.textContent = 'native';
+      cell.append(native);
+      plugin.afterRender();
+      await settle();
+      expect(text()).toBe('native');
+      plugin.detach();
+    });
+
+    it('cancels both settlement stages on detach and never captures a predecessor after reattach', async () => {
+      const first = fixture();
+      first.plugin.afterRender();
+      await Promise.resolve();
+      first.plugin.detach();
+      const second = createMockGrid({ rows: [{ flag: true }], renderedIndices: [0] });
+      first.plugin.attach(second);
+      first.plugin.afterRender();
+      const oldCapture = vi.spyOn(first.cell.parentElement!, 'cloneNode');
+      await settle();
+      expect(oldCapture).not.toHaveBeenCalled();
+      expect(first.grid.querySelector('.tbw-sticky-rows')).toBeNull();
+      first.plugin.onScroll(scrollEvent(10));
+      expect(second.querySelector('.tbw-sticky-row')).not.toBeNull();
+      first.plugin.detach();
+    });
+
+    it('invalidates same-index snapshots for a successor row before pending capture', async () => {
+      const { plugin, rows, cell, text, grid } = fixture();
+      plugin.afterRender();
+      await settle();
+      expect(text()).toBe('R0C0');
+      rows[0] = { flag: true, name: 'successor' };
+      // The old slot still carries index 0 but belongs to the predecessor.
+      plugin.afterRender();
+      await settle();
+      expect(grid.querySelector('.tbw-sticky-row')).toBeNull();
+      Object.assign(cell.parentElement!, { __rowDataRef: rows[0] });
+      cell.textContent = 'successor';
+      plugin.afterRender();
+      await settle();
+      expect(text()).toBe('successor');
+      plugin.detach();
+    });
+
+    it('excludes nested indexed cells and removed live slots from scheduled captures', async () => {
+      const { plugin, cell, text } = fixture();
+      plugin.afterRender();
+      await settle();
+      expect(text()).toBe('R0C0');
+      const row = cell.parentElement!;
+      cell.removeAttribute('data-row');
+      const nested = document.createElement('div');
+      nested.innerHTML =
+        '<div class="rows"><div class="data-grid-row"><div class="cell" data-row="0">foreign</div></div></div>';
+      cell.append(nested);
+      plugin.afterRender();
+      await settle();
+      expect(text()).toBe('R0C0');
+      plugin.afterRender();
+      row.remove();
+      await settle();
+      expect(text()).toBe('R0C0');
+      plugin.detach();
+    });
+  });
 
   // #region vertical scroll offsets (WCAG 2.2 SC 2.4.11)
 

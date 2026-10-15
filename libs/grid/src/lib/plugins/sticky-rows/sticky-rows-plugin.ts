@@ -80,6 +80,7 @@ export class StickyRowsPlugin extends BaseGridPlugin<StickyRowsConfig> {
   /** Cached clone DOM keyed by row index. Survives the row leaving the
    *  virtualization window so we can keep showing it while stuck. */
   private cloneCache: Map<number, HTMLElement> = new Map();
+  private cloneOwners = new Map<number, unknown>();
 
   /** Currently displayed indices (in DOM order). Used to skip work when the
    *  set hasn't changed between scroll ticks. */
@@ -97,14 +98,18 @@ export class StickyRowsPlugin extends BaseGridPlugin<StickyRowsConfig> {
    *  multiple scroll ticks into a single re-capture. See
    *  {@link maybeScheduleSettlePass}. */
   private settlePassScheduled = false;
+  private captureScheduled: object | null = null;
   // #endregion
 
   // #region Lifecycle
   /** @internal */
   override detach(): void {
+    super.detach();
+    this.captureScheduled = null;
     this.container?.remove();
     this.container = null;
     this.cloneCache.clear();
+    this.cloneOwners.clear();
     this.templateClone = null;
     this.stickyIndices = [];
     this.displayedIndices = [];
@@ -122,23 +127,10 @@ export class StickyRowsPlugin extends BaseGridPlugin<StickyRowsConfig> {
     this.settlePassScheduled = false;
     this.recomputeStickyIndices();
     this.ensureContainer();
-    // Pre-cache clones for any sticky row currently in the rendered window
-    // BEFORE it scrolls out — otherwise findRenderedRow() returns null at
-    // display time and we'd render an empty container.
-    this.primeCloneCache();
-    // Re-capture the clones that are CURRENTLY displayed from the (now
-    // settled) live DOM. WHY: `primeCloneCache` refreshes the cache, but
-    // `refreshDisplay` only swaps the container's child nodes when the
-    // displayed *set* changes. On the deferred settle pass after a small
-    // scroll-up — where the sticky set is unchanged (e.g. row 0 stays the
-    // single pinned row) — the stale clone captured during `onScrollRender`
-    // would otherwise remain in the DOM forever, since `sameSet` short-
-    // circuits the rebuild. Reconciling displayed clones here replaces the
-    // stale node with the freshly-settled content. Symptom it fixes: scroll
-    // down past the sticky row, then up a few px → a non-sticky row's content
-    // is pinned until you scroll all the way to the absolute top.
-    this.refreshClonesInWindow();
+    // Keep last-settled captures until queued framework content commits.
+    // Bypass scrolling also calls this hook without a scheduler render.
     this.refreshDisplay();
+    this.scheduleSettledCapture();
   }
 
   /** @internal Re-render clones after a scroll-driven row pool refresh. */
@@ -210,6 +202,26 @@ export class StickyRowsPlugin extends BaseGridPlugin<StickyRowsConfig> {
     this.requestAfterRender();
   }
 
+  private scheduleSettledCapture(): void {
+    if (this.captureScheduled || !this.container || !this.stickyIndices.length) return;
+    if (!this.stickyIndices.some((idx) => this.findRenderedRow(idx))) return;
+    const token = (this.captureScheduled = {});
+    const signal = this.disconnectSignal;
+    // First leave the synchronous plugin-hook turn, then let adapter commits
+    // queued by ANY hook run. Capture only; never request another STYLE pass.
+    queueMicrotask(() => {
+      if (this.captureScheduled !== token || signal.aborted) return;
+      queueMicrotask(() => {
+        if (this.captureScheduled !== token || signal.aborted) return;
+        this.captureScheduled = null;
+        if (!this.container?.isConnected) return;
+        this.primeCloneCache();
+        this.refreshClonesInWindow();
+        this.refreshDisplay();
+      });
+    });
+  }
+
   // #endregion
 
   // #region Private — predicate + indices
@@ -238,8 +250,16 @@ export class StickyRowsPlugin extends BaseGridPlugin<StickyRowsConfig> {
     // shuffled, predicate flipped). Indices that remain may still point at a
     // different row after re-sort — drop those too so we re-clone from the
     // fresh DOM on the next render.
-    if (next.length !== this.stickyIndices.length || next.some((v, i) => v !== this.stickyIndices[i])) {
+    if (
+      next.length !== this.stickyIndices.length ||
+      next.some((v, i) => v !== this.stickyIndices[i]) ||
+      next.some((idx) => this.cloneOwners.has(idx) && this.cloneOwners.get(idx) !== rows[idx])
+    ) {
       this.cloneCache.clear();
+      this.cloneOwners.clear();
+      this.templateClone = null;
+      this.displayedIndices = [];
+      this.container?.replaceChildren();
     }
     this.stickyIndices = next;
   }
@@ -445,11 +465,20 @@ export class StickyRowsPlugin extends BaseGridPlugin<StickyRowsConfig> {
 
   /** Locate a rendered row in the viewport by its data index. */
   private findRenderedRow(index: number): HTMLElement | null {
-    const grid = this.gridElement;
-    if (!grid) return null;
-    // Cells carry `data-row="<index>"`. The row element is the parent.
-    const cell = grid.querySelector(`.rows .data-grid-row .cell[data-row="${index}"]`);
-    return (cell?.parentElement as HTMLElement | null) ?? null;
+    const body = this.grid?._bodyEl;
+    const v = this.getVirtualState();
+    const row = this.grid?._rowPool[index - (v?.start ?? 0)];
+    if (
+      !body ||
+      !row ||
+      index < 0 ||
+      index >= this.rows.length ||
+      index >= (v?.end ?? 0) ||
+      row.parentElement !== body ||
+      row.__rowDataRef !== this.rows[index]
+    )
+      return null;
+    return row.querySelector(`:scope > .cell[data-row="${index}"]`) ? row : null;
   }
 
   /** Build (or refresh) a clone for `index`, using the live row when present. */
@@ -476,6 +505,7 @@ export class StickyRowsPlugin extends BaseGridPlugin<StickyRowsConfig> {
     this.templateClone = clone.cloneNode(true) as HTMLElement;
 
     this.cloneCache.set(index, clone);
+    this.cloneOwners.set(index, this.rows[index]);
     return clone;
   }
 
@@ -592,7 +622,10 @@ export class StickyRowsPlugin extends BaseGridPlugin<StickyRowsConfig> {
           // `synthesizeClone`). Cached so the next tick reuses it; a real
           // capture overwrites it the moment the row renders.
           clone = this.synthesizeClone(idx);
-          if (clone) this.cloneCache.set(idx, clone);
+          if (clone) {
+            this.cloneCache.set(idx, clone);
+            this.cloneOwners.set(idx, this.rows[idx]);
+          }
         }
         if (clone) {
           fragment.appendChild(clone);

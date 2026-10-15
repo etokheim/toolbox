@@ -17,6 +17,13 @@ flow, remain interactive, and continue to participate in keyboard navigation.
 Clones are decorative, marked `aria-hidden="true"`, and inherit the row's
 column-template alignment so they line up perfectly with the data below.
 
+Snapshots refresh after grid rendering and the adapter's queued framework commit,
+including `forceLayout()` while a row is already sticky. Custom Tree disclosures
+retain their rendered footprint, and a renderer returning `null` clears its content
+in the settled snapshot. Clones do not mount independent framework components or
+own expansion state. Content arriving asynchronously after that commit needs a
+grid render to refresh its snapshot.
+
 ## Installation
 
 ```ts

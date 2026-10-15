@@ -52,6 +52,13 @@ Stuck rows are rendered as **clones** of the real rows. The originals stay in
 the row pool and remain interactive — clones are decorative and marked
 `aria-hidden="true"` so screen readers traverse the underlying row in flow.
 
+Snapshots refresh after grid rendering and the adapter's queued framework commit,
+including `forceLayout()` while a row is already sticky. Tree disclosure controls
+keep their rendered footprint; returning `null` removes that content from the next
+settled snapshot. Clones do not own a second framework component or independent
+expansion state. Custom asynchronously fetched content still needs a grid render
+to refresh its snapshot.
+
 ## Accessibility
 
 Conforms to WCAG 2.2 SC 2.4.11 Focus Not Obscured (Minimum): the clone overlay sits over the top

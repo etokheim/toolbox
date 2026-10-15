@@ -14,6 +14,12 @@ Hierarchy composes real Tree descendants and parent-local GroupingRows without c
 
 Read order for composition/teardown: `hierarchy.ts` → `hierarchy-plugin.ts` → `core/plugin/row-metadata.ts` → contributor/disclosure code.
 
+## Local fork trial disposition
+
+- DECIDED (2026-10-12, actual human approval relayed by coordinator): "I approve and you can keep working on the local roma trail without asking for approval. Just document/remember what we defer/what needs more work". Applies to `1ecc5ce987e48f92e8491339aa35e4a5a67d04b4` and ongoing LOCAL sticky-section trial fixes/handoffs. WHY: continue consumer validation while recording residuals; no repeated routine waiver prompts, publication, asset replacement, PR/remote merge authority or answering human questions on their behalf.
+- TENSION: source1ecc retains audit FAIL163 raw / FAIL62 covered (71 unused members, 7 clones). Bounded d30 comparison: forced-render task means +0.056–0.157ms; 25-row wall completion +0.593ms/+31.56%, with noisy paired variation; no timing gate pass. Broader grouping/cold/mutation/large-viewport/React performance and detail-null/predefined-empty coverage remain deferred. Opaque public sticky theme remains required; real Roma acceptance is consumer-owned.
+- INVARIANT: published5b53 and failed d30 evidence remain frozen. Pair1ecc is local-only: core SHA256 `85b12da43e4742b49043563fa965408ebef61e312a6123432e34589888ba346a`, React `1c3113afc31892180b46cc11deb577c50e664f37a72bf9acef54a420314ba85a`. This approval record postdates the pinned source; it does not change packaged runtime or turn failed gates into passes.
+
 ## Hierarchy
 
 - DECIDED (2026-10, selective port of upstream `5c94b761`): Tree + GroupingRows compose via `HierarchyContributor`; provided dependency goes through the per-grid instance gate. WHY: sequential whole-array transforms lose natural parent scopes. No new feature toggle or adapter template bridge.
