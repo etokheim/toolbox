@@ -28,6 +28,11 @@ grid.gridConfig = {
 
 ## Configuration
 
+Reveal animation includes newly visible group headers and fixed child sections.
+Stable occurrence IDs and scoped group keys prevent replay on rows shifted by
+collapse, sorting or recycling. Supply `getRowId` when replacing row objects
+without changing their logical occurrences.
+
 | Option             | Type                                                        | Default   | Description                                          |
 | ------------------ | ----------------------------------------------------------- | --------- | ---------------------------------------------------- |
 | `groupOn`          | `(row, { parent, depth }) => any[] \| any \| null \| false` | -         | Function returning group key(s)                      |

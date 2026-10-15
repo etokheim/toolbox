@@ -456,7 +456,10 @@ See [`TreeConfig`](./interfaces/treeconfig/) for the full list of options and de
 
 ### Animation Options
 
-The `animation` option controls how child nodes appear/disappear:
+The `animation` option controls how newly revealed child rows appear. Collapsing
+a node does not replay the reveal on surviving rows that move to another index.
+Scrolling or reusing a row element is not a new reveal. With GroupingRows,
+newly revealed live section headers use its configured reveal animation too.
 
 ```ts
 // Slide animation (default)

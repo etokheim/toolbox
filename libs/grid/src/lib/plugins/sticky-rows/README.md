@@ -59,6 +59,10 @@ settled snapshot. Clones do not own a second framework component or independent
 expansion state. Custom asynchronously fetched content still needs a grid render
 to refresh its snapshot.
 
+Newly revealed live rows, including sticky-eligible section headers, retain
+their Tree/GroupingRows reveal animation. Decorative snapshots omit that
+transient state, so ordinary scroll promotion does not replay a reveal.
+
 ## Accessibility
 
 Conforms to WCAG 2.2 SC 2.4.11 Focus Not Obscured (Minimum): the clone overlay sits over the top

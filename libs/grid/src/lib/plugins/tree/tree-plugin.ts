@@ -51,6 +51,7 @@ import { collapseAll, expandAll, expandToKey, toggleExpand } from './tree-data';
 import { mapViewportToRoots } from './tree-datasource';
 import { detectTreeStructure, inferChildrenField } from './tree-detect';
 import styles from './tree.css?inline';
+import { RevealAnimation } from '../hierarchy/reveal-animation';
 import type {
   ExpandCollapseAnimation,
   FlattenedTreeRow,
@@ -220,6 +221,7 @@ export class TreePlugin<TRow = unknown> extends BaseGridPlugin<TreeConfig<TRow>>
   private rowKeyMap = new Map<string, FlattenedTreeRow>();
   private previousVisibleKeys = new Set<string>();
   private keysToAnimate = new Set<string>();
+  #reveal = new RevealAnimation();
   /** Root-node ordinal per row of the FINAL row list — group rows interleave with tree rows when composed. */
   #rootOwners: number[] = [];
   #rootCount = 0;
@@ -302,6 +304,7 @@ export class TreePlugin<TRow = unknown> extends BaseGridPlugin<TreeConfig<TRow>>
     this.rowKeyMap.clear();
     this.previousVisibleKeys.clear();
     this.keysToAnimate.clear();
+    this.#reveal.clear();
     this.sortState = null;
     this.#levelSort = null;
     this.#multiSort = undefined;
@@ -1218,9 +1221,10 @@ export class TreePlugin<TRow = unknown> extends BaseGridPlugin<TreeConfig<TRow>>
     this.#refreshDisclosures();
     const body = this.gridElement?.querySelector('.rows');
     this.#retireRowMetadata(body);
+    const style = this.animationStyle;
+    this.#reveal.reconcile(body, (element) => this.#renderedRevealKey(element), style !== false);
     if (!body) return;
 
-    const style = this.animationStyle;
     const shouldAnimate = style !== false && this.keysToAnimate.size > 0;
     const animClass = style === 'fade' ? 'tbw-tree-fade-in' : 'tbw-tree-slide-in';
 
@@ -1239,11 +1243,23 @@ export class TreePlugin<TRow = unknown> extends BaseGridPlugin<TreeConfig<TRow>>
       this.#rowMetadata.set(rowEl, 'aria-busy', this.loadingKeys.has(treeRow.key) ? 'true' : null);
 
       if (shouldAnimate && treeRow.key && this.keysToAnimate.has(treeRow.key)) {
-        rowEl.classList.add(animClass);
-        rowEl.addEventListener('animationend', () => rowEl.classList.remove(animClass), { once: true });
+        this.#reveal.apply(rowEl, treeRow.key, animClass);
       }
     }
     this.keysToAnimate.clear();
+  }
+
+  /** @internal */
+  override onScrollRender(): void {
+    this.#reveal.reconcile(
+      this.gridElement?.querySelector('.rows') ?? null,
+      (element) => this.#renderedRevealKey(element),
+      this.animationStyle !== false,
+    );
+  }
+
+  #renderedRevealKey(element: HTMLElement): string | undefined {
+    return this.#rowMeta.get((element as RowElementInternal).__rowDataRef as object)?.key;
   }
 
   #retireRowMetadata(body?: Element | null): void {

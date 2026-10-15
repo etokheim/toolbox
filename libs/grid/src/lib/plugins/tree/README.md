@@ -63,6 +63,11 @@ are preserved; consumers should not scrub row attributes after rendering.
 
 ## Configuration
 
+Reveal animation applies to newly visible child occurrences, not surviving rows
+shifted by collapse or DOM recycling. GroupingRows animates newly revealed live
+section headers using its own `animation` setting. Grid-level disabled and
+reduced-motion settings apply to both.
+
 | Option            | Type                                                  | Default      | Description                                 |
 | ----------------- | ----------------------------------------------------- | ------------ | ------------------------------------------- |
 | `childrenField`   | `string`                                              | `'children'` | Property name for child nodes               |

@@ -18,6 +18,7 @@ import type { PublicGrid, RowElementInternal } from '../../core/types';
 import type { HierarchyContributor, HierarchyNode, HierarchyRowMeta, HierarchySiblingContext } from '../hierarchy';
 import { buildHierarchy, HierarchyPlugin } from '../hierarchy';
 import { FLAT_HIERARCHY, hasDefaultHierarchyHooks, type HierarchyModel } from '../hierarchy/hierarchy';
+import { RevealAnimation } from '../hierarchy/reveal-animation';
 import type {
   DataSourceChildrenDetail,
   DataSourceDataDetail,
@@ -31,7 +32,10 @@ import {
   buildGroupedRowModel,
   buildPreDefinedGroupModel,
   nestGroupRows,
-  collectVisibleDataKeys,
+  collectVisibleRowKeys,
+  getGroupRevealKey,
+  getRenderedGroupRevealKey,
+  indexGroupCells,
   expandAllGroups,
   flattenGroupRows,
   getGroupKeys,
@@ -243,8 +247,9 @@ export class GroupingRowsPlugin extends BaseGridPlugin<GroupingRowsConfig> imple
   private expandedKeys: Set<string> = new Set();
   private flattenedRows: RenderRow[] = [];
   private isActive = false;
-  private previousVisibleKeys = new Set<string>();
-  private keysToAnimate = new Set<string>();
+  private previousVisibleKeys = new Set<unknown>();
+  private keysToAnimate = new Set<unknown>();
+  #reveal = new RevealAnimation();
   /** Track if initial defaultExpanded has been applied */
   private hasAppliedDefaultExpanded = false;
   /**
@@ -322,6 +327,7 @@ export class GroupingRowsPlugin extends BaseGridPlugin<GroupingRowsConfig> imple
     this.isActive = false;
     this.previousVisibleKeys.clear();
     this.keysToAnimate.clear();
+    this.#reveal.clear();
     this.hasAppliedDefaultExpanded = false;
     this.pendingExpansion = undefined;
     this.groupConfigDirty = false;
@@ -669,7 +675,13 @@ export class GroupingRowsPlugin extends BaseGridPlugin<GroupingRowsConfig> imple
   #finishRows(flat: RenderRow[]): boolean {
     this.isActive = this.#anyGroup;
     this.flattenedRows = this.#anyGroup ? flat : [];
-    if (!this.#anyGroup) return false;
+    this.previousVisibleKeys = collectVisibleRowKeys(flat, this.previousVisibleKeys, this.keysToAnimate, (item) =>
+      getGroupRevealKey(item, this.grid?.effectiveConfig?.getRowId),
+    );
+    if (!this.#anyGroup) {
+      this.keysToAnimate.clear();
+      return false;
+    }
 
     // Notify subscribers when a deferred expansion has been applied so React/
     // host code can mirror the new state without a follow-up call. Use
@@ -680,7 +692,6 @@ export class GroupingRowsPlugin extends BaseGridPlugin<GroupingRowsConfig> imple
       this.broadcast<GroupToggleDetail>('group-toggle', { expandedKeys: [...this.expandedKeys] });
     }
 
-    this.previousVisibleKeys = collectVisibleDataKeys(flat, this.previousVisibleKeys, this.keysToAnimate);
     return true;
   }
 
@@ -823,7 +834,7 @@ export class GroupingRowsPlugin extends BaseGridPlugin<GroupingRowsConfig> imple
         } else {
           rowEl.replaceChildren(result);
         }
-        this.#indexGroupCells(rowEl, _rowIndex);
+        indexGroupCells(rowEl, _rowIndex);
         return true;
       }
     }
@@ -859,41 +870,42 @@ export class GroupingRowsPlugin extends BaseGridPlugin<GroupingRowsConfig> imple
     } else {
       this.renderPerColumnGroupRow(row, rowEl, handleToggle);
     }
-    this.#indexGroupCells(rowEl, _rowIndex);
+    indexGroupCells(rowEl, _rowIndex);
     this.#disclosures.update(rowEl, _rowIndex);
 
     return true;
-  }
-
-  #indexGroupCells(rowEl: HTMLElement, index: number): void {
-    const value = String(index);
-    rowEl.querySelectorAll(':scope > .cell').forEach((cell) => {
-      cell.setAttribute('data-row', value);
-    });
   }
 
   /** @internal */
   override afterRender(): void {
     this.#disclosures.refresh();
     this.#releaseRowMetadata(this.isActive);
-    if (!this.isActive) return;
-    const body = this.gridElement?.querySelector('.rows');
-    if (!body) return;
-
+    const body = this.gridElement?.querySelector('.rows') ?? null;
     const style = this.animationStyle;
-    const animate = style !== false && this.keysToAnimate.size > 0;
-    if (!animate) return;
+    this.#reveal.reconcile(body, (element) => this.#renderedRevealKey(element), this.isActive && style !== false);
+    if (!this.isActive || !body || style === false || this.keysToAnimate.size === 0) return;
     const animClass = style === 'fade' ? 'tbw-group-fade-in' : 'tbw-group-slide-in';
 
-    for (const rowEl of body.querySelectorAll('.data-grid-row:not(.group-row)')) {
-      const cell = rowEl.querySelector('.cell[data-row]');
-      const idx = cell ? parseInt(cell.getAttribute('data-row') ?? '-1', 10) : -1;
-      if (this.flattenedRows[idx]?.kind === 'data' && this.keysToAnimate.has(`data-${idx}`)) {
-        rowEl.classList.add(animClass);
-        rowEl.addEventListener('animationend', () => rowEl.classList.remove(animClass), { once: true });
+    for (const rowEl of body.querySelectorAll<HTMLElement>(':scope > .data-grid-row')) {
+      const key = this.#renderedRevealKey(rowEl);
+      if (key !== undefined && this.keysToAnimate.has(key)) {
+        this.#reveal.apply(rowEl, key, animClass);
       }
     }
     this.keysToAnimate.clear();
+  }
+
+  /** @internal */
+  override onScrollRender(): void {
+    this.#reveal.reconcile(
+      this.gridElement?.querySelector('.rows') ?? null,
+      (element) => this.#renderedRevealKey(element),
+      this.isActive && this.animationStyle !== false,
+    );
+  }
+
+  #renderedRevealKey(element: HTMLElement): unknown {
+    return getRenderedGroupRevealKey(element, this.flattenedRows, this.grid?.effectiveConfig?.getRowId);
   }
   // #endregion
 

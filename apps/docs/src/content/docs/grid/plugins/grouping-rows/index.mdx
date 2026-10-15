@@ -515,7 +515,11 @@ changes retain their existing initialization lifecycle.
 
 ### Animation Options
 
-The `animation` option controls how grouped rows appear/disappear:
+The `animation` option controls how newly revealed rows appear, including nested
+group headers and fixed child sections. Reveal tracking uses stable row occurrence
+IDs and parent-scoped group keys, not view indexes. Collapsing an earlier group
+does not animate surviving rows that shift position. Supply `getRowId` when row
+objects may be replaced while retaining the same logical occurrence.
 
 ```ts
 // Slide animation (default)

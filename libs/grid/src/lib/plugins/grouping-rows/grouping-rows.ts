@@ -1,7 +1,7 @@
 /**
  * Row Grouping Core Logic
  *
- * Pure functions for building grouped row models and aggregations.
+ * Grouped row models, aggregations and render identity helpers.
  */
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -15,6 +15,34 @@ import type {
   RenderRow,
 } from './types';
 import type { HierarchyNode, HierarchyRowMeta } from '../hierarchy/types';
+import { tryResolveRowId } from '../../core/internal/row-manager';
+
+/** @internal Keep handled group cells indexed for current projection lookups. */
+export function indexGroupCells(rowEl: HTMLElement, index: number): void {
+  const value = String(index);
+  rowEl.querySelectorAll(':scope > .cell').forEach((cell) => {
+    cell.setAttribute('data-row', value);
+  });
+}
+
+/** @internal Structural and data occurrences have independent identity namespaces. */
+export function getGroupRevealKey(item: RenderRow, getRowId?: (row: unknown) => string): unknown {
+  if (item.kind === 'group') return `group:${item.key}`;
+  if (item.row === null || typeof item.row !== 'object') return item.row;
+  const id = tryResolveRowId(item.row, getRowId);
+  return id === undefined ? item.row : `data:${id}`;
+}
+
+/** @internal Resolve current projection ownership, never a recycled data-group-key. */
+export function getRenderedGroupRevealKey(
+  element: HTMLElement,
+  rows: readonly RenderRow[],
+  getRowId?: (row: unknown) => string,
+): unknown {
+  const index = Number(element.querySelector(':scope > .cell[data-row]')?.getAttribute('data-row') ?? -1);
+  const item = rows[index];
+  return item ? getGroupRevealKey(item, getRowId) : undefined;
+}
 
 /** Context for the root row list (no parent). */
 const ROOT_CONTEXT: GroupOnContext = { parent: null, depth: 0 };
@@ -112,21 +140,20 @@ export function flattenGroupRows(flat: readonly RenderRow[], meta: WeakMap<objec
   });
 }
 
-/** @internal Track data-row animation keys independently of projection shape. */
-export function collectVisibleDataKeys(
+/** @internal Compare logical occurrences, including structural headers, across projections. */
+export function collectVisibleRowKeys(
   flat: readonly RenderRow[],
-  previous: ReadonlySet<string>,
-  newlyVisible: Set<string>,
-): Set<string> {
+  previous: ReadonlySet<unknown>,
+  newlyVisible: Set<unknown>,
+  keyOf: (item: RenderRow) => unknown,
+): Set<unknown> {
   newlyVisible.clear();
-  const current = new Set<string>();
-  flat.forEach((item, index) => {
-    if (item.kind === 'data') {
-      const key = `data-${index}`;
-      current.add(key);
-      if (!previous.has(key)) newlyVisible.add(key);
-    }
-  });
+  const current = new Set<unknown>();
+  for (const item of flat) {
+    const key = keyOf(item);
+    current.add(key);
+    if (!previous.has(key)) newlyVisible.add(key);
+  }
   return current;
 }
 

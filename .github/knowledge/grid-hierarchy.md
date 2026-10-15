@@ -38,6 +38,13 @@ Read order for composition/teardown: `hierarchy.ts` → `hierarchy-plugin.ts` �
 - INVARIANT: same-instance standalone → composed → standalone activity translates root group expansion through `RootGroupKeys`. Replacing plugin arrays follows existing detach/reinitialize policy, not same-instance state preservation.
 - TESTS: `hierarchy.spec.ts`, `hierarchy-integration.spec.ts`, `borrowed-positions.spec.ts`, `correctness-followup.spec.ts` cover generation/reentrancy, explicit maps, custom IDs/hooks, row replacement, both plugin orders and contributor retirement. Defensive missing-contributor/container ARIA fixtures are not claims about normal config replacement leaving Hierarchy attached.
 
+## Reveal ownership
+
+- OWNS: Tree and GroupingRows keep visible logical-occurrence deltas; `hierarchy/reveal-animation.ts` owns transient classes/listeners per direct body element + occurrence. Recycle, removal, disable, detach and matching row-level animation end/cancel release that owner; nested/unrelated animation events do not.
+- INVARIANT: GroupingRows compares scoped group keys and resolved data IDs (row-reference fallback), never view indexes or stale `data-group-key` on recycled real rows. Inactive grouping still remembers ungrouped roots before the first child-section expansion. `hierarchy-reveal.spec.ts`.
+- DECIDED (native reveal correction): newly visible live headers, including fixed child sections, use GroupingRows reveal animation. Decorative StickyRows templates strip transient Tree/GroupingRows classes. WHY: live occurrence reveal is distinct from later scroll promotion; clones have no animation lifecycle owner.
+- INVARIANT: scroll hooks only retire mismatched active owners; they never compute a reveal delta. No timer, new animation frame or forced layout is introduced. Grid `data-animation-mode` expresses policy, not active media preference; the CSS `--tbw-animation-enabled` signal gates default reduced-motion behaviour.
+
 ## Tree
 
 OWNS: expanded keys, flattened rows, `rowKeyMap`, `#rowMeta` `WeakMap<row,FlattenedTreeRow>`, `#rowKeys` `WeakMap<row,string>`, animation state, `loadingKeys`/`loadedKeys`, `#childRequests: Map<key,AbortController>`.

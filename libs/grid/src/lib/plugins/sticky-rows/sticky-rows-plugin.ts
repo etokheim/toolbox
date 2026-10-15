@@ -8,6 +8,7 @@
  */
 
 import { resolveCellValue } from '../../core/internal/value-accessor';
+import { stripRevealAnimation } from '../hierarchy/reveal-animation';
 import type { RowPosition } from '../../core/internal/virtualization';
 import { BaseGridPlugin } from '../../core/plugin/base-plugin';
 import type { ScrollEvent } from '../../core/plugin/types';
@@ -486,6 +487,7 @@ export class StickyRowsPlugin extends BaseGridPlugin<StickyRowsConfig> {
     const live = this.findRenderedRow(index);
     if (!live) return this.cloneCache.get(index) ?? null;
     const clone = live.cloneNode(true) as HTMLElement;
+    stripRevealAnimation(clone);
     clone.classList.add('tbw-sticky-row');
     clone.removeAttribute('aria-rowindex');
     // Stuck clones are decorative — the original row is still present in the

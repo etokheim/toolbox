@@ -24,6 +24,11 @@ in the settled snapshot. Clones do not mount independent framework components or
 own expansion state. Content arriving asynchronously after that commit needs a
 grid render to refresh its snapshot.
 
+Tree and GroupingRows reveal animations run on newly revealed live body rows,
+including rows eligible to become sticky. Decorative snapshots omit those
+transient animations: scrolling a row into the sticky position does not reveal
+it again.
+
 ## Installation
 
 ```ts
