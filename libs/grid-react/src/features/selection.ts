@@ -161,7 +161,9 @@ export type { _Augmentation as _SelectionAugmentation } from '@toolbox-web/grid/
  */
 export interface SelectionMethods<TRow = unknown> {
   /**
-   * Select all rows (row mode) or all cells (range mode).
+   * Select all selectable rows (row mode) or one range over every row and all
+   * non-hidden columns (range mode).
+   * Array modes use their row/range axis.
    */
   selectAll: () => void;
 
@@ -323,24 +325,8 @@ export function useGridSelection<TRow = unknown>(selector?: string): SelectionMe
       );
       return;
     }
-    const grid = getGrid();
-    // Cast to any to access protected config
-    const mode = (plugin as any).config?.mode;
-
-    if (mode === 'row') {
-      const rowCount = grid?.rows?.length ?? 0;
-      const allIndices = new Set<number>();
-      for (let i = 0; i < rowCount; i++) allIndices.add(i);
-      (plugin as any).selected = allIndices;
-      (plugin as any).requestAfterRender?.();
-    } else if (mode === 'range') {
-      const rowCount = grid?.rows?.length ?? 0;
-      const colCount = (grid as any)?._columns?.length ?? 0;
-      if (rowCount > 0 && colCount > 0) {
-        plugin.setRanges([{ from: { row: 0, col: 0 }, to: { row: rowCount - 1, col: colCount - 1 } }]);
-      }
-    }
-  }, [getPlugin, getGrid]);
+    plugin.selectAll();
+  }, [getPlugin]);
 
   const clearSelection = useCallback(() => {
     getPlugin()?.clearSelection();

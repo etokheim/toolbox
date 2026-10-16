@@ -11,6 +11,7 @@ export type { AggregatorFn, AggregatorRef } from '../../core/internal/aggregator
 export type { ExpandCollapseAnimation } from '../../core/types';
 
 import type { ControlRenderer, ExpandCollapseAnimation, PublicGrid } from '../../core/types';
+import type { AggregatorRef } from '../../core/internal/aggregators';
 
 /**
  * Plugin-owned group identity, state and action for a custom disclosure.
@@ -39,11 +40,11 @@ export interface GroupingRowsDisclosureContext {
 }
 
 /**
- * Map of field names to aggregator references
+ * Map of field names to {@link AggregatorRef} values
  *
  * @since 0.1.1
  */
-export type AggregatorMap = Record<string, import('../../core/internal/aggregators').AggregatorRef>;
+export type AggregatorMap = Record<string, AggregatorRef>;
 
 /**
  * Pre-defined group definition for server-side grouping.

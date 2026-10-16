@@ -4,7 +4,7 @@
  * Integration tests for GroupingRowsPlugin against a real `<tbw-grid>` element.
  * Covers WAI-ARIA Treegrid role + aria-level/setsize/posinset emission (#264).
  */
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { GroupingRowsPlugin } from './grouping-rows-plugin';
 
 import '../../../index';

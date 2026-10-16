@@ -43,11 +43,17 @@ import type { ColumnConfig, GridHost, PublicGrid } from '../../core/types';
 import {
   DragHandleBinding,
   findDragHandle,
+  isKeyboardMoveBlocked,
   createDefaultDragHandle,
   attachRowCloneDragImage,
   DRAG_HANDLE_LABEL,
   type HandleRecord,
 } from './drag-handle-controls';
+import {
+  type DragAlternativeAction,
+  type DragAlternativeMenu,
+  createDragAlternativeMenu,
+} from '../shared/drag-alternative-menu';
 import {
   type AutoScroller,
   type RowDragPayload,
@@ -64,11 +70,6 @@ import {
   mimeForZone,
   setCurrentDragSession,
 } from '../shared/drag-drop-protocol';
-import {
-  type DragAlternativeAction,
-  type DragAlternativeMenu,
-  createDragAlternativeMenu,
-} from '../shared/drag-alternative-menu';
 import styles from './row-drag-drop.css?inline';
 import type {
   PendingMove,
@@ -534,21 +535,21 @@ export class RowDragDropPlugin<T = unknown> extends BaseGridPlugin<RowDragDropCo
   /** @internal */
   override onKeyDown(event: KeyboardEvent): boolean | void {
     if (!this.config.enableKeyboard) return;
-    if (!event.ctrlKey || (event.key !== 'ArrowUp' && event.key !== 'ArrowDown')) return;
+    // Ctrl is deprecated (macOS reserves Ctrl+↑/↓); remove in the next major.
+    if (!(event.altKey || event.ctrlKey) || (event.key !== 'ArrowUp' && event.key !== 'ArrowDown')) return;
+    if (this.queryBoolean('isEditing') || isKeyboardMoveBlocked(this.gridElement, event)) return;
 
     const grid = this.internalGrid;
     const focusRow = grid._focusRow;
     const rows = grid._rows ?? this.sourceRows;
     if (focusRow < 0 || focusRow >= rows.length) return;
 
-    const direction = event.key === 'ArrowUp' ? 'up' : 'down';
-    const toIndex = direction === 'up' ? focusRow - 1 : focusRow + 1;
+    const toIndex = focusRow + (event.key === 'ArrowUp' ? -1 : 1);
     if (toIndex < 0 || toIndex >= rows.length) return;
 
-    const row = rows[focusRow];
     if (!this.canMoveRow(focusRow, toIndex)) return;
 
-    this.handleKeyboardMove(row, focusRow, toIndex, grid._focusCol);
+    this.handleKeyboardMove(rows[focusRow], focusRow, toIndex, grid._focusCol);
     event.preventDefault();
     event.stopPropagation();
     return true;

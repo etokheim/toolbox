@@ -44,5 +44,11 @@
 
 ### Plugins with dependencies
 
-`tree.umd.js` and `grouping-rows.umd.js` bundle their hierarchy dependency,
-so no extra script is needed. The grid attaches one hierarchy plugin per grid.
+`tree.umd.js` and `grouping-rows.umd.js` depend on the hierarchy plugin
+(`hierarchy.umd.js`, global `TbwGridPlugin_hierarchy`). Until the next major
+release each of them **bundles its own copy** of it, so no extra script is
+needed. The grid attaches the hierarchy plugin for you either way.
+
+> **Deprecated:** the next major release stops bundling dependencies into
+> individual plugin UMD files. From then on, load `hierarchy.umd.js` before
+> `tree.umd.js` / `grouping-rows.umd.js` (or use `grid.all.umd.js`).

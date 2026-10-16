@@ -97,6 +97,12 @@ const CHECKBOX_COLUMN_FIELD = '__tbw_checkbox';
 const EXTEND_ITEM_ORDER = 60;
 
 /** Keys that move grid focus — selection reacts to these in cell/range mode. */
+function isFormField(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  const tag = target.tagName;
+  return tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA' || target.isContentEditable;
+}
+
 const NAV_KEYS: readonly string[] = [
   'ArrowUp',
   'ArrowDown',
@@ -415,6 +421,10 @@ export class SelectionPlugin<TRow = unknown> extends BaseGridPlugin<SelectionCon
 
   /** Debounce timer for selection announcements */
   private announceTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Set by Shift/Ctrl+Space so the next announcement names the rows/columns selected. */
+  #pendingSpanAnnouncement: { axis: 'row' | 'column'; count: number } | null = null;
+  /** Range built by Shift/Ctrl+Space; Shift+Arrow keeps its spanned axis full while it is still `activeRange`. */
+  #spanRange: { axis: 'row' | 'column'; range: InternalCellRange } | null = null;
 
   /** True when selection was explicitly set (click/keyboard) — prevents #syncSelectionToFocus from overwriting */
   private explicitSelection = false;
@@ -1126,6 +1136,8 @@ export class SelectionPlugin<TRow = unknown> extends BaseGridPlugin<SelectionCon
   #keyColumnAxis(event: KeyboardEvent): boolean {
     const ctrlOrMeta = event.ctrlKey || event.metaKey;
     if (!ctrlOrMeta) return false;
+    // Editors keep their own Ctrl+Space / Ctrl+Shift+Arrow (word selection) behaviour.
+    if (isFormField(event.target) || this.grid.query<boolean>('isEditing').some(Boolean)) return false;
 
     if (event.key === ' ' || event.key === 'Spacebar') {
       const column = this.visibleColumns[this.grid._focusCol];
@@ -1233,7 +1245,7 @@ export class SelectionPlugin<TRow = unknown> extends BaseGridPlugin<SelectionCon
    * Tab always navigates without extending (even with Shift).
    */
   #keyRangeMode(event: KeyboardEvent, isNavKey: boolean): boolean {
-    if (!isNavKey) return this.#keySelectAll(event, this.config.multiSelect !== false);
+    if (!isNavKey) return this.#keyRangeSpan(event) || this.#keySelectAll(event, this.config.multiSelect !== false);
 
     const shouldExtend = event.shiftKey && event.key !== 'Tab';
 
@@ -1252,6 +1264,60 @@ export class SelectionPlugin<TRow = unknown> extends BaseGridPlugin<SelectionCon
     queueMicrotask(() => this.requestAfterRender());
 
     return false; // Let grid handle navigation
+  }
+
+  /**
+   * WAI-ARIA APG grid chords in range mode:
+   * - **Shift+Space** — select the row(s) spanned by the active range (or the focused row).
+   * - **Ctrl/⌘+Space** — select the spanned column(s); only when the column axis is not
+   *   configured (otherwise {@link #keyColumnAxis} owns it).
+   *
+   * Skipped for form-field targets and while an edit is open so editors still type spaces.
+   */
+  #keyRangeSpan(event: KeyboardEvent): boolean {
+    if (event.key !== ' ' && event.key !== 'Spacebar') return false;
+    const ctrlOrMeta = event.ctrlKey || event.metaKey;
+    let axis: 'row' | 'column';
+    if (event.shiftKey && !ctrlOrMeta) axis = 'row';
+    else if (ctrlOrMeta && !event.shiftKey && !this.#mode.columnEnabled) axis = 'column';
+    else return false;
+    if (event.altKey) return false;
+    if (isFormField(event.target)) return false;
+    if (this.grid.query<boolean>('isEditing').some(Boolean)) return false;
+
+    const rowCount = this.rows.length;
+    const colCount = this.visibleColumns.length;
+    if (rowCount === 0 || colCount === 0) return false;
+
+    const focus = { row: this.grid._focusRow, col: this.grid._focusCol };
+    const span = this.activeRange
+      ? normalizeRange(this.activeRange)
+      : { startRow: focus.row, startCol: focus.col, endRow: focus.row, endCol: focus.col };
+    const range: InternalCellRange =
+      axis === 'row'
+        ? { startRow: span.startRow, startCol: 0, endRow: span.endRow, endCol: colCount - 1 }
+        : { startRow: 0, startCol: span.startCol, endRow: rowCount - 1, endCol: span.endCol };
+
+    event.preventDefault();
+    event.stopPropagation();
+
+    // Anchor on the corner farthest from focus so a following Shift+Arrow keeps the far edge.
+    const anchor = {
+      row: Math.abs(focus.row - range.startRow) >= Math.abs(focus.row - range.endRow) ? range.startRow : range.endRow,
+      col: Math.abs(focus.col - range.startCol) >= Math.abs(focus.col - range.endCol) ? range.startCol : range.endCol,
+    };
+    this.ranges = [range];
+    this.activeRange = range;
+    this.#spanRange = { axis, range };
+    this.cellAnchor = anchor;
+    this.#extendAnchor = anchor;
+    this.#pendingSpanAnnouncement = {
+      axis,
+      count: axis === 'row' ? range.endRow - range.startRow + 1 : range.endCol - range.startCol + 1,
+    };
+    this.emit<SelectionChangeDetail>('selection-change', this.#buildEvent());
+    this.requestAfterRender();
+    return true;
   }
 
   /** Ctrl/⌘+A: select all (skipped while editing, and when single-select). */
@@ -2053,7 +2119,15 @@ export class SelectionPlugin<TRow = unknown> extends BaseGridPlugin<SelectionCon
 
       if (shiftKey && this.cellAnchor) {
         // Extend selection from anchor to current focus
-        const newRange = createRangeFromAnchor(this.cellAnchor, { row: currentRow, col: currentCol });
+        let newRange = createRangeFromAnchor(this.cellAnchor, { row: currentRow, col: currentCol });
+        const span = this.#spanRange;
+        if (span && span.range === this.activeRange) {
+          newRange =
+            span.axis === 'row'
+              ? { ...newRange, startCol: 0, endCol: this.visibleColumns.length - 1 }
+              : { ...newRange, startRow: 0, endRow: this.rows.length - 1 };
+          span.range = newRange;
+        }
         this.ranges = [newRange];
         this.activeRange = newRange;
       } else if (!shiftKey) {
@@ -2147,8 +2221,8 @@ export class SelectionPlugin<TRow = unknown> extends BaseGridPlugin<SelectionCon
    * Select all selectable rows (row mode) or all cells (range mode).
    *
    * In row mode, selects every row where `isSelectable` returns true (or all rows if no callback).
-   * In range mode, creates a single range spanning all rows and columns.
-   * Has no effect in cell mode.
+   * In range mode, creates a single range spanning all rows and visible columns.
+   * Array modes resolve to their row/range axis. Has no effect in cell mode.
    *
    * @example
    * ```ts
@@ -2157,10 +2231,10 @@ export class SelectionPlugin<TRow = unknown> extends BaseGridPlugin<SelectionCon
    * ```
    */
   selectAll(): void {
-    const { mode, multiSelect } = this.config;
+    const mode = this.#mode.primary;
 
     // Single-select mode: selectAll is a no-op
-    if (multiSelect === false) return;
+    if (this.config.multiSelect === false) return;
 
     if (mode === 'row') {
       this.selected.clear();
@@ -2174,7 +2248,7 @@ export class SelectionPlugin<TRow = unknown> extends BaseGridPlugin<SelectionCon
       this.requestAfterRender();
     } else if (mode === 'range') {
       const rowCount = this.rows.length;
-      const colCount = this.columns.length;
+      const colCount = this.visibleColumns.length;
       if (rowCount > 0 && colCount > 0) {
         const allRange: InternalCellRange = {
           startRow: 0,
@@ -2527,9 +2601,13 @@ export class SelectionPlugin<TRow = unknown> extends BaseGridPlugin<SelectionCon
       selectableColumnFields(this.visibleColumns),
     );
     // Debounced screen reader announcement for selection changes
+    const span = this.#pendingSpanAnnouncement;
+    this.#pendingSpanAnnouncement = null;
     if (this.announceTimer) clearTimeout(this.announceTimer);
     this.announceTimer = setTimeout(() => {
-      if (event.activeAxis === 'column') {
+      if (span) {
+        announce(this.gridElement, getA11yMessage(this.gridElement, 'rangeSpanSelected', span.axis, span.count));
+      } else if (event.activeAxis === 'column') {
         const cols = event.selectedColumns;
         if (cols.length === 1) {
           const field = cols[0];

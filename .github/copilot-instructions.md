@@ -39,8 +39,8 @@ This project's AI knowledge is organized in four tiers to minimize context windo
 > **Knowledge file style:** Knowledge files are an _agent_ tool — dense, scannable, structured
 > markers (`OWNS:` / `INVARIANT:` / `DECIDED:` …), never changelog prose. Soft budget **≤25 kB**
 > (`wc -c`), hard ceiling 30 kB. The full style rules — `DECIDED` formatting, compress-don't-append,
-> table vs. bullet byte costs, orientation headers, when to split — live in the **`retrospective`
-> skill** (Steps 5b/5c). Read it before writing to any `.github/knowledge/*.md` file.
+> table vs. bullet byte costs, orientation headers, when to split — live in
+> `.github/skills/retrospective/knowledge-style.md`. Read it before writing to any `.github/knowledge/*.md` file.
 
 > **Continuous improvement:** After significant tasks, use the `retrospective` skill to capture lessons learned and update the knowledge base. See the "Scoped Instructions", "Knowledge Reference", and "Skills Reference" sections below.
 
@@ -78,6 +78,7 @@ Loaded on demand from `.github/knowledge/` — read relevant files before starti
 | `grid-input`                | Input & pointer             | Pointer modality, pointer-drag capture/promotion, coarse long-press priority policy (#302)                                  |
 | `grid-plugins`              | Plugin system               | Plugin manager, lifecycle, hooks, inter-plugin communication, manifest, scroll dispatch                                     |
 | `grid-hierarchy`            | Hierarchical row models     | Hierarchy, Tree, parent-scoped GroupingRows, occurrence identity, metadata generations and expansion ownership              |
+| `upstream-integration`      | Upstream compatibility      | Frozen source identities, upstream exceptions, conflict decisions and qualification boundary                                |
 | `grid-plugins-catalog-data` | Plugin catalog (data)       | ServerSide, Pivot, pinned/virtualized/grouped columns, sorting, filtering, pinned rows, clipboard/export/print              |
 | `grid-plugins-catalog-ui`   | Plugin catalog (UI)         | Selection, MasterDetail, reordering & drag-drop, Responsive, Tooltip, StickyRows, ContextMenu                               |
 | `grid-plugin-responsive`    | Responsive plugin           | Breakpoints, card layout, view transitions & morph, column fades/`hiddenColumns`, card height                               |
@@ -111,20 +112,23 @@ Loaded on demand from `.github/skills/` for task-specific workflows:
 | `new-adapter`         | Scaffolding a new framework adapter from scratch                                                    |
 | `release-prep`        | Preparing a library version for release                                                             |
 | `astro-demo`          | Adding demos or documentation for features                                                          |
-| `bench`               | Benchmarking as local regression testing; writing `.bench.ts`                                       |
+| `bench`               | Benchmarking as local regression testing; writing `.bench.ts`; `/bench [tag] [report-only]`         |
+| `perf-fix`            | `/perf-fix` (manual only) — fix one bench regression end-to-end: profile → patch → re-bench         |
 | `debug-perf`          | Profiling, hot path analysis, render scheduler issues                                               |
 | `debug-browser`       | DOM inspection, screenshots, console, script eval                                                   |
 | `run-e2e`             | Running e2e suites, demo servers, updating baselines                                                |
 | `docs-update`         | After any feature, fix, or refactor                                                                 |
 | `since-tag`           | Resolving `@since` JSDoc versions for new public API                                                |
-| `pr-comments`         | Read/reply/resolve PR review threads via the `gh` CLI                                               |
+| `qa-pr`               | `/qa-pr <PR>` — remote QA: evaluate PR review comments, fix valid ones, reply + resolve threads     |
+| `qa`                  | `/qa` (manual only) — local QA: pre-commit review + fix of a file/folder/diff/branch                |
 | `fallow`              | Codebase intelligence: health score, complexity, dead code, duplication, PR audit via `bunx fallow` |
-| `qa-apply-findings`   | Shared findings execution core for `/qa` and `/pr-qa`                                               |
+| `qa-apply-findings`   | Shared findings execution core for `qa` and `qa-pr` (not user-invocable)                            |
 | `retrospective`       | Post-task lessons learned; update instructions & skills                                             |
+| `ai-mode`             | `/ai-mode [setup \| saving \| full]` (manual only) — toggle the token-budget flag                   |
 
 ## AI Usage Mode (token budget)
 
-A project-scoped token-budget flag (`full` | `saving`) governs how aggressively I spend tokens/credits. The **single source of truth** — both the active flag and the full behavioral rules (including the saving-mode handoff/deferral list) — is `.github/instructions/ai-mode.instructions.md`, auto-loaded every session via `applyTo: '**'`. Toggle it with the `/ai_mode saving` / `/ai_mode full` prompt; install it on a new project with `/ai_mode setup`. The flag never overrides safety/consent rules. See `delivery-workflow.instructions.md` → "Saving mode" for how it interacts with the delivery checklist.
+A project-scoped token-budget flag (`full` | `saving`) governs how aggressively I spend tokens/credits. The **single source of truth** — both the active flag and the full behavioral rules (including the saving-mode handoff/deferral list) — is `.github/instructions/ai-mode.instructions.md`, auto-loaded every session via `applyTo: '**'`. Toggle it with the `/ai-mode saving` / `/ai-mode full` skill; install it on a new project with `/ai-mode setup`. The flag never overrides safety/consent rules. See `delivery-workflow.instructions.md` → "Saving mode" for how it interacts with the delivery checklist.
 
 ## Core Constraints
 

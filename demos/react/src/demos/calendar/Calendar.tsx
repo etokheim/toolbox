@@ -26,6 +26,24 @@ import { findDayPosition, useKeyboardNav, type PendingFocus } from './hooks/useK
 
 const DEFAULT_ROW_HEIGHT_PX = 110;
 
+// Module-level so its reference is stable: a new `features` object makes the grid
+// detach/re-attach every plugin, and the legend's removal re-triggers the row-height
+// ResizeObserver (endless loop).
+const features: GridConfig<CalendarWeek>['features'] = {
+  shell: { header: { toolPanelToggle: false } },
+  pinnedRows: {
+    slots: [
+      {
+        id: 'calendar-legend',
+        position: 'bottom',
+        // The grid-react pinned-rows feature module caches the host element
+        // across calls (#354), so returning JSX directly is safe.
+        render: () => <Legend />,
+      },
+    ],
+  },
+};
+
 type UserEvents = Record<string, CalendarEvent[]>;
 
 interface CalendarState {
@@ -110,6 +128,7 @@ function resolveDayFromCell(rows: readonly CalendarWeek[], cell: HTMLElement): C
 export function Calendar() {
   const [state, dispatch] = useReducer(calendarReducer, undefined, initialState);
   const [dialogDay, setDialogDay] = useState<CalendarDay | null>(null);
+  const [rowHeight, setRowHeight] = useState(DEFAULT_ROW_HEIGHT_PX);
   const grid = useGrid<CalendarWeek>();
   const pendingFocusRef = useRef<PendingFocus | null>(null);
 
@@ -120,46 +139,37 @@ export function Calendar() {
     dispatch({ type: 'set-view', year, month });
   }, []);
 
+  const columns = useMemo<GridConfig<CalendarWeek>['columns']>(
+    () => [
+      {
+        field: 'weekNumber',
+        header: 'W',
+        width: 44,
+        sortable: false,
+        resizable: false,
+        cellClass: () => 'cal-week-cell',
+      },
+      ...WEEKDAY_FIELDS.map((field: WeekdayField) => ({
+        field,
+        header: WEEKDAY_HEADERS_FULL[field],
+        headerLabelRenderer: () => <WeekdayHeader field={field} />,
+        minWidth: 60,
+        sortable: false,
+        resizable: false,
+        renderer: (ctx: { value: CalendarDay }) => <DayCell day={ctx.value} />,
+      })),
+    ],
+    [],
+  );
+
   const gridConfig = useMemo<GridConfig<CalendarWeek>>(
     () => ({
       fitMode: 'stretch',
-      rowHeight: DEFAULT_ROW_HEIGHT_PX,
-      features: {
-        shell: { header: { toolPanelToggle: false } },
-        pinnedRows: {
-          slots: [
-            {
-              id: 'calendar-legend',
-              position: 'bottom',
-              // The grid-react pinned-rows feature module caches the host element
-              // across calls (#354), so returning JSX directly is safe — no
-              // unmount-loop workaround needed.
-              render: () => <Legend />,
-            },
-          ],
-        },
-      },
-      columns: [
-        {
-          field: 'weekNumber',
-          header: 'W',
-          width: 44,
-          sortable: false,
-          resizable: false,
-          cellClass: () => 'cal-week-cell',
-        },
-        ...WEEKDAY_FIELDS.map((field: WeekdayField) => ({
-          field,
-          header: WEEKDAY_HEADERS_FULL[field],
-          headerLabelRenderer: () => <WeekdayHeader field={field} />,
-          minWidth: 60,
-          sortable: false,
-          resizable: false,
-          renderer: (ctx: { value: CalendarDay }) => <DayCell day={ctx.value} />,
-        })),
-      ],
+      rowHeight,
+      features,
+      columns,
     }),
-    [],
+    [columns, rowHeight],
   );
 
   useEffect(() => {
@@ -182,7 +192,7 @@ export function Calendar() {
   const openDialog = useCallback((day: CalendarDay) => setDialogDay(day), []);
 
   useKeyboardNav({ gridRef: grid.ref, enabled: grid.isReady, rows, view: state, setView, openDialog });
-  useDynamicRowHeight(grid.ref, grid.isReady, rows.length, gridConfig);
+  useDynamicRowHeight(grid.ref, grid.isReady, rows.length, setRowHeight);
   useDoubleClick(
     grid.ref,
     grid.isReady,

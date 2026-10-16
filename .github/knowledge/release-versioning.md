@@ -47,13 +47,17 @@ Config: [release-please-config.json](release-please-config.json) + `.release-ple
 
 ## `@since` pipeline & version badges
 
-- WHERE: `.github/skills/since-tag/build-since-map.ts` (git-history scan → `since-map.json`), `apply-since-tags.ts` (writes `@since` JSDoc into source), `resolve-since.mjs` (deterministic next-`@since` for one new symbol), [tools/typedoc-mdx-shared.ts](tools/typedoc-mdx-shared.ts) (`sinceBadge`/`sinceBlock`), `libs/grid/scripts/typedoc-to-mdx.ts` (calls them in genClass/genPluginClass/genInterface/genTypeAlias/genFunction/genEnum/genPropertiesTable/genMethod/genAccessor + `genDataGridSplit` Public API), each lib's `typedoc.json` (`blockTags` allowlist includes `@since`). Nothing automated calls these scripts.
+- WHERE: `.github/skills/since-tag/build-since-map.ts` (git-history scan → `tmp/since-map.json`, gitignored; regenerate before every apply), `apply-since-tags.ts` (writes `@since` JSDoc into source), `resolve-since.mjs` (deterministic next-`@since` for one new symbol), [tools/typedoc-mdx-shared.ts](tools/typedoc-mdx-shared.ts) (`sinceBadge`/`sinceBlock`), `libs/grid/scripts/typedoc-to-mdx.ts` (calls them in genClass/genPluginClass/genInterface/genTypeAlias/genFunction/genEnum/genPropertiesTable/genMethod/genAccessor + `genDataGridSplit` Public API), each lib's `typedoc.json` (`blockTags` allowlist includes `@since`). Nothing automated calls these scripts.
 - FOOTER: `apps/docs/src/components/VersionBadges.astro` reads `package.json` via static `import` (NOT `readFileSync` — fails in `astro build`); slotted after `<Default />` in `Footer.astro`. CSS in `apps/docs/src/styles/custom.css` (`.since-badge`, `.tbw-versions`).
 - INVARIANT: `build-since-map.ts` MUST enumerate EVERY TypeDoc entry point — grid has 1 + 26 plugin entries (`libs/grid/src/lib/plugins/*/index.ts`); missing them silently drops plugin classes from the map and the MDX renders no Since pill.
 - INVARIANT: tag-prefix scoping is required — grid uses `grid-` (and legacy `v`), each adapter `grid-<framework>-`. Mixing misattributes versions.
 - INVARIANT: `apply-since-tags.ts` is idempotent.
 - FLOW (back-fill, once per cycle): `bun .github/skills/since-tag/build-since-map.ts` → `bun .github/skills/since-tag/apply-since-tags.ts` → `bun nx typedoc grid && … grid-angular && … grid-react && … grid-vue`.
 - DECIDED: `@since` lives in source JSDoc (survives refactors, visible in IDE hovers); the generator no-ops when absent. Plugin/Adapter splits of `DataGridElement` deliberately do NOT show the pill — only the Public API split. Version badges link to `/grid/<framework>/changelog/`.
+
+## next major (v4) cleanup — planned
+
+- PENDING (#504): stop inlining plugin hard dependencies into per-plugin UMD files — externalize `../<dep>` to the `TbwGridPlugin_<dep>` global in `buildUmdBundles` (`DEPRECATED (remove in v4)` comment in [vite.config.ts](libs/grid/vite.config.ts)), then drop the deprecation notes in `umd-readme.md`, `plugins/hierarchy/README.md` and `grid/plugins/hierarchy/index.mdx` ("CDN (UMD) Builds").
 
 ## v3.0.0 cleanup (COMPLETED — epic #263)
 

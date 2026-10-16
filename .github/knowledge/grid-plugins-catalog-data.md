@@ -28,7 +28,7 @@ EVENTS: `datasource:data|children|loading|error`. QUERIES: `datasource:fetch-chi
 - DECIDED (Feb 2026): `pageSize` canonical, `cacheBlockSize` a `@deprecated` alias; resolve at consumption (`pageSize ?? cacheBlockSize ?? 100`). `defaultConfig` MUST NOT set `pageSize`. `GetRowsParams.pageSize = endNode - startNode`.
 - DECIDED (#273, `data-src`): plugins MAY read host `data-*` in `attach()` via `this.gridElement.getAttribute()`. No JS `dataSource` → `setDataSource(createUrlDataSource(src))` (`@internal`, fetch-once-and-cache; array or `{rows,totalNodeCount}`). A failed/aborted fetch MUST NOT be cached (`datasetPromise = null` in `.catch`). JS `config.dataSource` wins; NOT for true server pagination. INVARIANT: host `data-*` reads are INIT-TIME ONLY — `observedAttributes` is static (`rows`,`columns`,`grid-config`,`fit-mode`,`loading`); `grid-config` is the reactive escape hatch.
 - DECIDED (#369): `FeatureConfig.serverSide` widened to `boolean | ServerSideConfig`; factory normalizes `true` → `new ServerSidePlugin()`. `{...true}` yields `{}`, no throw.
-- TENSION: tall grid + small `pageSize` + no threshold needs a scroll to fill the viewport.
+- FLOW (#507/#509): block arrival sets `pendingViewportCheck`; `afterRender` consumes it once and fills the actual viewport even when `loadThreshold: 0`. Purge/source replacement/detach clear pending work; concurrency guards still apply.
 - Tests: `server-side.spec.ts` (AbortSignal, Subscribable, `loadBlock`, `createUrlDataSource`, `data-src`, boolean shorthand).
 
 ### Pivot
@@ -104,7 +104,9 @@ OWNS: pinned row positions (top/bottom), info bar (counts/panels), aggregation r
 
 ### Clipboard
 
-OWNS: clipboard buffer. HOOKS: onKeyDown (Ctrl+C/V/X). DEPENDS: selection (optional).
+OWNS: clipboard buffer. HOOKS: onKeyDown (Ctrl/Cmd+C), native paste event. DEPENDS: selection (optional). No cut implementation.
+
+- INVARIANT: copy/paste shape uses `selection.activeAxis`, falling back only to a string `mode`; an array configuration is not itself an axis.
 
 - DECIDED (Jul 2026, structured payload): copy writes WYSIWYG `text/plain` (via `processCell`), snapshots RAW values in `#internalClipboard = {text, rawRows, fields}`, and writes `text/html` — a `<table>` whose root carries a base64 `data-tbw-clip` payload. Paste value precedence: (1) in-memory match on `text` (preserves `Date`), (2) `parseClipboardHtmlPayload(getData('text/html'))`, (3) parsed text. Winner → `PasteDetail.rawRows`; `defaultPasteHandler` uses `rawRows ?? rows` + `cloneStructured` per value so tiled pastes never share a ref. Codec MUST live in [clipboard-payload.ts](libs/grid/src/lib/plugins/clipboard/clipboard-payload.ts), NOT copy.ts/paste.ts (circular import → TDZ at test load).
 - DECIDED (Jul 2026, `fillSelection`): default `false`; tiles a smaller source across a larger **bounded** selection by modulo indexing. `#handleNativePaste` sets `PasteDetail.fillSelection` (only when `bounds != null`) and widens `fields` to the selection width; `defaultPasteHandler` iterates bounds with `pastedRows[r%srcRows]` / `sourceRow[c%srcCols]`. Never grows the grid; non-editable columns still skipped; `detail.rows` stays the source. RULED OUT: pre-tiling `parsed` in the plugin.
