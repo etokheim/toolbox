@@ -1685,6 +1685,21 @@ The loading overlay always wins: while `grid.loading === true` the empty overlay
 
 ---
 
+## Scrolling in an Outer Container
+
+When an auto-height grid has no internal vertical scroll range, a diagonal wheel
+gesture can move the grid horizontally and its nearest user-scrollable outer
+container vertically. Both axes are handled once; this supplements browsers
+that otherwise assign the entire gesture to the inner horizontal scroller.
+
+Scrollable editors keep ownership of their wheel input. The grid does not forward
+through an `overflow: hidden`/`clip` ancestor, an exhausted scroll container with
+`overscroll-behavior-y: contain`/`none`, or an open dialog/modal boundary. Without
+an eligible outer owner, or when horizontal movement is exhausted, native browser
+handling remains in charge. Pure-axis gestures, Shift-wheel horizontal scrolling,
+and fixed-height internal scrolling retain their existing behaviour; browser
+zoom/modifier gestures are not intercepted.
+
 ## Variable Row Heights
 
 By default all rows share a fixed height (`--tbw-row-height`, default 28 px). You can configure per-row heights using a function.

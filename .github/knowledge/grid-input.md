@@ -13,6 +13,11 @@ related: [grid-core, grid-render-pipeline, grid-plugins-catalog-ui, grid-feature
 
 Read order for "my gesture doesn't fire on touch": long-press priority policy (is another handler claiming it?) → pointer-drag promotion FLOW → pointer-modality.
 
+## outer mixed-axis wheel (`touch-scroll.ts`)
+
+- DECIDED (local outer-wheel slice): when faux Y has no range, unmodified mixed wheel deltas can move inner X + nearest eligible outer Y once. WHY: Chromium's plain nested-overflow control consumes both axes in the inner scroller; returning without `preventDefault` alone loses outer Y. No public scroll-owner API or consumer forwarding.
+- INVARIANT: user-scrollable overflow only; stop at hidden/clip, exhausted contain/none, open dialog/aria-modal; nested scrollable controls keep browser ownership. Only cancel with movable X and eligible Y; pixel/line/page units normalized, noncancelable/default-prevented/zoom modifiers untouched. Pure axes, Shift and faux internal scrolling keep existing paths. Tests: `wheel-scroll.spec.ts`; real-wheel native + plain overflow controls (programmatic offsets cannot prove gesture ownership).
+
 ## pointer-modality (`core/internal/pointer-modality.ts`)
 
 - OWNS: `PointerModality` (`'fine' | 'coarse'`), `getPrimaryPointer()`, `onPointerModalityChange(cb)`. **NOT exported from `public.ts`** — internal. `@since 3.5.0`; infra for touch-input epic #302 (#307). Tests: `pointer-modality.spec.ts`.
