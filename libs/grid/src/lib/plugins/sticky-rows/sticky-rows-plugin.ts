@@ -497,6 +497,10 @@ export class StickyRowsPlugin extends BaseGridPlugin<StickyRowsConfig> {
     // Drop any focus styling from the source — clones are non-interactive.
     clone.classList.remove('row-focus', 'cell-focus');
     clone.querySelectorAll('.cell-focus, .row-focus').forEach((el) => el.classList.remove('cell-focus', 'row-focus'));
+    clone.querySelectorAll<HTMLElement>('[data-tbw-cell-expanded]').forEach((cell) => {
+      cell.removeAttribute('data-tbw-cell-expanded');
+      cell.style.removeProperty('--tbw-pinned-cell-width');
+    });
     // Strip tabindex on cells so the clone isn't a tab target.
     clone.removeAttribute('tabindex');
     clone.querySelectorAll('[tabindex]').forEach((el) => el.removeAttribute('tabindex'));

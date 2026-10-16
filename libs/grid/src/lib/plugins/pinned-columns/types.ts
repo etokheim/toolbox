@@ -68,6 +68,18 @@ declare module '../../core/types' {
      * @default false
      */
     lockPinning?: boolean;
+    /**
+     * Expanded border-box width in pixels for a utility action cell on the active row.
+     * Only LTR grids with `pinned: 'right'` or `'end'` are supported.
+     * RTL (including inherited direction) is diagnosed and expansion is disabled.
+     * After changing direction, run forceLayout() to reconcile ownership.
+     * The column track and header keep their normal width. Expansion is clamped to
+     * free viewport space, never below the normal cell width and never over another
+     * pinned rail. Keep a persistent menu exposing all actions for touch/narrow views.
+     * Requires PinnedColumnsPlugin. Omit to preserve normal cell geometry.
+     * @since 3.9.0
+     */
+    expandedCellWidth?: number;
   }
 
   interface PluginNameMap {

@@ -1,0 +1,7 @@
+@layer tbw-plugins {
+  tbw-grid .rows > .data-grid-row > .cell[data-tbw-cell-expanded] {
+    width: var(--tbw-pinned-cell-width, auto);
+    justify-self: right;
+    z-index: 26;
+  }
+}

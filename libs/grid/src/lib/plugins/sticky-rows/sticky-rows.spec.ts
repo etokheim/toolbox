@@ -434,6 +434,9 @@ describe('StickyRowsPlugin', () => {
       const liveRow = grid.querySelector('.rows .data-grid-row') as HTMLElement;
       liveRow.classList.add('row-focus');
       liveRow.setAttribute('tabindex', '0');
+      const actionCell = liveRow.querySelector<HTMLElement>('.cell')!;
+      actionCell.setAttribute('data-tbw-cell-expanded', '');
+      actionCell.style.setProperty('--tbw-pinned-cell-width', '240px');
 
       plugin.attach(grid);
       plugin.afterRender();
@@ -443,6 +446,9 @@ describe('StickyRowsPlugin', () => {
       expect(clone.getAttribute('aria-hidden')).toBe('true');
       expect(clone.classList.contains('row-focus')).toBe(false);
       expect(clone.hasAttribute('tabindex')).toBe(false);
+      expect(clone.querySelector('[data-tbw-cell-expanded]')).toBeNull();
+      expect(clone.querySelector<HTMLElement>('.cell')!.style.getPropertyValue('--tbw-pinned-cell-width')).toBe('');
+      expect(actionCell.hasAttribute('data-tbw-cell-expanded')).toBe(true);
     });
 
     it('keeps cached clones when the underlying row leaves the rendered window', () => {

@@ -5,6 +5,7 @@
  */
 
 import { GridClasses } from '../../core/constants';
+import { CONFIG_RULE_ERROR, CONFIG_RULE_WARN, throwDiagnostic } from '../../core/internal/diagnostics';
 import { getDirection } from '../../core/internal/utils';
 import type { AfterCellRenderContext, PluginManifest, PluginQuery, ScrollEvent } from '../../core/plugin/base-plugin';
 import { BaseGridPlugin } from '../../core/plugin/base-plugin';
@@ -22,6 +23,8 @@ import {
   type SplitGroupState,
 } from './pinned-columns';
 import type { PinnedColumnsConfig, PinnedPosition } from './types';
+import { CellExpansion } from './cell-expansion';
+import styles from './pinned-columns.css?inline';
 
 /** Query type constant for checking if a column can be moved */
 const QUERY_CAN_MOVE_COLUMN = 'canMoveColumn';
@@ -107,6 +110,11 @@ export class PinnedColumnsPlugin extends BaseGridPlugin<PinnedColumnsConfig> {
     },
     ownedProperties: [
       {
+        property: 'expandedCellWidth',
+        level: 'column',
+        description: 'the "expandedCellWidth" column property',
+      },
+      {
         property: 'pinned',
         level: 'column',
         description: 'the "pinned" column property',
@@ -131,6 +139,8 @@ export class PinnedColumnsPlugin extends BaseGridPlugin<PinnedColumnsConfig> {
 
   /** @internal */
   readonly name = 'pinnedColumns';
+  /** @internal */
+  override readonly styles = styles;
 
   /** @internal */
   protected override get defaultConfig(): Partial<PinnedColumnsConfig> {
@@ -139,6 +149,8 @@ export class PinnedColumnsPlugin extends BaseGridPlugin<PinnedColumnsConfig> {
 
   // #region Internal State
   private isApplied = false;
+  #cellExpansion: CellExpansion | undefined;
+  #expansionWarnings = new Set<string>();
   private leftOffsets = new Map<string, number>();
   private rightOffsets = new Map<string, number>();
   /** Group-end adjustments for pin boundaries within implicit groups. */
@@ -163,6 +175,9 @@ export class PinnedColumnsPlugin extends BaseGridPlugin<PinnedColumnsConfig> {
 
   /** @internal */
   override detach(): void {
+    this.#cellExpansion?.dispose();
+    this.#cellExpansion = undefined;
+    this.#expansionWarnings.clear();
     this.leftOffsets.clear();
     this.rightOffsets.clear();
     this.isApplied = false;
@@ -172,6 +187,7 @@ export class PinnedColumnsPlugin extends BaseGridPlugin<PinnedColumnsConfig> {
     // Reset seeded elements so a re-attached instance re-seeds from the same
     // light-DOM `pinned` attributes instead of permanently ignoring them (#272).
     this.#seededFromAttr = new WeakSet<HTMLElement>();
+    super.detach();
   }
   // #endregion
 
@@ -192,6 +208,17 @@ export class PinnedColumnsPlugin extends BaseGridPlugin<PinnedColumnsConfig> {
   /** @internal */
   override processColumns(columns: readonly ColumnConfig[]): ColumnConfig[] {
     const cols = [...columns];
+    for (const column of cols) {
+      const width = column.expandedCellWidth;
+      if (width !== undefined && (typeof width !== 'number' || !Number.isFinite(width) || width <= 0)) {
+        this.#warnExpansion(`columns.${column.field}.expandedCellWidth must be a finite positive number; ignoring it.`);
+        delete column.expandedCellWidth;
+      }
+      if (column.expandedCellWidth !== undefined && column.utility !== true) {
+        this.#warnExpansion(`columns.${column.field}.expandedCellWidth requires utility: true; ignoring it.`);
+        delete column.expandedCellWidth;
+      }
+    }
     // Read the declarative `pinned` attribute from the originating light-DOM
     // element (issue #272). Each element seeds a column at most once: after the
     // first pass the element is recorded, so a later runtime unpin (which
@@ -209,15 +236,25 @@ export class PinnedColumnsPlugin extends BaseGridPlugin<PinnedColumnsConfig> {
       }
     }
     this.isApplied = hasStickyColumns(cols);
-    if (!this.isApplied) return cols;
-
-    const host = this.gridElement;
-    const direction = host ? getDirection(host) : 'ltr';
-    return reorderColumnsForPinning(cols, direction) as ColumnConfig[];
+    let ordered = cols;
+    if (this.isApplied) {
+      const host = this.gridElement;
+      const direction = host ? getDirection(host) : 'ltr';
+      ordered = reorderColumnsForPinning(cols, direction) as ColumnConfig[];
+    }
+    if (cols.some((column) => column.expandedCellWidth !== undefined)) {
+      this.#cellExpansion ??= new CellExpansion(this.grid);
+      this.#cellExpansion.configure(ordered);
+    } else {
+      this.#cellExpansion?.dispose();
+      this.#cellExpansion = undefined;
+    }
+    return ordered;
   }
 
   /** @internal */
   override afterRender(): void {
+    this.#cellExpansion?.afterRender();
     if (!this.isApplied) {
       return;
     }
@@ -251,6 +288,7 @@ export class PinnedColumnsPlugin extends BaseGridPlugin<PinnedColumnsConfig> {
    * @internal
    */
   override afterCellRender(context: AfterCellRenderContext): void {
+    this.#cellExpansion?.bind(context);
     if (!this.isApplied) return;
     const field = context.column.field;
     const cellEl = context.cellElement;
@@ -296,6 +334,17 @@ export class PinnedColumnsPlugin extends BaseGridPlugin<PinnedColumnsConfig> {
    */
   override onScroll(_event: ScrollEvent): void {
     this.#updateSplitGroupScroll();
+  }
+
+  /** @internal */
+  override onScrollRender(): void {
+    this.#cellExpansion?.reconcile();
+  }
+
+  #warnExpansion(message: string): void {
+    if (this.#expansionWarnings.has(message)) return;
+    this.#expansionWarnings.add(message);
+    this.warn(CONFIG_RULE_WARN, message);
   }
 
   /**
@@ -453,6 +502,29 @@ export class PinnedColumnsPlugin extends BaseGridPlugin<PinnedColumnsConfig> {
   // #region Public API
 
   /**
+   * Keep a mounted action cell expanded while its external menu is open.
+   * `rowId` is the public occurrence ID from `getRowId`, not a view index or
+   * canonical entity ID shared by several occurrences. Requires expandedCellWidth.
+   * Only available in LTR grids with physical right-pinned utility columns.
+   * Call the returned idempotent release on menu close/unmount. True renderer
+   * replacement, recycling, removal, unpinning and detach revoke the lease;
+   * ordinary updates to the same renderer do not. A stale release cannot affect
+   * a successor cell. Throws when no unique mounted eligible cell exists.
+   * @since 3.9.0
+   */
+  retainCellExpansion(rowId: string, field: string): () => void {
+    if (!this.#cellExpansion) {
+      throwDiagnostic(
+        CONFIG_RULE_ERROR,
+        'retainCellExpansion requires an expandedCellWidth column.',
+        this.gridElement?.id,
+        this.name,
+      );
+    }
+    return this.#cellExpansion.retain(rowId, field);
+  }
+
+  /**
    * Set the pin position for a column.
    * Updates the column's `pinned` property and triggers a full re-render.
    *
@@ -529,6 +601,8 @@ export class PinnedColumnsPlugin extends BaseGridPlugin<PinnedColumnsConfig> {
    * Re-apply sticky offsets (e.g., after column resize).
    */
   refreshStickyOffsets(): void {
+    this.#cellExpansion?.configure(this.columns);
+    this.#cellExpansion?.afterRender();
     const columns = [...this.columns];
     const result = applyStickyOffsets(this.gridElement, columns);
     this.#groupEndAdjustments = result.groupEndAdjustments;
@@ -559,6 +633,7 @@ export class PinnedColumnsPlugin extends BaseGridPlugin<PinnedColumnsConfig> {
    * Clear all sticky positioning.
    */
   clearStickyPositions(): void {
+    this.#cellExpansion?.configure([]);
     clearStickyOffsets(this.gridElement);
   }
 

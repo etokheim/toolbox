@@ -163,6 +163,66 @@ The plugin has no configuration options. It is activated when columns have `pinn
 
 ## Programmatic API
 
+### Compact action-cell expansion
+
+For an LTR right-pinned utility column, `expandedCellWidth` specifies the active
+row's cell width in pixels. The column's normal `width` reserves only its persistent
+controls. Mouse hover or focus within a row expands its actual cell inward, without
+widening its header, other rows, the column track or the horizontal scroll extent.
+
+```ts
+{
+  field: '__actions',
+  utility: true,
+  pinned: 'right',
+  width: 88,
+  expandedCellWidth: 240,
+  renderer: renderActions,
+}
+```
+
+Keep secondary and persistent controls in one inline renderer strip, persistent
+controls at the right. No separate floating container or overflow override is needed.
+The plugin does not move, clone or remount renderer children. Expansion is clamped
+to the visible scroll area and the opposite pinned rail, never below normal width.
+A right-pinned chooser after the action column keeps its offset. A pinned neighbour
+on the action cell's inner side leaves no room to expand over it.
+
+Focus takes precedence over hover. Retain a surface while a menu has portal focus:
+
+```ts
+// Acquire when the menu opens; release when it closes or its component unmounts.
+const release = grid.getPluginByName('pinnedColumns')
+  .retainCellExpansion(occurrenceId, '__actions');
+release();
+```
+
+Use the same unique **occurrence ID** as `getRowId`, not a view index or shared
+business entity ID. Acquisition throws if there is no unique mounted eligible
+cell. The release is idempotent and cannot affect successor ownership. Stable
+renderer updates preserve the lease; replacement, recycling, removal, unpinning,
+option removal or plugin detach revoke it. A retained menu takes precedence over
+hover and row focus. Register an external focus container separately if the menu
+also needs the grid-wide external-focus contract.
+
+**Scope:** LTR `right` or `end` pins only; effective/inherited RTL is diagnosed
+once per controller lifetime and disables expansion and retention. The option does
+not fix pre-existing RTL pinning geometry. Call `await grid.forceLayout()` after a
+direction change to reconcile ownership. Width must be finite and positive.
+Per-row expanded widths, non-pinned cells and editor expansion are not supported.
+
+## Accessibility
+
+Keyboard focus also expands the cell
+([SC 2.1.1](https://www.w3.org/WAI/WCAG22/Understanding/keyboard.html)).
+Keep an always-operable, visible menu button among the persistent controls and
+expose all secondary actions there. Touch and narrow/clamped layouts must not
+depend on hover or invisible tab stops. The plugin does not intercept native
+activation or change tab order; the renderer owns button labels, menu semantics,
+focus return and target sizes. Hold the menu lease until it closes.
+
+## Pinning Methods
+
 See [`PinnedColumnsPlugin`](./classes/pinnedcolumnsplugin/) for the full list of methods.
 
 ```ts
