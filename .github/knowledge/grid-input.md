@@ -24,6 +24,16 @@ Read order for "my gesture doesn't fire on touch": long-press priority policy (i
 - INVARIANT: one lazily-created shared `MediaQueryList` for `(pointer: coarse)` — a single OS listener regardless of subscriber count; unsubscribe idempotent (`removed` flag). SSR / happy-dom safe: guard `typeof globalThis.matchMedia !== 'function'` → `'fine'`, and fall back to legacy `addListener`.
 - RULE: plugins and features MUST use this module, not `matchMedia` directly.
 
+## row hover (`core/internal/row-hover.ts`)
+
+- DECIDED (2026-10-16, user-approved): row presentation uses `[data-tbw-hovered]`, not browser `:hover`. WHY: Chrome 155 retains stale hover on transform-only fixed rows; ordinary overflow retargets correctly. Recycling is not required. `e2e/tests/row-hover.spec.ts` preserves both controls and the 54-row reduction.
+- OWNS: last mouse coordinates, one pending RAF and one marked row per connected grid. READS: one `ownerDocument.elementFromPoint`, nearest grid/row ownership. WRITES: old/new marker; no row scans, geometry loops, focus, selection, capture or synthetic events.
+- FLOW: host `Symbol.for('tbw.grid.row.hover')` shares row + change subscribers across core/plugin bundles. Notify after marker writes; clear publishes null, aborted subscribers unsubscribe. `CellExpansion` reads this authority instead of pointerover/out; existing menu > focus > geometric hover arbitration remains plugin-owned. No public event, observer or second hit test. Packaged `row-hover.spec.ts` browser regression covers stationary 1980→1988 action transfer and lease/focus countercases.
+- FLOW: passive capture of pointer/scroll → coalesced hit test → marker; `refreshVirtualWindow` + `_schedulerAfterRender` also reconcile rebuilt/recycled DOM. A scroll may reconcile the immediate transform and the final row pass on successive frames; no polling when idle.
+- INVARIANT: touch/pen, outside pointer, window exit/blur and disconnect clear state/cancel work. Nested-grid headers and outside overlays cannot mark the underlying outer row. Sticky clone capture strips copied markers; row DOM identity is not occurrence identity.
+- INVARIANT: built-in core/group/pivot/card row styles consume the marker under `(hover: hover)`; print suppresses it. Consumer row/action selectors must replace only their row `:hover` predicate, without OR fallback; focus-within/menu-open and hover-none visibility stay independent. Button-local browser hover remains browser-owned.
+- TENSION: hit testing is bounded browser geometry work, not free; retain paired browser costs and the existing scroll budget when changing scheduling. No render-epoch, utility-view, portal or scroll-offset ownership changes.
+
 ## pointer-drag (`core/internal/pointer-drag.ts`)
 
 - OWNS: `startPointerDrag(startEvent, captureTarget, handlers, options?) => cancelFn`, `PointerDragHandlers` (`onMove`, `onEnd`, `onPromote?`, `onCancel?`), `PointerDragOptions` (`threshold?`, `longPressDuration?`, `longPressSlop?` default 8). **NOT in `public.ts`** — internal. `@since 3.5.0`; #303 created it (not #228), generic for #228 DnD reuse.

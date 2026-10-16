@@ -217,7 +217,11 @@ Raw DOM renderers are not converted into persistent views. See
 
 The actual action cell exposes `data-tbw-cell-expanded` as a supported, read-only
 **presence attribute**. It follows native menu-lease, focus and hover arbitration,
-so use it rather than duplicating that state with `:hover` or `:focus-within`:
+so use it rather than duplicating that state with `:hover` or `:focus-within`.
+
+Unleased hover follows the same geometric row as `[data-tbw-hovered]`, including
+stationary-pointer scrolling. Pointer leave, overlays and touch clear that hover
+input without revoking retained menu leases or overriding row focus.
 
 ```css
 tbw-grid .cell[data-field='__actions'] .row-action-secondary {

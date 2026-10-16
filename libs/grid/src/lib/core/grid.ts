@@ -14,6 +14,7 @@ import { INVALID_ATTRIBUTE_JSON, warnDiagnostic } from './internal/diagnostics';
 import { buildBareGridDOMIntoElement } from './internal/dom-builder';
 import { updateEmptyOverlay, type EmptyOverlayState } from './internal/empty';
 import { setupCellEventDelegation, setupRootEventDelegation } from './internal/event-delegation';
+import { setupRowHover } from './internal/row-hover';
 import { resolveFeatures } from './internal/feature-hook';
 import { FocusManager, setupFocusTracking } from './internal/focus-manager';
 import { renderHeader } from './internal/header';
@@ -324,6 +325,7 @@ export class DataGridElement<T = any> extends HTMLElement implements InternalGri
 
   // Event Listeners
   #eventListenersAdded = false; // Guard against adding duplicate component-level listeners
+  #syncRowHover?: () => void;
   #scrollAbortController?: AbortController; // Separate controller for DOM scroll listeners (recreated on DOM changes)
   #scrollAreaEl?: HTMLElement; // Reference to horizontal scroll container (.tbw-scroll-area)
 
@@ -1483,6 +1485,7 @@ export class DataGridElement<T = any> extends HTMLElement implements InternalGri
     // Set up all root-level and document-level event listeners
     // Consolidates keydown, mousedown, mousemove, mouseup in one place (event-delegation.ts)
     setupRootEventDelegation(this, this, this.#renderRoot, signal);
+    this.#syncRowHover = setupRowHover(this, signal);
 
     // Note: click/dblclick handlers are set up via setupCellEventDelegation in #setupScrollListeners
     // This consolidates all body-level delegated event handlers in one place (event-delegation.ts)
@@ -2324,6 +2327,7 @@ export class DataGridElement<T = any> extends HTMLElement implements InternalGri
     if (this.#loading) {
       this.#updateLoadingOverlay();
     }
+    this.#syncRowHover?.();
   }
 
   /** @internal Whether the grid is fully connected (scheduler guard). */
@@ -4144,7 +4148,9 @@ export class DataGridElement<T = any> extends HTMLElement implements InternalGri
    * @internal Plugin API
    */
   refreshVirtualWindow(force = false, skipAfterRender = false): boolean {
-    return this.#virtManager.refreshVirtualWindow(force, skipAfterRender);
+    const changed = this.#virtManager.refreshVirtualWindow(force, skipAfterRender);
+    this.#syncRowHover?.();
+    return changed;
   }
 
   /**

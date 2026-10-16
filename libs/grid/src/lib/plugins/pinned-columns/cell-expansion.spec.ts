@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { releaseControl } from '../../core/internal/control-lifecycle';
+import { setupRowHover } from '../../core/internal/row-hover';
 import type { AfterCellRenderContext, GridElementRef } from '../../core/plugin/base-plugin';
 import type { ColumnConfig, RowElementInternal } from '../../core/types';
 import { CellExpansion } from './cell-expansion';
@@ -29,6 +30,25 @@ function fixture(pinned: ColumnConfig['pinned'] = 'right', direction = 'ltr') {
     { field: '__chooser', width: 36, pinned: 'right', utility: true },
   ];
   const grid = Object.assign(host, { _bodyEl: body, effectiveConfig: {} }) as GridElementRef;
+  const hoverAbort = new AbortController();
+  const syncHover = setupRowHover(host, hoverAbort.signal);
+  disposals.push(() => hoverAbort.abort());
+  let frame: FrameRequestCallback | undefined;
+  vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
+    frame = callback;
+    return 1;
+  });
+  vi.spyOn(window, 'cancelAnimationFrame').mockImplementation(() => {
+    frame = undefined;
+  });
+  vi.spyOn(window, 'matchMedia').mockReturnValue({ matches: true } as MediaQueryList);
+  let hit: Element | null = null;
+  vi.spyOn(document, 'elementFromPoint').mockImplementation(() => hit);
+  const flushHover = () => {
+    const callback = frame;
+    frame = undefined;
+    callback?.(0);
+  };
   let resize: () => void = vi.fn();
   vi.stubGlobal(
     'ResizeObserver',
@@ -82,6 +102,21 @@ function fixture(pinned: ColumnConfig['pinned'] = 'right', direction = 'ltr') {
     columns,
     contexts,
     grid,
+    hoverAbort,
+    hover: (index: number) => {
+      hit = contexts[index].rowElement;
+      hit.dispatchEvent(new PointerEvent('pointerover', { bubbles: true, pointerType: 'mouse' }));
+      flushHover();
+    },
+    scrollHit: (element: Element | null) => {
+      hit = element;
+      host.dispatchEvent(new Event('scroll'));
+      flushHover();
+    },
+    syncHover: () => {
+      syncHover();
+      flushHover();
+    },
     resize: (width: number) => {
       viewportWidth = width;
       resize();
@@ -94,6 +129,80 @@ const width = (context: AfterCellRenderContext) =>
   context.cellElement.style.getPropertyValue('--tbw-pinned-cell-width');
 
 describe('pinned action cell ownership', () => {
+  it('transfers unleased expansion with geometric scroll hover, without pointer events or geometry reads', () => {
+    const { contexts, hover, scrollHit } = fixture();
+    hover(0);
+    expect(contexts.map(expanded)).toEqual([true, false]);
+    const pointer = vi.fn();
+    document.addEventListener('pointerover', pointer, { once: true });
+    scrollHit(contexts[1].rowElement);
+    expect(contexts.map(expanded)).toEqual([false, true]);
+    expect(contexts[0].rowElement.hasAttribute('data-tbw-hovered')).toBe(false);
+    expect(contexts[1].rowElement.hasAttribute('data-tbw-hovered')).toBe(true);
+    expect(pointer).not.toHaveBeenCalled();
+    document.removeEventListener('pointerover', pointer);
+  });
+
+  it('retains menu and focus precedence over geometric hover and releases to the latest hit', async () => {
+    const { expansion, contexts, hover, scrollHit } = fixture();
+    hover(0);
+    const button = contexts[0].cellElement.querySelector('button')!;
+    button.focus();
+    scrollHit(contexts[1].rowElement);
+    expect(contexts.map(expanded)).toEqual([true, false]);
+    const release = expansion.retain('a/one', '__actions');
+    button.blur();
+    const updated = { id: 'a/one', name: 'updated' };
+    (contexts[0].rowElement as RowElementInternal).__rowDataRef = updated;
+    expansion.bind({ ...contexts[0], row: updated });
+    expansion.reconcile();
+    await Promise.resolve();
+    expect(contexts.map(expanded)).toEqual([true, false]);
+    release();
+    expect(contexts.map(expanded)).toEqual([false, true]);
+    const nextRelease = expansion.retain('b/one', '__actions');
+    button.focus();
+    expect(contexts.map(expanded)).toEqual([false, true]);
+    nextRelease();
+    expect(contexts.map(expanded)).toEqual([true, false]);
+    button.blur();
+    await Promise.resolve();
+    expect(contexts.map(expanded)).toEqual([false, true]);
+  });
+
+  it.each(['leave', 'overlay', 'touch', 'disconnect'])(
+    'clears unleased %s hover but preserves explicit leases',
+    (reason) => {
+      const { expansion, contexts, grid, hover, scrollHit, hoverAbort } = fixture();
+      hover(0);
+      const release = expansion.retain('a/one', '__actions');
+      if (reason === 'leave')
+        document.body.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, pointerType: 'mouse' }));
+      if (reason === 'overlay') scrollHit(document.body);
+      if (reason === 'touch')
+        grid.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerType: 'touch' }));
+      if (reason === 'disconnect') hoverAbort.abort();
+      expect(contexts[0].rowElement.hasAttribute('data-tbw-hovered')).toBe(false);
+      expect(contexts.map(expanded)).toEqual([true, false]);
+      release();
+      expect(contexts.map(expanded)).toEqual([false, false]);
+    },
+  );
+
+  it('reconciles a reused row and ignores geometric updates after disposal', () => {
+    const { expansion, contexts, hover, scrollHit, syncHover } = fixture();
+    hover(0);
+    const replacement = { id: 'successor' };
+    (contexts[0].rowElement as RowElementInternal).__rowDataRef = replacement;
+    expansion.bind({ ...contexts[0], row: replacement });
+    expansion.reconcile();
+    syncHover();
+    expect(contexts.map(expanded)).toEqual([true, false]);
+    expansion.dispose();
+    scrollHit(contexts[1].rowElement);
+    expect(contexts.map(expanded)).toEqual([false, false]);
+  });
+
   it('uses public occurrence identity and keeps the menu surface while focus leaves', () => {
     const { expansion, contexts } = fixture();
     const release = expansion.retain('a/one', '__actions');

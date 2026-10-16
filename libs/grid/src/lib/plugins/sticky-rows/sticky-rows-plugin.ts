@@ -216,7 +216,7 @@ export class StickyRowsPlugin extends BaseGridPlugin<StickyRowsConfig> {
         if (this.captureScheduled !== token || signal.aborted) return;
         this.captureScheduled = null;
         if (!this.container?.isConnected) return;
-        this.primeCloneCache();
+        this.primeCloneCache(true);
         this.refreshClonesInWindow();
         this.refreshDisplay();
       });
@@ -487,6 +487,8 @@ export class StickyRowsPlugin extends BaseGridPlugin<StickyRowsConfig> {
     const live = this.findRenderedRow(index);
     if (!live) return this.cloneCache.get(index) ?? null;
     const clone = live.cloneNode(true) as HTMLElement;
+    clone.removeAttribute('data-tbw-hovered');
+    clone.querySelectorAll('[data-tbw-hovered]').forEach((el) => el.removeAttribute('data-tbw-hovered'));
     stripRevealAnimation(clone);
     clone.classList.add('tbw-sticky-row');
     clone.removeAttribute('aria-rowindex');
@@ -587,9 +589,11 @@ export class StickyRowsPlugin extends BaseGridPlugin<StickyRowsConfig> {
    *  have one ready when the row scrolls past. Without this, a sticky row
    *  that's never been displayed-as-stuck won't have a cache entry, and once
    *  the live row leaves the rendered window we have nothing to render. */
-  private primeCloneCache(): void {
+  private primeCloneCache(skipDisplayed = false): void {
     if (!this.stickyIndices.length) return;
     for (const idx of this.stickyIndices) {
+      // Settlement captures displayed rows immediately before replacing each clone.
+      if (skipDisplayed && this.displayedIndices.includes(idx)) continue;
       if (this.findRenderedRow(idx)) {
         // buildClone() handles the live → cache path itself.
         this.buildClone(idx);

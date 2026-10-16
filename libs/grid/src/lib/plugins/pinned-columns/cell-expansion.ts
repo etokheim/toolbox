@@ -1,6 +1,7 @@
 import { registerControlCleanup, unregisterControlCleanup } from '../../core/internal/control-lifecycle';
 import { CONFIG_RULE_ERROR, CONFIG_RULE_WARN, throwDiagnostic, warnDiagnostic } from '../../core/internal/diagnostics';
 import { tryResolveRowId } from '../../core/internal/row-manager';
+import { getHoveredRow, observeRowHover } from '../../core/internal/row-hover';
 import type { AfterCellRenderContext, GridElementRef } from '../../core/plugin/base-plugin';
 import type { ColumnConfig, RowElementInternal } from '../../core/types';
 import { getDirection, type TextDirection } from '../../core/internal/utils';
@@ -32,7 +33,6 @@ export class CellExpansion {
   #columns: readonly ColumnConfig[] = [];
   #eligibleFields = new Set<string>();
   #widths = new Map<string, number>();
-  #hovered: HTMLElement | null = null;
   #disposed = false;
   #warnedRtl = false;
   // #endregion
@@ -42,24 +42,7 @@ export class CellExpansion {
     this.#grid = grid;
     this.#resize = new ResizeObserver(() => this.#measure());
     const options = { signal: this.#abort.signal };
-    grid.addEventListener(
-      'pointerover',
-      (event) => {
-        if (event.pointerType !== 'mouse' || !matchMedia('(hover: hover)').matches) return;
-        this.#hovered = this.#rowFor(event.target);
-        this.#paint();
-      },
-      options,
-    );
-    grid.addEventListener(
-      'pointerout',
-      (event) => {
-        if (event.pointerType !== 'mouse') return;
-        this.#hovered = this.#rowFor(event.relatedTarget);
-        this.#paint();
-      },
-      options,
-    );
+    observeRowHover(grid, () => this.#paint(), this.#abort.signal);
     grid.addEventListener('focusin', () => this.#paint(), options);
     grid.addEventListener(
       'focusout',
@@ -216,11 +199,11 @@ export class CellExpansion {
     owner.cell.removeAttribute('data-tbw-cell-expanded');
     owner.cell.style.removeProperty('--tbw-pinned-cell-width');
     this.#owners.delete(owner.cell);
-    if (this.#hovered === owner.row) this.#hovered = null;
   }
 
   #paint(): void {
-    let active = this.#rowFor(this.#grid.ownerDocument.activeElement) ?? this.#hovered;
+    const hovered = matchMedia('(hover: hover)').matches ? this.#rowFor(getHoveredRow(this.#grid)) : null;
+    let active = this.#rowFor(this.#grid.ownerDocument.activeElement) ?? hovered;
     for (const owner of this.#owners.values()) {
       if (owner.leases.size > 0) {
         active = owner.row;

@@ -19,7 +19,7 @@
       }
 
       @media (hover: hover) {
-        &:hover {
+        &[data-tbw-hovered] {
           background: var(--tbw-color-row-hover);
         }
       }

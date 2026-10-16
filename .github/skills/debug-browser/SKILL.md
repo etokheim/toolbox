@@ -383,6 +383,14 @@ For operations that need to wait for render cycles:
 
 ### "Styles not applied correctly"
 
+For stale row hover, compare `elementFromPoint` at the last recorded mouse
+coordinates, browser `:hover`, `[data-tbw-hovered]`, row content/physical identity
+and screenshots before moving the pointer. Replay with both ordinary overflow
+and transform-only fixed-row controls before attributing the symptom to recycling.
+`bun nx e2e e2e --args='row-hover.spec.ts'` runs the generic built-package reduction
+without a server. Keep browser version, headless/headed mode, viewport and input
+pacing in the evidence; a one-pixel pointer move is a diagnostic control, not a fix.
+
 1. `take_screenshot` for visual state
 2. `evaluate_script`: Read computed styles
    ```javascript

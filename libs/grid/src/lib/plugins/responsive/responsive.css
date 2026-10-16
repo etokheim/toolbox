@@ -132,8 +132,10 @@ tbw-grid[data-responsive] {
       background: var(--tbw-color-row-alt);
     }
 
-    &:hover {
-      background: var(--tbw-color-row-hover);
+    @media (hover: hover) {
+      &[data-tbw-hovered] {
+        background: var(--tbw-color-row-hover);
+      }
     }
 
     &[aria-selected='true'] {

@@ -132,7 +132,7 @@
   }
 
   /* Remove hover effects */
-  tbw-grid .data-grid-row:hover,
+  tbw-grid .data-grid-row[data-tbw-hovered],
   tbw-grid .cell:hover {
     background: inherit !important;
   }

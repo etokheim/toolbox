@@ -298,6 +298,46 @@ Each icon also has a `-mask` variant (e.g., `--tbw-icon-sort-asc-mask`) for SVG 
 
 ## Touch & Pointer Input
 
+### Row hover during scrolling
+
+Use `.data-grid-row[data-tbw-hovered]` for row highlights and hover-revealed row
+actions. The grid maintains this read-only marker on the row under the last
+observed mouse position, reconciling pointer, scroll and render changes once per
+pending animation frame. Browser `:hover` can remain on a previous row when rows
+move by transform, even without DOM recycling.
+
+```css
+@media (hover: hover) {
+  [data-tbw-grid] .data-grid-row[data-tbw-hovered] {
+    background: var(--tbw-color-row-hover);
+  }
+
+  [data-tbw-grid] .data-grid-row[data-tbw-hovered] .row-actions {
+    opacity: 1;
+    pointer-events: auto;
+  }
+}
+```
+
+Replace the affected **row** `:hover` predicate; do not combine the marker with a
+`:hover` fallback. Keep keyboard `:focus-within`, expanded-menu state and
+`@media (hover: none)` action visibility as separate predicates. Button-local
+`:hover` rules can remain browser-owned.
+
+For opted-in pinned action-cell expansion, reveal secondary actions from the
+cell's `[data-tbw-cell-expanded]` marker instead. Its hover input uses the same
+geometric row state, but retained menu leases and row focus take precedence.
+
+The marker is presentation only: it does not select a row, move focus, dispatch
+pointer events or transfer menu/editor ownership. Touch and pen input, pointer
+exit, window blur and grid disconnect clear it. Rebuilt or recycled rows are
+reconciled against their current position; decorative sticky clones do not
+inherit it. An overlay or nested grid under the pointer does not hover an
+underlying outer row. Do not use the marker as persistent row identity or mutate
+it yourself.
+
+### Control target sizes
+
 Interactive controls meet a minimum hit-target size governed by `--tbw-touch-target-min` — on a
 mouse just as much as on a touchscreen. The `24px` default satisfies
 [WCAG 2.2 SC 2.5.8 Target Size (Minimum)](https://www.w3.org/WAI/WCAG22/Understanding/target-size-minimum.html),

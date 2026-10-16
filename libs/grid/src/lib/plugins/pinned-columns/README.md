@@ -121,6 +121,9 @@ preserves the contiguous strip's geometry without leaving invisible tab stops.
 The marker follows native menu-lease, focus and hover arbitration, including when
 focus is outside the grid in a retained menu. It is absent from inactive/ineligible
 cells and decorative sticky clones, and retired ownership removes it before reuse.
+Unleased hover follows the grid's geometric row hover during stationary-pointer
+scrolling, not browser `:hover` or pointer-event arrival. Clearing mouse hover
+does not revoke an explicit menu lease or override focus within another row.
 It describes active expansion **intent**, not guaranteed extra pixels: clamping
 can leave the cell at its normal width. Do not set or remove the attribute yourself.
 Internal width variables are not part of this styling contract.

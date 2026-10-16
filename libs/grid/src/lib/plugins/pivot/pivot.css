@@ -18,7 +18,7 @@
   }
 
   @media (hover: hover) {
-    .pivot-group-row:hover {
+    .pivot-group-row[data-tbw-hovered] {
       background: var(--tbw-pivot-group-hover, var(--tbw-color-row-hover));
     }
   }

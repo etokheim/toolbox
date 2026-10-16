@@ -434,7 +434,9 @@ describe('StickyRowsPlugin', () => {
       const liveRow = grid.querySelector('.rows .data-grid-row') as HTMLElement;
       liveRow.classList.add('row-focus');
       liveRow.setAttribute('tabindex', '0');
+      liveRow.setAttribute('data-tbw-hovered', '');
       const actionCell = liveRow.querySelector<HTMLElement>('.cell')!;
+      actionCell.setAttribute('data-tbw-hovered', '');
       actionCell.setAttribute('data-tbw-cell-expanded', '');
       actionCell.style.setProperty('--tbw-pinned-cell-width', '240px');
 
@@ -446,6 +448,9 @@ describe('StickyRowsPlugin', () => {
       expect(clone.getAttribute('aria-hidden')).toBe('true');
       expect(clone.classList.contains('row-focus')).toBe(false);
       expect(clone.hasAttribute('tabindex')).toBe(false);
+      expect(clone.hasAttribute('data-tbw-hovered')).toBe(false);
+      expect(clone.querySelector('[data-tbw-hovered]')).toBeNull();
+      expect(liveRow.hasAttribute('data-tbw-hovered')).toBe(true);
       expect(clone.querySelector('[data-tbw-cell-expanded]')).toBeNull();
       expect(clone.querySelector<HTMLElement>('.cell')!.style.getPropertyValue('--tbw-pinned-cell-width')).toBe('');
       expect(actionCell.hasAttribute('data-tbw-cell-expanded')).toBe(true);
@@ -657,7 +662,7 @@ describe('StickyRowsPlugin', () => {
       });
       await settle();
       expect(text()).toBe('settled');
-      expect(capture).toHaveBeenCalledTimes(2);
+      expect(capture).toHaveBeenCalledTimes(1);
       expect(request).not.toHaveBeenCalled();
       const count = capture.mock.calls.length;
       for (let i = 0; i < 20; i++) plugin.onScroll(scrollEvent(10));
@@ -681,6 +686,118 @@ describe('StickyRowsPlugin', () => {
       plugin.afterRender();
       await settle();
       expect(text()).toBe('native');
+      plugin.detach();
+    });
+
+    function stackFixture() {
+      const rows = Array.from({ length: 4 }, (_, index) => ({ flag: index < 3 }));
+      const grid = createMockGrid({ rows, renderedIndices: [0, 1, 2, 3] });
+      const scroll = document.createElement('div');
+      scroll.scrollTop = 1;
+      grid._virtualization.container = scroll;
+      const plugin = new StickyRowsPlugin({ isSticky: 'flag', mode: 'stack', maxStacked: 2 });
+      plugin.attach(grid);
+      const live = (index: number) => grid._rowPool[index];
+      const clone = (index: number) => grid.querySelector<HTMLElement>(`[data-sticky-row="${index}"]`);
+      return { grid, rows, scroll, plugin, live, clone };
+    }
+
+    it('captures stacked and non-displayed rows once and retains their current cache owners', async () => {
+      const { plugin, live, clone } = stackFixture();
+      plugin.afterRender();
+      await settle();
+      expect(clone(0)).not.toBeNull();
+      expect(clone(1)).not.toBeNull();
+      expect(clone(2)).toBeNull();
+
+      const templates = vi.fn();
+      const captures = [0, 1, 2].map((index) => {
+        const row = live(index);
+        const original = row.cloneNode.bind(row);
+        return vi.spyOn(row, 'cloneNode').mockImplementation((deep) => {
+          const result = original(deep);
+          const copy = result.cloneNode.bind(result);
+          vi.spyOn(result, 'cloneNode').mockImplementation((templateDeep) => {
+            templates();
+            return copy(templateDeep);
+          });
+          return result;
+        });
+      });
+      plugin.afterRender();
+      queueMicrotask(() => {
+        for (const index of [0, 1, 2]) live(index).firstElementChild!.textContent = `updated-${index}`;
+      });
+      await settle();
+      expect({
+        live: captures.map((capture) => capture.mock.calls.length),
+        templates: templates.mock.calls.length,
+      }).toEqual({ live: [1, 1, 1], templates: 3 });
+      expect(clone(0)?.textContent).toBe('updated-0');
+      expect(clone(1)?.textContent).toBe('updated-1');
+
+      // Once the live slots leave, the freshly captured owners must survive in cache.
+      for (const index of [0, 1, 2]) live(index).remove();
+      plugin.onScroll(scrollEvent(0));
+      plugin.onScroll(scrollEvent(1));
+      expect(clone(0)?.textContent).toBe('updated-0');
+      expect(clone(1)?.textContent).toBe('updated-1');
+      plugin.onScroll(scrollEvent(100));
+      expect(clone(2)?.textContent).toBe('updated-2');
+      plugin.detach();
+    });
+
+    it('captures a later displayed row after an earlier connected replacement mutates it', async () => {
+      const { plugin, rows, live, clone } = stackFixture();
+      plugin.afterRender();
+      await settle();
+      const first = clone(0)!;
+      const replace = first.replaceWith.bind(first);
+      const order: string[] = [];
+      vi.spyOn(first, 'replaceWith').mockImplementation((...nodes) => {
+        order.push('replace-0');
+        replace(...nodes);
+        rows[1] = { flag: true };
+        Object.assign(live(1), { __rowDataRef: rows[1] });
+        live(1).firstElementChild!.textContent = 'changed-during-replacement';
+      });
+      const later = live(1);
+      const capture = later.cloneNode.bind(later);
+      vi.spyOn(later, 'cloneNode').mockImplementation((deep) => {
+        order.push('capture-1');
+        return capture(deep);
+      });
+      plugin.afterRender();
+      await settle();
+      expect(order).toEqual(['replace-0', 'capture-1']);
+      expect(clone(1)?.textContent).toBe('changed-during-replacement');
+      live(1).remove();
+      plugin.afterRender();
+      await settle();
+      expect(clone(1)?.textContent).toBe('changed-during-replacement');
+      plugin.detach();
+    });
+
+    it('uses the final live offset when replacement makes another cached row qualify', async () => {
+      const { plugin, live, clone, scroll } = stackFixture();
+      plugin.afterRender();
+      await settle();
+      const first = clone(0)!;
+      const replace = first.replaceWith.bind(first);
+      vi.spyOn(first, 'replaceWith').mockImplementation((...nodes) => {
+        replace(...nodes);
+        scroll.scrollTop = 100;
+        // The newly qualified row was primed this pass before leaving the window.
+        live(2).remove();
+      });
+      plugin.afterRender();
+      queueMicrotask(() => {
+        live(2).firstElementChild!.textContent = 'newly-qualified';
+      });
+      await settle();
+      expect(clone(0)).toBeNull();
+      expect(clone(1)?.textContent).toBe('R1C0');
+      expect(clone(2)?.textContent).toBe('newly-qualified');
       plugin.detach();
     });
 

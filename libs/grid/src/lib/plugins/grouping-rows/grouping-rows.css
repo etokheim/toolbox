@@ -14,7 +14,7 @@
     padding: var(--tbw-cell-padding, 0.125rem 0.5rem);
   }
   @media (hover: hover) {
-    .group-row:hover {
+    .group-row[data-tbw-hovered] {
       background: var(--tbw-grouping-rows-bg-hover, var(--tbw-color-row-hover));
     }
   }
