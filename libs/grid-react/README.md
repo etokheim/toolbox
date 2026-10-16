@@ -319,6 +319,11 @@ reordering/removal, editing ownership and recycling still revoke retention.
 Nested option objects/arrays conservatively disable it. Raw DOM renderers retain
 their existing replacement behavior; this is not general column reconciliation.
 
+Framework view containers keep their original portal owner during temporary DOM
+detachment and navigation teardown. A retired view cannot acquire a standalone
+React root; late updates to it are ignored. Standalone adapter rendering on fresh
+containers retains its fallback behavior.
+
 ```tsx
 <DataGrid rows={rows} columns={nativeColumns} gridConfig={configWithoutColumns}>
   <GridColumn field="__actions">{renderActions}</GridColumn>

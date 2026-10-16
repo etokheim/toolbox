@@ -584,7 +584,12 @@ export class GridAdapter implements FrameworkAdapter {
         if (cached) {
           if (cellEl.contains(cached.container)) {
             // Reuse existing portal - update element synchronously
-            renderToContainer(cached.container, renderFn(ctx as CellRenderContext<unknown, unknown>), cached.portalKey);
+            renderToContainer(
+              cached.container,
+              renderFn(ctx as CellRenderContext<unknown, unknown>),
+              cached.portalKey,
+              gridEl ?? undefined,
+            );
             return cached.container;
           }
           // Container was detached (typically by editor-injection's cell wipe).
