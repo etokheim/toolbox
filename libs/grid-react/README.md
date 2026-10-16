@@ -303,6 +303,24 @@ function EmployeeGrid() {
 
 ### Using GridColumn Components
 
+For a mixed DOM/React grid, keep native DOM-returning renderers and headers in the
+`columns` prop, and supply JSX only for the matching `GridColumn` child. Remove
+`renderer` and `viewRenderer` from that field's core definition so the child can
+provide it; retain width, pinning and other column options there. A renderer-only
+child does not require the Editing plugin. Actual editors still require Editing.
+Use stable component types and occurrence keys to retain component state across
+immutable row updates; do not key action components by the row object.
+
+```tsx
+<DataGrid rows={rows} columns={nativeColumns} gridConfig={configWithoutColumns}>
+  <GridColumn field="__actions">{renderActions}</GridColumn>
+</DataGrid>
+```
+
+`gridConfig.columns` is the JSX-normalizing configuration path; do not move
+existing DOM callbacks into it unchanged. The `columns` prop does not normalize
+raw JSX callbacks.
+
 Use the `GridColumn` component with a render prop:
 
 ```tsx

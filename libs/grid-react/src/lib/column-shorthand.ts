@@ -12,7 +12,10 @@
  * `ColumnConfig` (JSX `renderer`/`editor`) so mixed shorthand + full column
  * arrays keep their React types.
  */
-import { parseColumnShorthand as parseColumnShorthandCore } from '@toolbox-web/grid';
+import {
+  parseColumnShorthand as parseColumnShorthandCore,
+  type ColumnConfig as NativeColumnConfig,
+} from '@toolbox-web/grid';
 import type { ColumnConfig } from './react-column-config';
 
 /**
@@ -22,6 +25,9 @@ import type { ColumnConfig } from './react-column-config';
  * - Simple string: `'name'` → `{ field: 'name', header: 'Name' }`
  * - With type: `'salary:number'` → `{ field: 'salary', header: 'Salary', type: 'number' }`
  * - Full config object: `{ field: 'id', header: 'ID', width: 80 }` (passed through)
+ * - Native DOM column configs, including DOM-returning renderers and headers.
+ *   JSX callbacks need `gridConfig.columns` or a matching `GridColumn` child;
+ *   shorthand normalization itself does not wrap renderers.
  *
  * @example
  * ```tsx
@@ -32,7 +38,7 @@ import type { ColumnConfig } from './react-column-config';
  * ```
  * @since 0.7.0
  */
-export type ColumnShorthand<TRow = unknown> = string | ColumnConfig<TRow>;
+export type ColumnShorthand<TRow = unknown> = string | ColumnConfig<TRow> | NativeColumnConfig<TRow>;
 
 /**
  * Parse a column shorthand string into a React `ColumnConfig`.
@@ -72,7 +78,16 @@ export function parseColumnShorthand<TRow = unknown>(shorthand: string): ColumnC
  * ```
  * @since 0.7.0
  */
-export function normalizeColumns<TRow = unknown>(columns: ColumnShorthand<TRow>[]): ColumnConfig<TRow>[] {
+export function normalizeColumns<TRow = unknown>(columns: (string | ColumnConfig<TRow>)[]): ColumnConfig<TRow>[];
+export function normalizeColumns<TRow = unknown>(
+  columns: (string | NativeColumnConfig<TRow>)[],
+): NativeColumnConfig<TRow>[];
+export function normalizeColumns<TRow = unknown>(
+  columns: ColumnShorthand<TRow>[],
+): (ColumnConfig<TRow> | NativeColumnConfig<TRow>)[];
+export function normalizeColumns<TRow = unknown>(
+  columns: ColumnShorthand<TRow>[],
+): (ColumnConfig<TRow> | NativeColumnConfig<TRow>)[] {
   return columns.map((col) => {
     if (typeof col === 'string') {
       return parseColumnShorthand<TRow>(col);
@@ -105,7 +120,15 @@ export function normalizeColumns<TRow = unknown>(columns: ColumnShorthand<TRow>[
 export function applyColumnDefaults<TRow = unknown>(
   columns: ColumnConfig<TRow>[],
   defaults: Partial<ColumnConfig<TRow>> | undefined,
-): ColumnConfig<TRow>[] {
+): ColumnConfig<TRow>[];
+export function applyColumnDefaults<TRow = unknown>(
+  columns: (ColumnConfig<TRow> | NativeColumnConfig<TRow>)[],
+  defaults: Partial<ColumnConfig<TRow>> | undefined,
+): (ColumnConfig<TRow> | NativeColumnConfig<TRow>)[];
+export function applyColumnDefaults<TRow = unknown>(
+  columns: (ColumnConfig<TRow> | NativeColumnConfig<TRow>)[],
+  defaults: Partial<ColumnConfig<TRow>> | undefined,
+) {
   if (!defaults) return columns;
   return columns.map((col) => ({ ...defaults, ...col }));
 }

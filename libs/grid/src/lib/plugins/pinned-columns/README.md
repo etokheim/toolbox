@@ -94,6 +94,31 @@ renderer replacement, recycling, row removal, unpinning, disabling the option an
 plugin detach revoke it. Old releases cannot close successor cells. External
 menus may additionally use `registerExternalFocusContainer` for grid-wide focus.
 
+#### Styling the active surface
+
+`data-tbw-cell-expanded` is a supported, **read-only presence attribute** on the
+actual action cell. Use `[data-tbw-cell-expanded]`, not an attribute value or a
+duplicate `:hover`/`:focus-within` rule, to reveal secondary inline controls:
+
+```css
+tbw-grid .cell[data-field='__actions'] .row-action-secondary {
+  visibility: hidden;
+}
+tbw-grid .cell[data-field='__actions'][data-tbw-cell-expanded] .row-action-secondary {
+  visibility: visible;
+}
+```
+
+The renderer supplies the `row-action-secondary` class only on secondary controls;
+keep persistent controls, especially More, outside this rule. `visibility: hidden`
+preserves the contiguous strip's geometry without leaving invisible tab stops.
+The marker follows native menu-lease, focus and hover arbitration, including when
+focus is outside the grid in a retained menu. It is absent from inactive/ineligible
+cells and decorative sticky clones, and retired ownership removes it before reuse.
+It describes active expansion **intent**, not guaranteed extra pixels: clamping
+can leave the cell at its normal width. Do not set or remove the attribute yourself.
+Internal width variables are not part of this styling contract.
+
 Supported pins are `right` and `end` in **LTR** grids. Effective/inherited RTL
 disables this opt-in behavior and emits a deduplicated diagnostic; it does not
 repair the pre-existing RTL pinning geometry. After changing direction, call

@@ -205,6 +205,31 @@ option removal or plugin detach revoke it. A retained menu takes precedence over
 hover and row focus. Register an external focus container separately if the menu
 also needs the grid-wide external-focus contract.
 
+#### Styling the active surface
+
+The actual action cell exposes `data-tbw-cell-expanded` as a supported, read-only
+**presence attribute**. It follows native menu-lease, focus and hover arbitration,
+so use it rather than duplicating that state with `:hover` or `:focus-within`:
+
+```css
+tbw-grid .cell[data-field='__actions'] .row-action-secondary {
+  visibility: hidden;
+}
+tbw-grid .cell[data-field='__actions'][data-tbw-cell-expanded] .row-action-secondary {
+  visibility: visible;
+}
+```
+
+Apply your `row-action-secondary` class only to secondary inline controls.
+Persistent controls, especially More, must remain visible and operable.
+`visibility: hidden` preserves the inline strip's layout without invisible tab stops.
+The marker stays present while a menu lease wins arbitration, even with focus in
+a portal. Inactive/ineligible cells and decorative sticky clones do not carry it;
+retired ownership removes it before reuse. Presence means active expansion intent,
+not that every action fits or that the width exceeds its normal size after clamping.
+Select by presence, never by a specific value, and do not mutate the attribute.
+Internal width variables are not a supported styling API.
+
 **Scope:** LTR `right` or `end` pins only; effective/inherited RTL is diagnosed
 once per controller lifetime and disables expansion and retention. The option does
 not fix pre-existing RTL pinning geometry. Call `await grid.forceLayout()` after a

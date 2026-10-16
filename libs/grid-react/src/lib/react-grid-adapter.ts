@@ -613,11 +613,11 @@ export class GridAdapter implements FrameworkAdapter {
    * Creates an editor spec that renders a React component
    * with commit/cancel callbacks passed as props.
    */
-  createEditor<TRow = unknown, TValue = unknown>(element: HTMLElement): ColumnEditorSpec<TRow, TValue> {
+  createEditor<TRow = unknown, TValue = unknown>(element: HTMLElement): ColumnEditorSpec<TRow, TValue> | undefined {
     const editorFn = getColumnEditor(element) ?? getTypeEditor(element);
 
     if (!editorFn) {
-      return () => document.createElement('div');
+      return undefined;
     }
 
     // Resolve grid once from the column element (stable in the DOM)
