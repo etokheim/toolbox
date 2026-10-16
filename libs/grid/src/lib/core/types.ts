@@ -1883,6 +1883,15 @@ export interface FrameworkAdapter {
   releaseCell?(cellEl: HTMLElement): void;
 
   /**
+   * Opt in an adapter-owned, non-editing view to unchanged utility-cell retention
+   * during column reprocessing. Return true only for a currently tracked reusable
+   * view, never for arbitrary DOM-returning renderers. Core still checks occurrence,
+   * column order and unchanged options; true replacements always call releaseCell.
+   * @since 3.8.3
+   */
+  canRetainCellView?(cellEl: HTMLElement): boolean;
+
+  /**
    * Open a teardown batch. Grid core wraps multi-cell teardown sequences
    * (e.g., `_clearRowPool`, row-pool shrink, full row rebuild) where every
    * affected cell will be detached from the DOM before the batch ends.

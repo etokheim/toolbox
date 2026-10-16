@@ -311,6 +311,14 @@ child does not require the Editing plugin. Actual editors still require Editing.
 Use stable component types and occurrence keys to retain component state across
 immutable row updates; do not key action components by the row object.
 
+An unchanged `utility: true` JSX `GridColumn` can also keep its attached cell,
+component state and menu lease while other columns replace callbacks. This
+requires the same declaration, renderer callback, public occurrence ID, visible
+field order and primitive/callback column options. Action width/config changes,
+reordering/removal, editing ownership and recycling still revoke retention.
+Nested option objects/arrays conservatively disable it. Raw DOM renderers retain
+their existing replacement behavior; this is not general column reconciliation.
+
 ```tsx
 <DataGrid rows={rows} columns={nativeColumns} gridConfig={configWithoutColumns}>
   <GridColumn field="__actions">{renderActions}</GridColumn>

@@ -329,9 +329,10 @@ function reconcileRow(
       rowEl.__rowDataRef = rowData;
       return;
     }
+    const retainUtilityViews = !hasEditing && !rowEl.__isCustomRow && rowEl.__epoch !== epoch;
     resetCustomRow(rowEl);
     if (hasEditing) clearEditingState(rowEl);
-    renderInlineRow(grid, rowEl, rowData, rowIndex);
+    renderInlineRow(grid, rowEl, rowData, rowIndex, retainUtilityViews);
     rowEl.__epoch = epoch;
     rowEl.__rowDataRef = rowData;
     return;
@@ -826,7 +827,7 @@ function fastPatchRow(grid: GridHost, rowEl: HTMLElement, rowData: any, rowIndex
  * `innerHTML = ''` detaches every cell as a group, letting adapters defer
  * per-cell sync commits to a single render once detachment completes (#330).
  */
-function clearRowForRebuild(grid: GridHost, rowEl: HTMLElement): void {
+function clearRowForRebuild(grid: GridHost, rowEl: HTMLElement, retained?: Set<HTMLElement>): void {
   // Clear loading state before rebuild — grid re-applies it after render for
   // actually-loading rows. Prevents a stale tbw-row-loading class from
   // persisting when pool elements are recycled.
@@ -838,12 +839,92 @@ function clearRowForRebuild(grid: GridHost, rowEl: HTMLElement): void {
   try {
     const children = rowEl.children;
     for (let i = children.length - 1; i >= 0; i--) {
-      releaseCell(grid, children[i] as HTMLElement);
+      const cell = children[i] as HTMLElement;
+      if (retained?.has(cell)) continue;
+      releaseCell(grid, cell);
+      if (retained) cell.remove();
     }
-    rowEl.innerHTML = '';
+    if (!retained) rowEl.innerHTML = '';
   } finally {
     adapter?.endBatch?.(grid);
   }
+}
+
+const utilityViewOptions = new WeakMap<
+  HTMLElement,
+  {
+    adapter: NonNullable<GridHost['__frameworkAdapter']>;
+    view: Element | null;
+    options: [PropertyKey, unknown][];
+  }
+>();
+
+function rememberUtilityView(grid: GridHost, cell: HTMLElement, col: ColumnInternal): void {
+  if (
+    !col.utility ||
+    col.renderer ||
+    !col.viewRenderer ||
+    col.editor ||
+    col.externalView ||
+    col.__viewTemplate ||
+    col.__compiledView
+  )
+    return;
+  const adapter = grid.__frameworkAdapter;
+  if (!adapter?.canRetainCellView?.(cell)) return;
+  const options = Reflect.ownKeys(col).map((key): [PropertyKey, unknown] => [key, Reflect.get(col, key)]);
+  // Arbitrary nested mutable options have no reliable shallow ownership snapshot.
+  if (
+    options.some(
+      ([key, value]) =>
+        value !== null && typeof value === 'object' && !(key === '__element' && value instanceof HTMLElement),
+    )
+  )
+    return;
+  utilityViewOptions.set(cell, { adapter, view: cell.firstElementChild, options });
+}
+
+function retainedUtilityViews(
+  grid: GridHost,
+  rowEl: RowElementInternal,
+  rowData: unknown,
+): Set<HTMLElement> | undefined {
+  const adapter = grid.__frameworkAdapter;
+  if (
+    !adapter?.canRetainCellView ||
+    !rowEl.isConnected ||
+    isSyntheticRow(rowData) ||
+    isSyntheticRow(rowEl.__rowDataRef)
+  )
+    return undefined;
+  const oldId = rowEl.__rowDataRef !== undefined ? grid.getRowId?.(rowEl.__rowDataRef) : undefined;
+  if (oldId === undefined || oldId !== grid.getRowId?.(rowData)) return undefined;
+  const columns = grid._visibleColumns;
+  const cells = Array.from(rowEl.children);
+  if (cells.length !== columns.length || cells.some((cell, i) => cell.getAttribute('data-field') !== columns[i].field))
+    return undefined;
+  const retained = new Set<HTMLElement>();
+  for (let i = 0; i < cells.length; i++) {
+    const cell = cells[i] as HTMLElement;
+    const previous = utilityViewOptions.get(cell);
+    if (
+      !previous ||
+      previous.adapter !== adapter ||
+      previous.view !== cell.firstElementChild ||
+      !adapter.canRetainCellView(cell)
+    )
+      continue;
+    const options = Reflect.ownKeys(columns[i]);
+    if (
+      options.length === previous.options.length &&
+      previous.options.every(
+        ([key, value]) => Object.hasOwn(columns[i], key) && Object.is(Reflect.get(columns[i], key), value),
+      )
+    ) {
+      retained.add(cell);
+    }
+  }
+  return retained.size ? retained : undefined;
 }
 
 /** Clone the cell template and stamp the per-cell identity attributes. */
@@ -1042,8 +1123,16 @@ function applyCellTabIndex(cell: HTMLElement, col: ColumnInternal, rowData: any)
  * Full reconstruction of a row's set of cells including templated, external view, and formatted content.
  * Attaches event handlers for editing and accessibility per cell.
  */
-export function renderInlineRow(grid: GridHost, rowEl: HTMLElement, rowData: any, rowIndex: number): void {
-  clearRowForRebuild(grid, rowEl);
+export function renderInlineRow(
+  grid: GridHost,
+  rowEl: HTMLElement,
+  rowData: any,
+  rowIndex: number,
+  retainUtility = false,
+): void {
+  const retained = retainUtility ? retainedUtilityViews(grid, rowEl as RowElementInternal, rowData) : undefined;
+  const existing = retained ? Array.from(rowEl.children) : undefined;
+  clearRowForRebuild(grid, rowEl, retained);
 
   // Pre-cache values used in the loop
   const columns = grid._visibleColumns;
@@ -1059,6 +1148,17 @@ export function renderInlineRow(grid: GridHost, rowEl: HTMLElement, rowData: any
 
   for (let colIndex = 0; colIndex < colsLen; colIndex++) {
     const col = columns[colIndex];
+    const previous = existing?.[colIndex] as HTMLElement | undefined;
+    if (previous && retained?.has(previous)) {
+      // Flush changed siblings before this still-attached view; never move it.
+      rowEl.insertBefore(fragment, previous);
+      previous.setAttribute('data-row', String(rowIndex));
+      applyCellTabIndex(previous, col, rowData);
+      patchCellFocus(previous, focusRow === rowIndex && focusCol === colIndex);
+      applyCellClass(grid, previous, col, rowData, rowIndex);
+      patchCellContent(grid, rowEl, previous, col, colIndex, rowData, rowIndex, hasCellHook);
+      continue;
+    }
     const cell = buildCellElement(col, colIndex, rowIndex);
 
     let value = resolveCellValue(rowData, col, rowIndex);
@@ -1090,6 +1190,7 @@ export function renderInlineRow(grid: GridHost, rowEl: HTMLElement, rowData: any
 
     // Call cell-level plugin hook if any plugin registered it
     if (hasCellHook) emitAfterCellRender(grid, rowEl, cell, col, colIndex, rowData, rowIndex, value);
+    rememberUtilityView(grid, cell, col);
 
     fragment.appendChild(cell);
   }

@@ -205,6 +205,13 @@ option removal or plugin detach revoke it. A retained menu takes precedence over
 hover and row focus. Register an external focus container separately if the menu
 also needs the grid-wide external-focus contract.
 
+An unchanged React utility `GridColumn` can retain its attached view and lease
+while unrelated column callbacks change. Action declaration/callback, occurrence,
+visible field order and primitive/callback options must stay unchanged; nested
+option objects/arrays disable retention. Action config changes still retire it.
+Raw DOM renderers are not converted into persistent views. See
+[mixed native/JSX columns](/grid/react/getting-started/#mixed-native-and-jsx-columns).
+
 #### Styling the active surface
 
 The actual action cell exposes `data-tbw-cell-expanded` as a supported, read-only

@@ -13,7 +13,7 @@
  * (`format`, `cellClass`, `date`, `boolean` → standard path).
  */
 import { bench, describe } from 'vitest';
-import type { ColumnConfig, GridHost } from '../types';
+import type { ColumnConfig, FrameworkAdapter, GridHost } from '../types';
 import { renderVisibleRows } from './rows';
 
 interface BenchRow {
@@ -135,6 +135,53 @@ describe('rows: in-place patch (same row refs)', () => {
   renderVisibleRows(plain, 0, VISIBLE_ROWS, 1);
   bench('plain columns — 50 rows × 8 cols', () => {
     renderVisibleRows(plain, 0, VISIBLE_ROWS, 1);
+  });
+
+  describe('rows: utility view across sibling column changes', () => {
+    const views = new WeakMap<HTMLElement, HTMLElement>();
+    const columns: ColumnConfig<BenchRow>[] = [
+      { field: 'name' },
+      {
+        field: 'note',
+        utility: true,
+        viewRenderer: ({ cellEl, value }) => {
+          if (!cellEl) throw new Error('Expected a mounted benchmark cell');
+          const cell = cellEl;
+          let view = views.get(cell);
+          if (!view) {
+            view = document.createElement('button');
+            views.set(cell, view);
+          }
+          view.textContent = String(value);
+          return view;
+        },
+      },
+    ];
+    const grid = makeGrid(makeRows(TOTAL_ROWS), columns);
+    const adapter: FrameworkAdapter = {
+      canHandle: () => true,
+      createRenderer: () => undefined,
+      createEditor: () => undefined,
+      canRetainCellView: (cell) => views.get(cell) === cell.firstElementChild,
+      releaseCell: (cell) => {
+        views.delete(cell);
+      },
+    };
+    grid.__frameworkAdapter = adapter;
+    document.body.append(grid);
+    if (!grid._bodyEl) throw new Error('Expected a benchmark row body');
+    grid.append(grid._bodyEl);
+    let epoch = 0;
+    renderVisibleRows(grid, 0, VISIBLE_ROWS, epoch);
+    const owner = grid._rowPool[0].children[1];
+    const renderers = [() => 'First sibling', () => 'Second sibling'];
+    bench('50 attached utility views — real epoch rebuild each iteration', () => {
+      columns[0] = { field: 'name', renderer: renderers[++epoch % 2] };
+      renderVisibleRows(grid, 0, VISIBLE_ROWS, epoch);
+      if (grid._rowPool.length !== VISIBLE_ROWS || grid._rowPool[0].children[1] !== owner) {
+        throw new Error('Utility view retention benchmark lost its mounted owner');
+      }
+    });
   });
 
   const rich = makeGrid(rows, RICH_COLUMNS);

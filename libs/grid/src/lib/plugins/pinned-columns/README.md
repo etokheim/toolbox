@@ -94,6 +94,12 @@ renderer replacement, recycling, row removal, unpinning, disabling the option an
 plugin detach revoke it. Old releases cannot close successor cells. External
 menus may additionally use `registerExternalFocusContainer` for grid-wide focus.
 
+React renderer-only utility `GridColumn` views can retain the same attached cell
+through unrelated column callback changes. The action declaration/callback,
+occurrence, visible field order and primitive/callback options must stay unchanged;
+nested options disable this conservative retention. Action config changes still
+retire ownership. Raw DOM renderers keep their existing replacement semantics.
+
 #### Styling the active surface
 
 `data-tbw-cell-expanded` is a supported, **read-only presence attribute** on the

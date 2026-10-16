@@ -159,6 +159,37 @@ describe('GridAdapter', () => {
     });
 
     describe('createRenderer', () => {
+      it('reuses a declaration wrapper only for the same callback and owner', () => {
+        const element = document.createElement('tbw-grid-column');
+        const render = () => 'stable';
+        registerColumnRenderer(element, render);
+        const first = adapter.createRenderer(element);
+        expect(adapter.createRenderer(element)).toBe(first);
+        registerColumnRenderer(element, () => 'replacement');
+        expect(adapter.createRenderer(element)).not.toBe(first);
+        registerColumnRenderer(element, render);
+        const beforeMove = adapter.createRenderer(element);
+        document.createElement('tbw-grid').append(element);
+        expect(adapter.createRenderer(element)).not.toBe(beforeMove);
+        const beforeDestroy = adapter.createRenderer(element);
+        adapter.destroy();
+        expect(adapter.createRenderer(element)).not.toBe(beforeDestroy);
+      });
+
+      it('requests a column reparse when an attached renderer callback is replaced', () => {
+        const grid = document.createElement('tbw-grid');
+        const refreshColumns = vi.fn();
+        Object.assign(grid, { refreshColumns });
+        const element = document.createElement('tbw-grid-column');
+        grid.append(element);
+        const render = () => 'first';
+        registerColumnRenderer(element, render);
+        registerColumnRenderer(element, render);
+        expect(refreshColumns).not.toHaveBeenCalled();
+        registerColumnRenderer(element, () => 'second');
+        expect(refreshColumns).toHaveBeenCalledOnce();
+      });
+
       it('should return a function that creates React content', () => {
         const element = document.createElement('tbw-grid-column');
         element.setAttribute('field', 'createRendererTest');
