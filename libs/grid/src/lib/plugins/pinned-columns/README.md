@@ -56,6 +56,116 @@ grid.columns = [
 
 ## API Methods
 
+### Compact action cells (LTR only)
+
+Set `expandedCellWidth` to `'content'` or a finite positive pixel width on a right-pinned
+`utility: true` column. Its normal `width` reserves space for persistent controls;
+only the active row's **actual cell** grows inward. The header, column track,
+other rows, adjacent right-pinned columns and horizontal scroll extent do not grow.
+No renderer nodes are moved or cloned.
+
+```typescript
+{ field: '__actions', utility: true, pinned: 'right', width: 88, expandedCellWidth: 'content' }
+```
+
+Use `'content'` (since 3.10.0) for occurrence-specific actions: CSS intrinsic sizing
+fits each cell's mounted in-flow controls, labels, gaps and padding. A row whose
+content fits its normal track does not grow, even when another row has many actions.
+Content, font and label changes update through normal browser layout; no explicit
+measurement or refresh call is required. Use a number when you need a fixed expanded
+pixel target; existing numeric behaviour is unchanged.
+
+In-flow `visibility: hidden` children contribute to intrinsic width; `display: none`
+and absolutely positioned children do not. Avoid fixed widths or size containment on
+renderer wrappers that hide their intrinsic contribution. Keep persistent controls
+non-shrinking and right-aligned so clipped secondary content cannot displace them.
+
+Keep renderer children in one inline strip, with secondary actions before the
+persistent controls. Do not use an absolute floating container or `overflow: visible`.
+The cell keeps clipping at its expanded border. Expansion is limited by the visible
+scroll area and pinned rails, but never shrinks below the normal cell width.
+Only the innermost right-pinned column has free space to expand; a chooser column
+to its right keeps its normal offset. In narrower views, use the persistent menu
+to reach actions that do not fit.
+
+Mouse hover activates a row; focus in a row takes precedence over hover. An open
+menu lease takes precedence over both:
+
+```typescript
+const pinned = grid.getPluginByName('pinnedColumns');
+// In the menu's onOpenChange(true), using the same unique occurrence ID as getRowId:
+const release = pinned.retainCellExpansion(occurrenceId, '__actions');
+// In onOpenChange(false) and component cleanup:
+release();
+```
+
+The ID identifies a rendered occurrence, not a canonical entity shared by several
+rows or a view index. Acquisition throws unless one eligible cell is mounted.
+Release is idempotent. Stable updates to the same renderer preserve the lease;
+renderer replacement, recycling, row removal, unpinning, disabling the option and
+plugin detach revoke it. Old releases cannot close successor cells. External
+menus may additionally use `registerExternalFocusContainer` for grid-wide focus.
+
+React renderer-only utility `GridColumn` views can retain the same attached cell
+through unrelated column callback changes. The action declaration/callback,
+occurrence, visible field order and primitive/callback options must stay unchanged;
+nested options disable this conservative retention. Action config changes still
+retire ownership. Raw DOM renderers keep their existing replacement semantics.
+
+#### Styling the active surface
+
+`data-tbw-cell-expanded` is a supported, **read-only presence attribute** on the
+actual action cell. Use `[data-tbw-cell-expanded]`, not an attribute value or a
+duplicate `:hover`/`:focus-within` rule, to reveal secondary inline controls:
+
+```css
+tbw-grid .cell[data-field='__actions'] .row-action-secondary {
+  visibility: hidden;
+}
+tbw-grid .cell[data-field='__actions'][data-tbw-cell-expanded] .row-action-secondary {
+  visibility: visible;
+}
+```
+
+The renderer supplies the `row-action-secondary` class only on secondary controls;
+keep persistent controls, especially More, outside this rule. `visibility: hidden`
+preserves the contiguous strip's geometry without leaving invisible tab stops.
+The marker follows native menu-lease, focus and hover arbitration, including when
+focus is outside the grid in a retained menu. It is absent from inactive/ineligible
+cells and decorative sticky clones, and retired ownership removes it before reuse.
+Unleased hover follows the grid's geometric row hover during stationary-pointer
+scrolling, not browser `:hover` or pointer-event arrival. Clearing mouse hover
+does not revoke an explicit menu lease or override focus within another row.
+It describes active expansion **intent**, not guaranteed extra pixels: clamping
+can leave the cell at its normal width. Do not set or remove the attribute yourself.
+Internal width variables are not part of this styling contract.
+
+Set `--tbw-pinned-cell-shadow` to customise the active cell's shadow, for example
+`-4px 0 8px var(--tbw-color-shadow)`. It paints from the actual expanded border-box's
+inner edge, not the shared column boundary; the default is the existing one-pixel
+border shadow. Replace any consumer full-height body shadow at the old track edge
+with row-local boundary paint, otherwise that independent overlay can cross actions.
+Inactive rows and headers keep their existing boundaries.
+
+Supported pins are `right` and `end` in **LTR** grids. Effective/inherited RTL
+disables this opt-in behavior and emits a deduplicated diagnostic; it does not
+repair the pre-existing RTL pinning geometry. After changing direction, call
+`await grid.forceLayout()` to reconcile the rendered cells and retire old leases.
+Left/non-pinned cells, per-row numeric callbacks and editor expansion are not supported.
+
+## Accessibility
+
+Expansion responds to keyboard focus as well as mouse hover, supporting
+[SC 2.1.1 Keyboard](https://www.w3.org/WAI/WCAG22/Understanding/keyboard.html).
+Render a **visible, operable persistent menu button** containing all secondary
+actions: touch users must not depend on hover, and clamped cells may not show every
+inline action. The plugin does not consume clicks or keyboard events, add controls,
+change tab order, or provide menu semantics. Your renderer owns accessible names,
+menu focus/return, `aria-expanded`, and target sizes. Keep the menu lease until
+the menu closes even when focus moves into a portal.
+
+## Pinning Methods
+
 Access via `grid.getPluginByName('pinnedColumns')`:
 
 ```typescript

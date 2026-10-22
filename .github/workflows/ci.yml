@@ -701,13 +701,16 @@ jobs:
   # ============================================
   release-please:
     needs: [setup, test, build, e2e]
+    # Source-pinned fork previews distribute existing bytes, never registry releases.
     if: |
-      always() && !cancelled() &&
-      (github.event_name == 'release' || github.event_name == 'workflow_dispatch') ||
-      (github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/2.x') && (
-        needs.setup.outputs.is_release_merge == 'true' ||
-        (needs.test.result == 'success' && needs.build.result == 'success' && (needs.e2e.result == 'success' || needs.e2e.result == 'skipped'))
-      ))
+      !(github.event_name == 'release' && startsWith(github.event.release.tag_name, 'fork-preview-')) && (
+        always() && !cancelled() &&
+        (github.event_name == 'release' || github.event_name == 'workflow_dispatch') ||
+        (github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/2.x') && (
+          needs.setup.outputs.is_release_merge == 'true' ||
+          (needs.test.result == 'success' && needs.build.result == 'success' && (needs.e2e.result == 'success' || needs.e2e.result == 'skipped'))
+        ))
+      )
     runs-on: ubuntu-latest
     outputs:
       # Grid package outputs
@@ -758,8 +761,10 @@ jobs:
   # and the manual workflow_dispatch publish inputs.
   # ============================================
   release-gate:
+    # A skipped gate has no publish outputs, so all publish-* jobs stay skipped.
     if: |
-      always() && !cancelled() && (
+      always() && !cancelled() &&
+      !(github.event_name == 'release' && startsWith(github.event.release.tag_name, 'fork-preview-')) && (
         github.event_name == 'release' ||
         github.event_name == 'workflow_dispatch' ||
         (github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/2.x'))

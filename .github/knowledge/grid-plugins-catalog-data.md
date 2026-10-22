@@ -1,11 +1,19 @@
 ---
 domain: grid-plugins-catalog-data
-related: [grid-plugins, grid-plugins-catalog-ui, grid-core, grid-data-pipeline, grid-features]
+related: [grid-plugins, grid-hierarchy, grid-plugins-catalog-ui, grid-core, grid-data-pipeline, grid-features]
 ---
 
 # Plugin Catalog — Data & Model Plugins
 
-> Plugin system (manager, lifecycle, hooks, manifest) → grid-plugins.md. Shell → grid-plugins-shell.md. Interaction/display plugins (Selection, MasterDetail, Reordering, Responsive, Tooltip, StickyRows, ContextMenu) → grid-plugins-catalog-ui.md. Editing/UndoRedo → grid-plugins-editing.md.
+Data plugins outside the Tree/GroupingRows hierarchy: source loading, pivot, columns, sort/filter, pinned totals and export.
+
+- Tree, GroupingRows, shared Hierarchy/metadata generations → `grid-hierarchy.md`.
+- Plugin system (manager, lifecycle, hooks, manifest) → `grid-plugins.md`; Shell → `grid-plugins-shell.md`.
+- Selection, MasterDetail, Reordering, Responsive, Tooltip, StickyRows, ContextMenu → `grid-plugins-catalog-ui.md`.
+- Editing/UndoRedo → `grid-plugins-editing.md`.
+- Scoped footer admission/geometry/lifecycle → `grid-scoped-footers.md`.
+
+Read order for incorrect rows/totals: row-identity invariants → owning transform/filter plugin → PinnedRows aggregation scope.
 
 ## Row-Transforming (`modifiesRowStructure: true`)
 
@@ -21,32 +29,8 @@ EVENTS: `datasource:data|children|loading|error`. QUERIES: `datasource:fetch-chi
 - DECIDED (Feb 2026): `pageSize` canonical, `cacheBlockSize` a `@deprecated` alias; resolve at consumption (`pageSize ?? cacheBlockSize ?? 100`). `defaultConfig` MUST NOT set `pageSize`. `GetRowsParams.pageSize = endNode - startNode`.
 - DECIDED (#273, `data-src`): plugins MAY read host `data-*` in `attach()` via `this.gridElement.getAttribute()`. No JS `dataSource` → `setDataSource(createUrlDataSource(src))` (`@internal`, fetch-once-and-cache; array or `{rows,totalNodeCount}`). A failed/aborted fetch MUST NOT be cached (`datasetPromise = null` in `.catch`). JS `config.dataSource` wins; NOT for true server pagination. INVARIANT: host `data-*` reads are INIT-TIME ONLY — `observedAttributes` is static (`rows`,`columns`,`grid-config`,`fit-mode`,`loading`); `grid-config` is the reactive escape hatch.
 - DECIDED (#369): `FeatureConfig.serverSide` widened to `boolean | ServerSideConfig`; factory normalizes `true` → `new ServerSidePlugin()`. `{...true}` yields `{}`, no throw.
-- TENSION: tall grid + small `pageSize` + no threshold needs a scroll to fill the viewport.
+- FLOW (#507/#509): block arrival sets `pendingViewportCheck`; `afterRender` consumes it once and fills the actual viewport even when `loadThreshold: 0`. Purge/source replacement/detach clear pending work; concurrency guards still apply.
 - Tests: `server-side.spec.ts` (AbortSignal, Subscribable, `loadBlock`, `createUrlDataSource`, `data-src`, boolean shorthand).
-
-### Tree
-
-OWNS: expanded keys, flattened rows, `rowKeyMap`, `#rowMeta` `WeakMap<row,FlattenedTreeRow>`, `#rowKeys` `WeakMap<row,string>`, animation state, `loadingKeys`/`loadedKeys`, `#childRequests: Map<key,AbortController>`.
-HOOKS: processRows(10), processColumns, afterCellRender, afterRender, onCellClick, onHeaderClick, renderRow, getRowHeight, adjustVirtualStart.
-QUERIES: `canMoveRow`, `datasource:viewport-mapping`, `sort:get-model`. EVENTS: `tree-expand`, `tree-load-start|end|error`. FIRES: `datasource:fetch-children`. LISTENS: `datasource:children|error` (filtered on `context.source === 'tree'`).
-
-- DECIDED (v3.4.0, lazy loading): two routes, ServerSide wins. `requestLazyChildren` checks `datasource:is-active` **via `queryBoolean`** (#430 — raw `query()` returns a truthy `[]`). Else `TreeConfig.loadChildren` (Promise or `Subscribable`, per-request `AbortController`, aborted on `detach()`). `Subscribable` is **take-one** — `finish()` removes the controller `detach()` would abort; a `settled` flag covers synchronous emission. Ref: `TreePlugin.#loadChildrenLocally`, `tree-integration.spec.ts`.
-- INVARIANT (#430): `detectTreeStructure(rows, childrenField, hasChildren)` MUST receive `config.hasChildren` (predicate-only lazy trees have no `children` field), else detection returns false. File: [tree-detect.ts](libs/grid/src/lib/plugins/tree/tree-detect.ts).
-- INVARIANT: lazy children are signalled by a truthy non-array `childrenField` or a `TreeConfig.hasChildren` predicate; single-batch (no pagination). `loadedKeys` (NOT `row[childrenField].length`) gates re-fetch; fetched at most once per attach, errors do NOT mark loaded. `datasource:error` MUST be handled — else the key stays in `loadingKeys` forever and retries short-circuit.
-- INVARIANT: loading UI reuses core `createDefaultSpinner('small')` (+ `.tree-loading` sizing in `@layer tbw-plugins`). `afterRender` sets AND removes `aria-busy` (explicit negative branch).
-- DECIDED (#264, WAI-ARIA treegrid): Tree or GroupingRows registered → `.rows-body` `role` swaps `grid` → `treegrid` + per-visible-row `aria-level`/`aria-setsize`/`aria-posinset`, set idempotently in `afterRender`, `role="grid"` restored in `detach()`. Tree carries `posInSet`/`setSize` on `FlattenedTreeRow`; GroupingRows uses a parallel `flatMeta` array (`computeFlatMeta`). INVARIANT: `posInSet`/`setSize` are 1-based PER PARENT, not global rowIndex.
-- INVARIANT (async rows): `processColumns` is a no-op while `flattenedRows` is empty, and a ROWS-only render never re-runs COLUMNS — so rows arriving asynchronously (`grid.rows = …` after `ready()`, or a ServerSide block) would leave the tree column undecorated. `processRows` (BOTH branches) calls `#syncTreeColumn()`, which microtask-defers a `#treeColumnWrapped !== flattenedRows.length > 0` check and `requestColumnsRender()`s on mismatch.
-- INVARIANT: `_schedulerMergeConfig` reseeds `#baseColumns` from `_columns`; columns handed to plugins are NOT pristine. Tree tracks its installed wrapper and both original renderer aliases: core resolves `renderer || viewRenderer`, so wrapping only `viewRenderer` bypasses decoration for React config cells. Restore both aliases when unwrapping; repeated merges must not nest wrappers.
-- OWNS (disclosures): `#cells` maps cells to row/key, persistent outer wrapper, independent content element and optional `ControlSlot<TreeDisclosureContext<T>>`. Same logical row keeps wrapper/content; recycle calls `releaseCell` inside an adapter batch BEFORE invoking the cached Name renderer, then detaches the old wrapper intact. `afterCellRender` registers cleanup after output installation.
-- INVARIANT: `disclosureRenderer` applies only to eligible parents with visible icons; loading disables its action. `setExpanded` rechecks slot, grid attachment, live row/key and loading, then calls existing `toggle`. Callback setter requests STYLE only. DOM controls own names/native activation; no default Tree label exists. Navigation boundary contract → `grid-plugins-catalog-ui.md`.
-- INVARIANT (perf): `flattenTree` allocates one result array; recursive `appendFlattenedRows` appends preorder rows into it. Do NOT return/spread child arrays: wide expanded nodes can exceed the JS argument limit. Bench: `tree-data.bench.ts`.
-
-### GroupingRows
-
-OWNS: grouped row model, expanded keys, animation state. HOOKS: processRows(10), onHeaderClick(-1), renderRow. QUERIES: `canMoveRow`, `grouping:get-grouped-fields`, `datasource:viewport-mapping`. EVENTS: `group-toggle|expand|collapse`.
-
-- DECIDED (#335, deferred expansion): `setGroupOn(fn, expanded?)` takes `DefaultExpandedValue: boolean|number|string|string[]` seeding expansion against the NEW group set on the next rebuild (sets `groupConfigDirty`); `expandAll`/`collapseAll` called right after it ALSO defer via `pendingExpansion`. `processRows` snapshots+clears `pendingExpansion` at the top, resolves against fresh `getGroupKeys(initialBuild)` and broadcasts `group-toggle` once.
-- INVARIANT: bulk `group-toggle` emissions MUST use `broadcast<GroupToggleDetail>`, not `emitPluginEvent`. `GroupToggleDetail.{key,expanded,value,depth}` are optional (bulk carries only `expandedKeys`).
 
 ### Pivot
 
@@ -68,7 +52,12 @@ OWNS: pivot result, flattened pivot rows, expanded keys, column totals, sort sta
 
 OWNS: pinned state per column. HOOKS: processColumns(-10), afterCellRender. TENSION: runs first, before ColumnVirtualization.
 
-- INVARIANT (sticky-cell painting): `.sticky-left`/`.sticky-right` carry opaque `background: var(--tbw-color-panel-bg)` (`rows.css`) + `position: sticky; z-index: 25` (`base.css`). So (1) row tints (`.row-focus`, `:hover`, `:nth-child(even)`) are HIDDEN under sticky cells — re-paint with `background: linear-gradient(<tint>,<tint>), var(--tbw-color-panel-bg)`; (2) `::after` border overlays need row-level `z-index: 26` (cell-level `::after { inset: 0 }` is clipped by `overflow: hidden`). Canonical: `selection.css .data-grid-row.row-focus`.
+- INVARIANT (paint): sticky cells have opaque `--tbw-color-panel-bg` (`rows.css`), `position:sticky; z-index:25` (`base.css`). Repaint row tints with `linear-gradient(<tint>,<tint>), var(--tbw-color-panel-bg)`. `overflow:hidden` clips cell pseudo-elements; row border overlays need z-index26 (`selection.css`).
+- OWNS: optional `CellExpansion`, `expandedCellWidth`, occurrence/field leases. Real cell widens inward, not renderer DOM/tracks/headers/pin offsets. Read-only `data-tbw-cell-expanded` = menu > focus > geometric hover intent, even with zero growth; secondary reveal consumes it. Touch requires persistent More. StickyRows strips active marker and sizing variables.
+- INVARIANT (bounds): `.tbw-scroll-area.clientWidth`, not content-wide `.rows-viewport`; header widths supply base/occupied rails. Never shrink below base or cover an inner pinned neighbour. Configure/ResizeObserver/fresh headers measure bounds, never scroll; config-only changes apply without resize.
+- DECIDED (2026-10-16, content-fit slice): `expandedCellWidth:number|'content'`; content uses CSS `max-content` + measured base/rail min/max. WHY: mounted permission-filtered content, labels/fonts/gaps/padding resize intrinsically without content observers or scroll reads. Hidden in-flow children contribute; absolute/display:none do not. `--tbw-pinned-cell-shadow` paints the active box edge (default existing border); consumer full-height body shadows must become row-local. Tests: `e2e/tests/pinned-content-fit.spec.ts`.
+- INVARIANT (leases): `registerControlCleanup` retires renderer generations; `afterCellRender` preserves same-ID/same-renderer updates. Direct-body parent + `__rowDataRef` exclude structural/nested/stale rows. Recycle/removal/unpin/disable/detach revoke tokens; idempotent releases cannot affect successors. IDs identify occurrences, not entities or indexes.
+- DECIDED (2026-10, scope): LTR right/end utility columns only. WHY: immutable 8be RTL fixture had off-screen physical-right pins before expansion; generic RTL repair deferred. Effective/inherited RTL disables with one diagnostic/controller; config/layout retires leases. Non-opted-in pins unchanged. Tests: `cell-expansion.spec.ts`, `integration/pinned-cell-expansion.spec.ts`.
 
 ### ColumnVirtualization / Visibility
 
@@ -107,7 +96,7 @@ OWNS: `filterModels` Map, cached unique values. HOOKS: processRows, afterRender,
 OWNS: pinned row positions (top/bottom), info bar (counts/panels), aggregation rows. HOOKS: afterRender. READS: `grid.sourceRows` (`totalRows`), `grid.rows` (`filteredRows`), filter plugin `cachedResult` (preferred), selection plugin `selected`.
 
 - INVARIANT: `filteredRows` reflects the post-filter count regardless of mechanism (filter plugin, column filters, server-side, direct `grid.rows =`). DECIDED (Apr 2026): `buildContext` derives counts from live grid state, not the `rows` argument.
-- INVARIANT: **aggregation VALUES are computed over `grid.sourceRows`, not the filtered set** — `PinnedRowsPlugin` passes `this.sourceRows` into `buildContext`/`renderAggregationSlot`. So filtering changes the _count_ panels but leaves `.tbw-aggregation-cell` totals untouched. WHY: `grid.rows` can hold group markers and ServerSide `__loading` placeholders, which would corrupt sums. Consequence: any test or demo asserting "filter, and the total follows" is asserting behaviour the plugin does not have.
+- INVARIANT: aggregation VALUES use `grid.sourceRows`, not filtered rows (`buildContext`/`renderAggregationSlot`). Filtering changes count panels, not `.tbw-aggregation-cell` totals. WHY: processed rows can contain group markers/loading placeholders.
 - DECIDED (#255, unified slots): `slots[]` replaces `aggregationRows[]` + `customPanels[]`; each slot is one DOM row, discriminated by presence of `render` → `PanelSlot`, else `AggregationSlot`. With `slots` set ALL legacy fields are ignored; legacy without `slots` keeps byte-identical DOM via `synthesizeLegacySlots`. `PanelRender` returns `HTMLElement | null` — null drops the contribution, and an all-null panel is dropped entirely (how `selectedCountPanel()` self-hides; adapters propagate null). Top slots render in `.tbw-header-pinned` AFTER `.header`, bottom in `.tbw-footer`; wrapper hidden under `tbw-grid[data-responsive]`.
 - INVARIANT: built-in `rowCountPanel`/`selectedCountPanel`/`filteredCountPanel` are exported from `@toolbox-web/grid/plugins/pinned-rows` and hardcoded English — i18n consumers build their own renderer (do NOT add locale options).
 - DECIDED (May 2026, demo-loop fix): `renderPanelSlot(slot, context, previousRow?)` is REF-CACHED — returns `previousRow` when every output is ref-equal; `populateSlotWrapper` diffs by ref and skips `replaceChildren`. WHY: consumers were remounted every `afterRender` (~30 Hz) → ResizeObserver autosizing loop. Built-in panels create a fresh element per call (so they keep updating). Contract: return the same element ref to opt into stable rendering.
@@ -117,7 +106,9 @@ OWNS: pinned row positions (top/bottom), info bar (counts/panels), aggregation r
 
 ### Clipboard
 
-OWNS: clipboard buffer. HOOKS: onKeyDown (Ctrl+C/V/X). DEPENDS: selection (optional).
+OWNS: clipboard buffer. HOOKS: onKeyDown (Ctrl/Cmd+C), native paste event. DEPENDS: selection (optional). No cut implementation.
+
+- INVARIANT: copy/paste shape uses `selection.activeAxis`, falling back only to a string `mode`; an array configuration is not itself an axis.
 
 - DECIDED (Jul 2026, structured payload): copy writes WYSIWYG `text/plain` (via `processCell`), snapshots RAW values in `#internalClipboard = {text, rawRows, fields}`, and writes `text/html` — a `<table>` whose root carries a base64 `data-tbw-clip` payload. Paste value precedence: (1) in-memory match on `text` (preserves `Date`), (2) `parseClipboardHtmlPayload(getData('text/html'))`, (3) parsed text. Winner → `PasteDetail.rawRows`; `defaultPasteHandler` uses `rawRows ?? rows` + `cloneStructured` per value so tiled pastes never share a ref. Codec MUST live in [clipboard-payload.ts](libs/grid/src/lib/plugins/clipboard/clipboard-payload.ts), NOT copy.ts/paste.ts (circular import → TDZ at test load).
 - DECIDED (Jul 2026, `fillSelection`): default `false`; tiles a smaller source across a larger **bounded** selection by modulo indexing. `#handleNativePaste` sets `PasteDetail.fillSelection` (only when `bounds != null`) and widens `fields` to the selection width; `defaultPasteHandler` iterates bounds with `pastedRows[r%srcRows]` / `sourceRow[c%srcCols]`. Never grows the grid; non-editable columns still skipped; `detail.rows` stays the source. RULED OUT: pre-tiling `parsed` in the plugin.

@@ -141,7 +141,7 @@ so treat it as destructive.
 
 A montage of features only proves the grid _has_ them. Every competitor also has them, so a viewer
 who already uses one has been given no reason to switch. The differentiators — MIT licence, no
-wrapper package, under 50 kB gzipped — are invisible on screen and must be **stated**, or nobody
+wrapper package, measured compact bundle size — are invisible on screen and must be **stated**, or nobody
 derives them from watching a table sort.
 
 The reel is therefore three acts, enforced by `ClipRole` and the `rank` map in `stitch-promo.ts`

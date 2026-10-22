@@ -360,27 +360,51 @@ describe('row drag controls', () => {
     expect(grid.classList.contains('tbw-grid--drag-source')).toBe(false);
   });
 
-  it('opens one menu without selecting a row; Ctrl moves the bound row and menu actions revalidate', async () => {
-    const selection = new SelectionPlugin<Row>({ mode: 'row' });
-    const { grid } = await setup({ dragHandleRenderer: renderer }, [selection]);
-    const selected = vi.fn();
-    const moves = vi.fn();
-    grid.addEventListener('selection-change', selected);
-    grid.addEventListener('row-move', moves);
-    handle(grid, 'b').click();
-    expect(grid.querySelectorAll('.tbw-row-move-menu')).toHaveLength(1);
-    expect(selected).not.toHaveBeenCalled();
-    grid
-      .querySelector('.tbw-row-move-menu button')
-      ?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
-    expect(selected).not.toHaveBeenCalled();
-    const event = new KeyboardEvent('keydown', { key: 'ArrowUp', ctrlKey: true, bubbles: true, cancelable: true });
-    handle(grid, 'b').dispatchEvent(event);
-    expect(event.defaultPrevented).toBe(true);
-    await vi.waitFor(() => expect(moves).toHaveBeenCalledTimes(1));
-    expect(grid.rows[0].id).toBe('b');
-    expect(selected).not.toHaveBeenCalled();
-  });
+  it.each(['altKey', 'ctrlKey'] as const)(
+    'opens one menu; %s moves the bound row exactly once without selection',
+    async (modifier) => {
+      const selection = new SelectionPlugin<Row>({ mode: 'row' });
+      const { grid } = await setup({ dragHandleRenderer: renderer }, [selection]);
+      const selected = vi.fn();
+      const moves = vi.fn();
+      grid.addEventListener('selection-change', selected);
+      grid.addEventListener('row-move', moves);
+      handle(grid, 'b').click();
+      expect(grid.querySelectorAll('.tbw-row-move-menu')).toHaveLength(1);
+      expect(selected).not.toHaveBeenCalled();
+      grid
+        .querySelector('.tbw-row-move-menu button')
+        ?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+      expect(selected).not.toHaveBeenCalled();
+      const event = new KeyboardEvent('keydown', { key: 'ArrowUp', [modifier]: true, bubbles: true, cancelable: true });
+      handle(grid, 'b').dispatchEvent(event);
+      expect(event.defaultPrevented).toBe(true);
+      await vi.waitFor(() => expect(moves).toHaveBeenCalledTimes(1));
+      expect(grid.rows[0].id).toBe('b');
+      expect(selected).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(['altKey', 'ctrlKey'] as const)(
+    'respects cancellation and nested input ownership for %s',
+    async (modifier) => {
+      const { grid } = await setup({ dragHandleRenderer: renderer });
+      const moves = vi.fn();
+      grid.addEventListener('row-move', moves);
+      const button = handle(grid, 'b');
+      button.addEventListener('keydown', (event) => event.preventDefault(), { once: true });
+      button.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'ArrowUp', [modifier]: true, bubbles: true, cancelable: true }),
+      );
+      const input = document.createElement('input');
+      button.append(input);
+      input.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'ArrowUp', [modifier]: true, bubbles: true, cancelable: true }),
+      );
+      expect(moves).not.toHaveBeenCalled();
+      expect(grid.rows.map((row) => row.id)).toEqual(['a', 'b', 'c']);
+    },
+  );
 
   it('retains the selected payload and existing move/drop policy', async () => {
     const selection = new SelectionPlugin<Row>({ mode: 'row' });

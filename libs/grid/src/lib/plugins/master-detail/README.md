@@ -30,6 +30,15 @@ grid.gridConfig = {
 };
 ```
 
+## Per-row eligibility
+
+`MasterDetailConfig<T>.hasDetail?: (row: T) => boolean` gates native/custom disclosures,
+clicks, keyboard and API expansion, loading and heights. Omitted allows all real rows;
+group headers and loading placeholders are excluded. Refresh after eligibility changes
+to release detail state, cached data, heights and controls. Retained actions recheck
+eligibility. A real Tree parent may have independent child and detail expansion.
+See [Hierarchy composition](https://toolboxjs.com/grid/plugins/hierarchy/).
+
 ## Custom disclosures
 
 `MasterDetailConfig<T>.disclosureRenderer` replaces the standalone expander control only.
@@ -56,6 +65,16 @@ for focus-preserving state updates. The grid owns cell navigation.
 | `expandOnRowClick` | `boolean`                                                                   | `false`   | Expand on row click         |
 | `showExpandColumn` | `boolean`                                                                   | `true`    | Show expand/collapse column |
 | `animation`        | `false \| 'slide' \| 'fade'`                                                | `'slide'` | Expand/collapse animation   |
+
+## Row heights
+
+`gridConfig.rowHeight` describes the base row, excluding its detail panel. Expanded
+rows contribute that positive numeric or per-row callback height plus the detail
+height to virtualization. Do not add detail height in the callback yourself.
+Without a positive configured base, MasterDetail retains the grid's default
+(configured or CSS-measured) height fallback. Collapsed rows use normal grid height
+resolution. After changing detail content size asynchronously, call
+`grid.invalidateRowHeight(rowIndex)` once layout has settled.
 
 ## Events
 

@@ -14,6 +14,7 @@
 import type { GridHost, ScrollToRowOptions } from '../types';
 import { ensureCellVisible } from './keyboard';
 import { fromVirtualScrollTop } from './virtualization';
+import { getRowWindow } from './row-window';
 
 // #region FocusManager
 
@@ -85,6 +86,11 @@ export class FocusManager<T = any> {
    * Scroll the viewport so a row is visible.
    */
   scrollToRow(rowIndex: number, options?: ScrollToRowOptions): void {
+    const reveal = getRowWindow(this.#grid)?.reveal;
+    if (reveal) {
+      reveal(rowIndex, options);
+      return;
+    }
     const virt = this.#grid._virtualization;
     if (!virt.enabled) return;
 

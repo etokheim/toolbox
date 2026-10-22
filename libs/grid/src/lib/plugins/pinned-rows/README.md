@@ -37,6 +37,53 @@ grid.gridConfig = {
 };
 ```
 
+## Scoped Non-Data Footers
+
+`scopedFooters(scope)` optionally returns `{ height, render }` or `null`.
+`FooterScope<T>` distinguishes `grid`, expanded real `row`, and expanded
+structural `group` scopes. Groups expose `parent` and normalized `path`;
+`key` alone identifies the rendered occurrence, not the domain ID or parent
+reference. The whole-grid callback runs even for empty data. Fixed groups,
+including `emptyGroups` declarations, count as expanded.
+
+`FooterContext.depth` is the zero-based presentation depth of the owning row or
+group occurrence, matching its Tree/group renderer; grid scope uses zero.
+`collapsible` is a boolean for group owners (false for fixed headings), otherwise
+undefined. These values update on topology changes even when the scope key and
+renderer stay unchanged. Use `scope.kind` to distinguish owners. Name-column,
+disclosure/icon and button-text offsets remain application presentation rules;
+neither `path.length` nor an inserted child's depth describes the owner's name.
+
+Each footer reserves space at its scope's natural end. Only the innermost
+eligible intersecting scope sticks; other footers stay in flow. Native uses the
+existing row offset/window machinery because flattened virtual siblings have
+no subtree CSS-sticky containing block. Height is explicit, including borders
+(for example 40px/24px); global panels retain their space.
+If header/panels/footer cannot leave a usable data/editor surface after releasing
+sticky ancestors, the footer remains reachable in normal flow with the standard
+insufficient-space diagnostic and zero sticky bottom occlusion. Capacity
+restoration re-enables sticking without shrinking targets or forcing height.
+Sticky ancestors remain scoped through their own and descendant footer extents,
+but not through co-terminal parent or whole-grid footers. Adjacent footer segments
+retain their own scope membership; ordinary data navigation still skips them.
+
+Render an `HTMLElement` or persistent `ControlView<FooterContext<T>>`.
+`setScopedFooters` replaces live eligibility/height without resetting siblings.
+React's feature prop and canonical `gridConfig.features` also accept JSX through
+the shared portal manager. Remove only your own redundant global action slot
+when enabling a whole-grid action; native does not infer command semantics.
+Omitting the callback leaves existing behaviour unchanged.
+
+See the [scoped-footer guide](https://toolboxjs.com/grid/plugins/pinned-rows/#scoped-non-data-footers)
+for typed examples, occurrence identity and empty-section admission.
+
+## Accessibility
+
+[SC 2.1.1: Keyboard](https://www.w3.org/WAI/WCAG22/Understanding/keyboard.html):
+footer controls retain normal browser focus and keyboard handling. They are not
+data rows, selectable entities, editing/paste targets, or export/persistence
+records. The application owns accessible labels, permissions and commands.
+
 ## Configuration
 
 | Option      | Type              | Default | Description                                                    |

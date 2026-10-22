@@ -21,6 +21,7 @@ import {
   GridAdapter,
   registerColumnEditor,
   registerColumnRenderer,
+  registerTypeEditor,
 } from './react-grid-adapter';
 
 describe('GridAdapter', () => {
@@ -158,6 +159,37 @@ describe('GridAdapter', () => {
     });
 
     describe('createRenderer', () => {
+      it('reuses a declaration wrapper only for the same callback and owner', () => {
+        const element = document.createElement('tbw-grid-column');
+        const render = () => 'stable';
+        registerColumnRenderer(element, render);
+        const first = adapter.createRenderer(element);
+        expect(adapter.createRenderer(element)).toBe(first);
+        registerColumnRenderer(element, () => 'replacement');
+        expect(adapter.createRenderer(element)).not.toBe(first);
+        registerColumnRenderer(element, render);
+        const beforeMove = adapter.createRenderer(element);
+        document.createElement('tbw-grid').append(element);
+        expect(adapter.createRenderer(element)).not.toBe(beforeMove);
+        const beforeDestroy = adapter.createRenderer(element);
+        adapter.destroy();
+        expect(adapter.createRenderer(element)).not.toBe(beforeDestroy);
+      });
+
+      it('requests a column reparse when an attached renderer callback is replaced', () => {
+        const grid = document.createElement('tbw-grid');
+        const refreshColumns = vi.fn();
+        Object.assign(grid, { refreshColumns });
+        const element = document.createElement('tbw-grid-column');
+        grid.append(element);
+        const render = () => 'first';
+        registerColumnRenderer(element, render);
+        registerColumnRenderer(element, render);
+        expect(refreshColumns).not.toHaveBeenCalled();
+        registerColumnRenderer(element, () => 'second');
+        expect(refreshColumns).toHaveBeenCalledOnce();
+      });
+
       it('should return a function that creates React content', () => {
         const element = document.createElement('tbw-grid-column');
         element.setAttribute('field', 'createRendererTest');
@@ -166,6 +198,7 @@ describe('GridAdapter', () => {
 
         const renderer = adapter.createRenderer(element);
         expect(typeof renderer).toBe('function');
+        if (!renderer) throw new Error('Registered renderer missing');
 
         // Call the renderer
         const result = renderer({
@@ -204,6 +237,7 @@ describe('GridAdapter', () => {
         const renderer = adapter.createRenderer(element);
 
         // Create a mock cell element
+        if (!renderer) throw new Error('Registered renderer missing');
         const cellEl = document.createElement('div');
         cellEl.className = 'cell';
 
@@ -243,6 +277,7 @@ describe('GridAdapter', () => {
         element.setAttribute('field', 'detachedRendererTest');
         registerColumnRenderer(element, (ctx) => `V: ${ctx.value}`);
         const renderer = adapter.createRenderer(element);
+        if (!renderer) throw new Error('Registered renderer missing');
 
         const cellEl = document.createElement('div');
         cellEl.className = 'cell';
@@ -285,6 +320,7 @@ describe('GridAdapter', () => {
         const renderer = adapter.createRenderer(element);
 
         // First render without cellEl
+        if (!renderer) throw new Error('Registered renderer missing');
         const result1 = renderer({ row: {}, value: 'a', field: 'noCellElTest', column: {} as any });
 
         // Second render without cellEl
@@ -307,36 +343,60 @@ describe('GridAdapter', () => {
 
         const editorSpec = adapter.createEditor(element);
         expect(typeof editorSpec).toBe('function');
+        if (typeof editorSpec !== 'function') throw new Error('Registered editor missing');
 
         const result = editorSpec({
           row: { name: 'test' },
+          rowId: 'test',
+          updateRow: vi.fn(),
           value: 'initial',
           field: 'createEditorTest',
           column: {} as any,
           commit: commitFn,
           cancel: cancelFn,
-        } as ColumnEditorContext<unknown, string>);
-
-        expect(result instanceof HTMLElement).toBe(true);
-        expect(result.className).toBe('react-cell-editor');
-      });
-
-      it('should return empty div for unregistered editor', () => {
-        const element = document.createElement('tbw-grid-column');
-        element.setAttribute('field', 'unregisteredEditor');
-
-        const editorSpec = adapter.createEditor(element);
-        const result = editorSpec({
-          row: {},
-          value: 'test',
-          field: 'unregisteredEditor',
-          column: {} as any,
-          commit: vi.fn(),
-          cancel: vi.fn(),
         });
 
         expect(result instanceof HTMLElement).toBe(true);
-        expect(result.tagName).toBe('DIV');
+        if (!(result instanceof HTMLElement)) throw new Error('Editor container missing');
+        expect(result.className).toBe('react-cell-editor');
+      });
+
+      it('does not invent an editor for a renderer-only column', () => {
+        const element = document.createElement('tbw-grid-column');
+        element.setAttribute('field', 'unregisteredEditor');
+
+        registerColumnRenderer(element, () => 'Rendered value');
+        expect(adapter.createEditor(element)).toBeUndefined();
+      });
+
+      it('uses a registered type editor and preserves column editor precedence', () => {
+        const type = document.createElement('tbw-grid-type');
+        type.setAttribute('name', 'absent-editor-precedence');
+        const column = document.createElement('tbw-grid-column');
+        type.append(column);
+        const typeEditor = vi.fn(() => 'type editor');
+        const columnEditor = vi.fn(() => 'column editor');
+        registerTypeEditor(type, typeEditor);
+        const context: ColumnEditorContext = {
+          row: {},
+          rowId: 'test',
+          updateRow: vi.fn(),
+          value: 'value',
+          field: 'name',
+          column: { field: 'name' },
+          commit: vi.fn(),
+          cancel: vi.fn(),
+        };
+        const fallback = adapter.createEditor(column);
+        if (typeof fallback !== 'function') throw new Error('Type editor missing');
+        fallback(context);
+        expect(typeEditor).toHaveBeenCalledTimes(1);
+        registerColumnEditor(column, columnEditor);
+        const specific = adapter.createEditor(column);
+        if (typeof specific !== 'function') throw new Error('Column editor missing');
+        specific(context);
+        expect(columnEditor).toHaveBeenCalledTimes(1);
+        expect(typeEditor).toHaveBeenCalledTimes(1);
       });
 
       it('flushes the focused editor input via native .blur() on before-edit-close', () => {
@@ -350,8 +410,11 @@ describe('GridAdapter', () => {
         registerColumnEditor(column, (ctx) => `Editing: ${ctx.value}`);
 
         const editorSpec = adapter.createEditor(column);
+        if (typeof editorSpec !== 'function') throw new Error('Registered editor missing');
         const container = editorSpec({
           row: { name: 'row' },
+          rowId: 'test',
+          updateRow: vi.fn(),
           value: 'v',
           field: 'beforeCloseTest',
           column: {} as any,
@@ -400,10 +463,13 @@ describe('GridAdapter', () => {
         registerColumnEditor(column, (ctx) => `Editing: ${ctx.value}`);
 
         const editorSpec = adapter.createEditor(column);
+        if (typeof editorSpec !== 'function') throw new Error('Registered editor missing');
         const container = editorSpec({
           row: {},
           value: 'v',
           field: 'beforeCloseOutsideTest',
+          rowId: 'test',
+          updateRow: vi.fn(),
           column: {} as any,
           commit: vi.fn(),
           cancel: vi.fn(),
@@ -450,6 +516,7 @@ describe('GridAdapter', () => {
         const renderer = adapter.createRenderer(element);
 
         // Create some mounted views
+        if (!renderer) throw new Error('Registered renderer missing');
         renderer({ row: {}, value: 'a', field: 'destroyTest', column: {} as any });
         renderer({ row: {}, value: 'b', field: 'destroyTest', column: {} as any });
 
@@ -472,6 +539,7 @@ describe('GridAdapter', () => {
         const renderer = adapter.createRenderer(element);
 
         // Create a mounted view
+        if (!renderer) throw new Error('Registered renderer missing');
         const container = renderer({
           row: {},
           value: 'test',
@@ -596,6 +664,7 @@ describe('GridAdapter', () => {
         registerColumnEditor(element, () => 'editor content');
 
         const editorFn = adapter.createEditor(element);
+        if (typeof editorFn !== 'function') throw new Error('Registered editor missing');
         const editorContainer = editorFn({
           value: 'test',
           row: {},
@@ -610,6 +679,7 @@ describe('GridAdapter', () => {
         } as any);
 
         // Simulate cell containing the editor
+        if (!(editorContainer instanceof HTMLElement)) throw new Error('Editor container missing');
         const cellEl = document.createElement('td');
         cellEl.appendChild(editorContainer);
 
@@ -631,6 +701,7 @@ describe('GridAdapter', () => {
         element.setAttribute('field', 'rendererReleaseTest');
         registerColumnRenderer(element, (ctx) => `V: ${ctx.value}`);
         const renderer = adapter.createRenderer(element);
+        if (!renderer) throw new Error('Registered renderer missing');
 
         const cellEl = document.createElement('div');
         cellEl.className = 'cell';

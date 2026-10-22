@@ -56,7 +56,17 @@ activation ([WCAG 4.1.2](https://www.w3.org/WAI/WCAG22/Understanding/name-role-v
 Use click only to call `setExpanded`; a native button supplies Space/Enter activation.
 Return a `ControlView` to preserve focus across state updates. The grid owns cell navigation.
 
+Tree automatically retires its row-level `aria-expanded` and `aria-busy` when a
+recycled row becomes a fixed group section or Tree is removed. Shared Hierarchy
+positions and attributes subsequently owned by another plugin or application
+are preserved; consumers should not scrub row attributes after rendering.
+
 ## Configuration
+
+Reveal animation applies to newly visible child occurrences, not surviving rows
+shifted by collapse or DOM recycling. GroupingRows animates newly revealed live
+section headers using its own `animation` setting. Grid-level disabled and
+reduced-motion settings apply to both.
 
 | Option            | Type                                                  | Default      | Description                                 |
 | ----------------- | ----------------------------------------------------- | ------------ | ------------------------------------------- |
@@ -196,6 +206,10 @@ const flatRows = tree.getFlattenedRows();
 // Get row data by key
 const row = tree.getRowByKey(key);
 ```
+
+## Grouping Child Rows
+
+`TreePlugin` combines with `GroupingRowsPlugin` to group the children of each tree node. See the Row Grouping README ("Grouping Tree Children"). Both plugins depend on `HierarchyPlugin`, which the grid attaches automatically.
 
 ## CSS Variables
 

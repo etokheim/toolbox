@@ -13,11 +13,26 @@ related: [grid-core, grid-render-pipeline, grid-plugins-catalog-ui, grid-feature
 
 Read order for "my gesture doesn't fire on touch": long-press priority policy (is another handler claiming it?) → pointer-drag promotion FLOW → pointer-modality.
 
+## outer mixed-axis wheel (`touch-scroll.ts`)
+
+- DECIDED (local outer-wheel slice): when faux Y has no range, unmodified mixed wheel deltas can move inner X + nearest eligible outer Y once. WHY: Chromium's plain nested-overflow control consumes both axes in the inner scroller; returning without `preventDefault` alone loses outer Y. No public scroll-owner API or consumer forwarding.
+- INVARIANT: user-scrollable overflow only; stop at hidden/clip, exhausted contain/none, open dialog/aria-modal; nested scrollable controls keep browser ownership. Only cancel with movable X and eligible Y; pixel/line/page units normalized, noncancelable/default-prevented/zoom modifiers untouched. Pure axes, Shift and faux internal scrolling keep existing paths. Tests: `wheel-scroll.spec.ts`; real-wheel native + plain overflow controls (programmatic offsets cannot prove gesture ownership).
+
 ## pointer-modality (`core/internal/pointer-modality.ts`)
 
 - OWNS: `PointerModality` (`'fine' | 'coarse'`), `getPrimaryPointer()`, `onPointerModalityChange(cb)`. **NOT exported from `public.ts`** — internal. `@since 3.5.0`; infra for touch-input epic #302 (#307). Tests: `pointer-modality.spec.ts`.
 - INVARIANT: one lazily-created shared `MediaQueryList` for `(pointer: coarse)` — a single OS listener regardless of subscriber count; unsubscribe idempotent (`removed` flag). SSR / happy-dom safe: guard `typeof globalThis.matchMedia !== 'function'` → `'fine'`, and fall back to legacy `addListener`.
 - RULE: plugins and features MUST use this module, not `matchMedia` directly.
+
+## row hover (`core/internal/row-hover.ts`)
+
+- DECIDED (2026-10-16, user-approved): row presentation uses `[data-tbw-hovered]`, not browser `:hover`. WHY: Chrome 155 retains stale hover on transform-only fixed rows; ordinary overflow retargets correctly. Recycling is not required. `e2e/tests/row-hover.spec.ts` preserves both controls and the 54-row reduction.
+- OWNS: last mouse coordinates, one pending RAF and one marked row per connected grid. READS: one `ownerDocument.elementFromPoint`, nearest grid/row ownership. WRITES: old/new marker; no row scans, geometry loops, focus, selection, capture or synthetic events.
+- FLOW: host `Symbol.for('tbw.grid.row.hover')` shares row + change subscribers across core/plugin bundles. Notify after marker writes; clear publishes null, aborted subscribers unsubscribe. `CellExpansion` reads this authority instead of pointerover/out; existing menu > focus > geometric hover arbitration remains plugin-owned. No public event, observer or second hit test. Packaged `row-hover.spec.ts` browser regression covers stationary 1980→1988 action transfer and lease/focus countercases.
+- FLOW: passive capture of pointer/scroll → coalesced hit test → marker; `refreshVirtualWindow` + `_schedulerAfterRender` also reconcile rebuilt/recycled DOM. A scroll may reconcile the immediate transform and the final row pass on successive frames; no polling when idle.
+- INVARIANT: touch/pen, outside pointer, window exit/blur and disconnect clear state/cancel work. Nested-grid headers and outside overlays cannot mark the underlying outer row. Sticky clone capture strips copied markers; row DOM identity is not occurrence identity.
+- INVARIANT: built-in core/group/pivot/card row styles consume the marker under `(hover: hover)`; print suppresses it. Consumer row/action selectors must replace only their row `:hover` predicate, without OR fallback; focus-within/menu-open and hover-none visibility stay independent. Button-local browser hover remains browser-owned.
+- TENSION: hit testing is bounded browser geometry work, not free; retain paired browser costs and the existing scroll budget when changing scheduling. No render-epoch, utility-view, portal or scroll-offset ownership changes.
 
 ## pointer-drag (`core/internal/pointer-drag.ts`)
 

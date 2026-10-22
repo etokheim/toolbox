@@ -29,6 +29,14 @@ export type { ExpandCollapseAnimation } from '../../core/types';
  * @since 0.1.1
  */
 export interface MasterDetailConfig<T = unknown> {
+  /**
+   * Whether a real row supports detail expansion. Omitted: every real row is eligible.
+   * Group headers and loading placeholders never have details. When a row becomes
+   * ineligible, its detail state, cached data and controls are released on refresh.
+   * Tree child expansion is independent of this predicate.
+   * @since 3.9.0
+   */
+  hasDetail?: (row: T) => boolean;
   /** Custom disclosure in the existing expander column. @since 3.9.0 */
   disclosureRenderer?: ControlRenderer<MasterDetailDisclosureContext<T>>;
   /**

@@ -1,0 +1,124 @@
+---
+title: Hierarchy Plugin
+description: Parent-scoped row grouping inside real Tree descendants, with independent detail expansion.
+pluginKinds: [structural, composite]
+---
+
+import HierarchyTreeGroupingDemo from '@components/demos/hierarchy/HierarchyTreeGroupingDemo.astro';
+import ShowSource from '@components/ShowSource.astro';
+
+## Installation
+
+Enable Tree and GroupingRows together through `gridConfig.features` (recommended)
+or construct both plugins in `gridConfig.plugins`. Both routes automatically attach
+one HierarchyPlugin; no extra feature import or framework wrapper is needed.
+
+```ts
+import '@toolbox-web/grid/features/tree';
+import '@toolbox-web/grid/features/grouping-rows';
+
+grid.gridConfig = {
+  features: {
+    tree: { defaultExpanded: true },
+    groupingRows: {
+      groupOn: (row, { parent }) => parent === null ? null : row.category,
+      defaultExpanded: true,
+    },
+  },
+};
+```
+
+## Basic Usage
+
+Alpha and Beta remain real rows. Each owns a separate Shared group and one item.
+The left disclosure opens parent details; the Name disclosure opens Tree children.
+
+<ShowSource component="hierarchy/HierarchyTreeGroupingDemo">
+  <HierarchyTreeGroupingDemo />
+</ShowSource>
+
+## Row Identity and State
+
+Tree discovers natural sibling lists; GroupingRows groups each list independently.
+The result is flattened once. `groupOn` receives `{ parent, depth }`, where `parent`
+is the real parent row (narrow its `unknown` type before accessing fields) or `null`
+at the root. Depth includes inserted structural levels.
+
+Composed group keys are opaque scoped identities, not labels or entity IDs. Obtain
+them from group state, events or disclosure contexts. Equal labels under different
+parents expand independently. Accordion collapses only peers under the same parent.
+Standalone grouping retains its previous key format.
+
+GroupingRows `{ defaultExpanded: true, childDefaultExpanded: false }` opens global
+groups while sections beneath real Tree parents start collapsed. Tree's own
+`defaultExpanded` independently controls the real parents. Omit the child override
+to retain the shared grouping default.
+
+For non-collapsible sections instead, set `childGroupsCollapsible: false`.
+All child group-path levels stay open while their real parent is open, even under
+bulk collapse or accordion. Root/global grouping and Tree expansion remain independent.
+See [Fixed Child Sections](/grid/plugins/grouping-rows/#fixed-child-sections) for
+the public model, custom-header policy and existing StickyRows push integration.
+
+Numeric grouping defaults apply once per real parent: `childDefaultExpanded: 0` opens
+the first group when that parent's groups first appear; `1` opens its second.
+Empty group lists wait for data. Later rebuilds preserve user collapses.
+See [Default Expanded Options](/grid/plugins/grouping-rows/#default-expanded-options)
+for out-of-range indexes and initialization lifetime.
+
+Real rows keep their references. A business entity shown more than once needs
+distinct occurrence objects and unique occurrence IDs; `getRowId` can supply them.
+Canonical selection deduplication and deterministic placement remain application
+responsibilities. A `groupOn` array denotes a nested path, not multiple memberships.
+Structural groups are not domain entities and must not enter persistence buffers.
+
+## Filtering, Sorting and Totals
+
+Tree applies the complete MultiSort model within each natural sibling list, using
+column comparators and value accessors. Sorting never moves children across parents.
+GroupingRows `groupOrder({ parent, depth })` can put semantic child sections first,
+independent of column direction, while returning `undefined` for normal global
+ordering. See [Category Order](/grid/plugins/grouping-rows/#category-order).
+Native Filtering still filters the root input: it does not retain ancestors because
+a descendant matches. Supply an eager filtered tree projection when that policy is
+needed; the consumer also controls hidden-level promotion.
+
+Group counts and aggregators use their direct sibling members, not recursive Tree
+descendants. For complete-hierarchy totals, retain canonical membership separately
+and expose totals through values, accessors or custom aggregation. Grouping does not
+change eager data into lazy fetching or infer totals from unloaded children.
+
+Empty real parents remain visible without a false child disclosure. Empty semantic
+groups are omitted. Standalone predefined groups and server counts are unchanged;
+nested predefined/lazy groups are not introduced by this contract.
+
+## Detail Expansion
+
+`masterDetail.hasDetail(row)` independently controls which real rows have details.
+Omitting it allows every real row; group headers and loading placeholders are excluded.
+An eligible parent can have both Tree children and details. Changing eligibility
+releases detail controls, state, cached data and measured height on refresh; retained
+custom actions cannot reopen an ineligible row.
+
+## Accessibility
+
+[SC 1.3.1: Info and Relationships](https://www.w3.org/WAI/WCAG22/Understanding/info-and-relationships.html):
+Hierarchy owns `treegrid` and per-row `aria-level`, `aria-setsize`, `aria-posinset`.
+Recycling or removing composition restores only values still owned by the plugin.
+Tree, group and detail disclosures retain distinct actions and states.
+
+[SC 4.1.2: Name, Role, Value](https://www.w3.org/WAI/WCAG22/Understanding/name-role-value.html):
+native disclosures expose their own expansion state; custom controls must apply
+their accessible names and state from the corresponding disclosure context.
+
+## Configuration Options
+
+Hierarchy has no configuration. It is an automatically provided dependency, not an
+additional feature toggle. `grid.getPluginByName('hierarchy')?.getRowMeta(row)` returns
+the rendered row's `{ level, setSize, posInSet }`, or `undefined` when not rendered.
+
+## See Also
+
+- [Tree](/grid/plugins/tree/)
+- [Row Grouping](/grid/plugins/grouping-rows/)
+- [Master-Detail](/grid/plugins/master-detail/)

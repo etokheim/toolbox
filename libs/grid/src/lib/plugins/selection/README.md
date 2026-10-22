@@ -92,6 +92,7 @@ Row selection. Clicking any cell selects the entire row.
 - **Shift+Arrow Up/Down**: Extend selection from anchor row
 - **Shift+Page Up/Down**: Extend selection by page
 - **Shift+Ctrl+Home/End**: Extend selection to first/last row
+- **Shift+Ctrl/⌘+Arrow Up/Down**: Extend selection to first/last row (same column)
 
 ### Range Mode (`'range'`)
 
@@ -109,6 +110,8 @@ state and disabled state, provide keyboard activation and visible focus, and mee
 Use one activation handler; grid shortcuts do not run inside custom controls.
 
 Range selection is a drag, so WCAG 2.2 [SC 2.5.7 Dragging Movements](https://www.w3.org/WAI/WCAG22/Understanding/dragging-movements.html) requires a single-pointer alternative. Two are provided: click the first cell and pick **Extend selection to here** from the context menu on the opposite corner (right-click, long-press, or `Shift+F10`), or **tap** a range corner handle to arm it and tap the cell that corner should move to. Neither reserves extra chrome — both reuse affordances that already exist. When the `ContextMenuPlugin` is installed the action joins the normal menu; otherwise the plugin hosts a minimal `role="group"` menu of its own. Keyboard users can also extend a range with `Shift+Arrow`, but keyboard equivalence alone does not satisfy SC 2.5.7.
+
+In range mode, `Shift+Space` selects the rows spanned by the active range (or the focused row) and `Ctrl/⌘+Space` the spanned columns, per the [WAI-ARIA grid pattern](https://www.w3.org/WAI/ARIA/apg/patterns/grid/) ([SC 2.1.1 Keyboard](https://www.w3.org/WAI/WCAG22/Understanding/keyboard.html)); a following `Shift+Arrow` extends the span while keeping it full width/height. With `mode: ['range', 'column']`, `Ctrl/⌘+Space` keeps its column-axis meaning. All of these chords are ignored in form fields and while a cell editor is open. The result is announced in the grid's live region via the `rangeSpanSelected` `A11yMessages` key ([SC 4.1.3 Status Messages](https://www.w3.org/WAI/WCAG22/Understanding/status-messages.html)); override it through `a11y.messages` to localize.
 
 ## Events
 

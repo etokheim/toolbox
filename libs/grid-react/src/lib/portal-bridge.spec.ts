@@ -127,6 +127,92 @@ describe('portal-bridge', () => {
       expect(mockManager.renderPortal).toHaveBeenCalledWith('existing-key', container, 'hello');
     });
 
+    it('keeps a detached existing portal with its original owner when multiple grids are mounted', () => {
+      const owner = createMockGrid();
+      const other = createMockGrid();
+      const manager = createMockManager();
+      const otherManager = createMockManager();
+      setPortalManager(owner, manager);
+      setPortalManager(other, otherManager);
+      const container = document.createElement('div');
+      owner.append(container);
+      const key = renderToContainer(container, 'original');
+      const child = document.createElement('button');
+      container.append(child);
+      container.remove();
+
+      renderToContainer(container, 'updated', key);
+
+      expect(manager.renderPortal).toHaveBeenLastCalledWith(key, container, 'updated');
+      expect(otherManager.renderPortal).not.toHaveBeenCalled();
+      expect(container.firstChild).toBe(child);
+      removeFromContainer(key, { sync: true });
+    });
+
+    it.each(['release', 'clear-grid', 'clear-all', 'unregister'] as const)(
+      'does not reacquire a portal host after %s, even when its grid is registered again',
+      (retirement) => {
+        const grid = createMockGrid();
+        const manager = createMockManager();
+        setPortalManager(grid, manager);
+        const container = document.createElement('div');
+        grid.append(container);
+        const key = renderToContainer(container, 'original');
+        const child = document.createElement('button');
+        container.append(child);
+        if (retirement === 'release') removeFromContainer(key, { sync: true });
+        if (retirement === 'clear-grid') clearContainersForGrid(grid);
+        if (retirement === 'clear-all') clearAllContainers();
+        if (retirement === 'unregister') setPortalManager(grid, null);
+        const successor = createMockManager();
+        setPortalManager(grid, successor);
+        renderToContainer(container, 'late', key, grid);
+        renderToContainer(container, 'late without key', undefined, grid);
+        removeFromContainer(key);
+        expect(manager.renderPortal).toHaveBeenCalledTimes(1);
+        expect(successor.renderPortal).not.toHaveBeenCalled();
+        expect(successor.removePortal).not.toHaveBeenCalled();
+        expect(container.firstChild).toBe(child);
+        expect(Object.keys(container).some((key) => key.startsWith('__reactContainer$'))).toBe(false);
+        const fresh = document.createElement('div');
+        renderToContainer(fresh, 'successor', undefined, grid);
+        expect(successor.renderPortal).toHaveBeenCalledOnce();
+      },
+    );
+
+    it('does not create a fallback for new hosts during explicit grid teardown', () => {
+      const grid = createMockGrid();
+      setPortalManager(grid, createMockManager());
+      setPortalManager(grid, null);
+      const container = document.createElement('div');
+      renderToContainer(container, 'late', undefined, grid);
+      expect(container.childNodes).toHaveLength(0);
+      expect(Object.keys(container).some((key) => key.startsWith('__reactContainer$'))).toBe(false);
+      const standalone = document.createElement('div');
+      const key = renderToContainer(standalone, 'standalone');
+      expect(standalone.textContent).toBe('standalone');
+      removeFromContainer(key);
+    });
+
+    it('keeps original manager ownership when the host moves under a different grid', () => {
+      const grid = createMockGrid();
+      const other = createMockGrid();
+      const manager = createMockManager();
+      const otherManager = createMockManager();
+      setPortalManager(grid, manager);
+      setPortalManager(other, otherManager);
+      const container = document.createElement('div');
+      grid.append(container);
+      const key = renderToContainer(container, 'original');
+      other.append(container);
+      renderToContainer(container, 'update', key, other);
+      removeFromContainer(key, { sync: true });
+      expect(manager.renderPortal).toHaveBeenLastCalledWith(key, container, 'update');
+      expect(manager.removePortal).toHaveBeenCalledWith(key, true);
+      expect(otherManager.renderPortal).not.toHaveBeenCalled();
+      expect(otherManager.removePortal).not.toHaveBeenCalled();
+    });
+
     it('should generate unique keys', () => {
       const gridEl = createMockGrid();
       const mockManager = createMockManager();

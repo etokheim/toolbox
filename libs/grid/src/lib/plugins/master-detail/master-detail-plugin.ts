@@ -12,6 +12,8 @@ import {
   unregisterControlCleanup,
 } from '../../core/internal/control-lifecycle';
 import { getRowIndexFromCell } from '../../core/internal/utils';
+import { getRowWindow } from '../../core/internal/row-window';
+import { resolveConfiguredRowHeight } from '../../core/internal/virtualization';
 import {
   BaseGridPlugin,
   CellClickEvent,
@@ -27,7 +29,7 @@ import {
   removeUtilityColumn,
   upsertUtilityColumn,
 } from '../../core/plugin/utility-column';
-import type { ColumnConfig, GridHost, PublicGrid } from '../../core/types';
+import type { ColumnConfig, GridHost, PublicGrid, RowElementInternal } from '../../core/types';
 import type { DataSourceChildrenDetail, FetchChildrenQuery } from '../server-side/datasource-types';
 import {
   collapseDetailRow,
@@ -47,6 +49,9 @@ import type {
 function disclosureLabel(expanded: boolean): string {
   return expanded ? 'Collapse details' : 'Expand details';
 }
+
+const RETIRED_DETAIL_REQUEST = Symbol.for('tbw.grid.retired-detail-request');
+type DetailRequestContext = FetchChildrenQuery['context'] & { [RETIRED_DETAIL_REQUEST]?: boolean };
 
 /**
  * Master-Detail Plugin for tbw-grid
@@ -118,6 +123,7 @@ export class MasterDetailPlugin<TRow = unknown> extends BaseGridPlugin<MasterDet
   readonly name = 'masterDetail';
   /** @internal */
   override readonly styles = styles;
+  #detailRequests = new Map<object, DetailRequestContext>();
 
   /**
    * Optional dependency on ServerSide for async detail data.
@@ -160,19 +166,15 @@ export class MasterDetailPlugin<TRow = unknown> extends BaseGridPlugin<MasterDet
       const d = detail as DataSourceChildrenDetail;
       if (d.context?.source !== 'master-detail') return;
       d.claimed = true;
+      if ((d.context as DetailRequestContext)[RETIRED_DETAIL_REQUEST]) return;
 
       const row = d.context.row;
-      if (row && this.expandedRows.has(row)) {
+      if (this.#hasDetail(row) && this.expandedRows.has(row)) {
+        this.#retireDetailRequest(row);
         this.detailDataMap.set(row, d.rows);
         this.loadingDetails.delete(row);
-        // Re-render: remove existing detail element so #syncDetailRows recreates it
-        const existingDetail = this.detailElements.get(row);
-        if (existingDetail) {
-          this.#internalGrid.__frameworkAdapter?.unmount?.(existingDetail);
-          existingDetail.remove();
-          this.detailElements.delete(row);
-          this.measuredDetailHeights.delete(row);
-        }
+        this.#removeDetail(row);
+        this.measuredDetailHeights.delete(row);
         this.requestRender();
       }
     });
@@ -328,14 +330,10 @@ export class MasterDetailPlugin<TRow = unknown> extends BaseGridPlugin<MasterDet
 
     const height = detailEl.offsetHeight;
     if (height > 0) {
-      const previousHeight = this.measuredDetailHeights.get(row);
       this.measuredDetailHeights.set(row, height);
-
-      // Only invalidate if height actually changed
-      // This triggers an incremental position cache update, not a full rebuild
-      if (previousHeight !== height) {
-        this.grid.invalidateRowHeight(rowIndex);
-      }
+      // A height query may already have cached this detail measurement without
+      // updating positions. Invalidation compares the combined row extent.
+      this.grid.invalidateRowHeight(rowIndex);
     }
   }
 
@@ -361,9 +359,55 @@ export class MasterDetailPlugin<TRow = unknown> extends BaseGridPlugin<MasterDet
   >();
   /** Child rows received via datasource:children, keyed by parent row reference. */
   private detailDataMap: Map<any, unknown[]> = new Map();
+  #expandedMasters = new Map<Element, unknown>();
 
   /** Default height for detail rows when not configured */
   private static readonly DEFAULT_DETAIL_HEIGHT = 150;
+
+  #hasDetail(row: unknown): row is Record<string, unknown> {
+    return (
+      typeof row === 'object' &&
+      row !== null &&
+      !('__isGroupRow' in row && row.__isGroupRow) &&
+      !('__loading' in row && row.__loading === true) &&
+      (this.config.hasDetail?.(row as TRow) ?? true)
+    );
+  }
+
+  #reconcileEligibility(): void {
+    const tracked = new Set(this.expandedRows);
+    for (const row of this.detailDataMap.keys()) tracked.add(row);
+    for (const row of this.measuredDetailHeights.keys()) tracked.add(row);
+    for (const row of this.loadingDetails) tracked.add(row);
+    for (const row of this.#detailRequests.keys()) tracked.add(row);
+    for (const row of tracked) {
+      if (this.#hasDetail(row)) continue;
+      this.expandedRows.delete(row);
+      this.rowsToAnimate.delete(row);
+      this.loadingDetails.delete(row);
+      this.detailDataMap.delete(row);
+      this.measuredDetailHeights.delete(row);
+      this.#retireDetailRequest(row);
+      this.#removeDetail(row);
+      const index = this.rows.indexOf(row);
+      if (index >= 0) this.grid.invalidateRowHeight(index);
+    }
+  }
+
+  #retireDetailRequest(row: object): void {
+    const context = this.#detailRequests.get(row);
+    if (context) context[RETIRED_DETAIL_REQUEST] = true;
+    this.#detailRequests.delete(row);
+  }
+
+  #removeDetail(row: object): void {
+    const detail = this.detailElements.get(row);
+    if (!detail) return;
+    const container = detail.querySelector('.master-detail-cell')?.firstElementChild;
+    if (container instanceof HTMLElement) this.#internalGrid.__frameworkAdapter?.unmount?.(container);
+    detail.remove();
+    this.detailElements.delete(row);
+  }
 
   /**
    * Get the estimated height for a detail row.
@@ -404,7 +448,7 @@ export class MasterDetailPlugin<TRow = unknown> extends BaseGridPlugin<MasterDet
    */
   private toggleAndEmit(row: any, rowIndex: number): void {
     // Synthetic rows (e.g., group headers) don't have detail content
-    if (row?.__isGroupRow) return;
+    if (!this.#hasDetail(row)) return;
 
     this.expandedRows = toggleDetailRow(this.expandedRows, row as object);
     const expanded = this.expandedRows.has(row as object);
@@ -416,8 +460,11 @@ export class MasterDetailPlugin<TRow = unknown> extends BaseGridPlugin<MasterDet
         const isServerSideActive = this.queryBoolean('datasource:is-active');
         if (isServerSideActive) {
           this.loadingDetails.add(row);
+          this.#retireDetailRequest(row);
+          const context = { source: 'master-detail', row, rowIndex };
+          this.#detailRequests.set(row, context);
           this.grid.query('datasource:fetch-children', {
-            context: { source: 'master-detail', row, rowIndex },
+            context,
           } satisfies FetchChildrenQuery);
         }
       }
@@ -438,10 +485,14 @@ export class MasterDetailPlugin<TRow = unknown> extends BaseGridPlugin<MasterDet
   /** @internal */
   override detach(): void {
     for (const cell of this.#controls.keys()) this.#releaseDisclosure(cell);
-    for (const detail of this.detailElements.values()) {
-      this.#internalGrid.__frameworkAdapter?.unmount?.(detail);
-      detail.remove();
+    for (const [element, row] of this.#expandedMasters) {
+      if ((element as RowElementInternal).__rowDataRef !== row) continue;
+      element.classList.remove('tbw-detail-expanded');
+      element.classList.toggle('tbw-row-expanded', element.getAttribute('aria-expanded') === 'true');
     }
+    this.#expandedMasters.clear();
+    for (const row of this.detailElements.keys()) this.#removeDetail(row);
+    for (const row of this.#detailRequests.keys()) this.#retireDetailRequest(row);
     this.expandedRows.clear();
     this.detailElements.clear();
     this.measuredDetailHeights.clear();
@@ -452,6 +503,12 @@ export class MasterDetailPlugin<TRow = unknown> extends BaseGridPlugin<MasterDet
   // #endregion
 
   // #region Hooks
+
+  /** @internal */
+  override processRows(rows: readonly unknown[]): unknown[] {
+    this.#reconcileEligibility();
+    return rows as unknown[];
+  }
 
   /** @internal */
   override processColumns(columns: readonly ColumnConfig[]): ColumnConfig[] {
@@ -481,6 +538,7 @@ export class MasterDetailPlugin<TRow = unknown> extends BaseGridPlugin<MasterDet
 
       const container = document.createElement('span');
       container.className = 'master-detail-expander expander-cell';
+      if (!this.#hasDetail(row)) return container;
 
       // Expand/collapse toggle icon
       const toggle = document.createElement('span');
@@ -514,6 +572,12 @@ export class MasterDetailPlugin<TRow = unknown> extends BaseGridPlugin<MasterDet
     }
     const renderer = this.config.disclosureRenderer;
     const expanded = this.expandedRows.has(row);
+    if (!this.#hasDetail(row)) {
+      record.slot?.dispose();
+      record.slot = undefined;
+      record.element.replaceChildren();
+      return record.element;
+    }
     if (!renderer) {
       record.slot?.dispose();
       record.slot = undefined;
@@ -544,7 +608,7 @@ export class MasterDetailPlugin<TRow = unknown> extends BaseGridPlugin<MasterDet
         ariaLabel: disclosureLabel(expanded),
         expanded,
         loading: this.loadingDetails.has(row),
-        disabled: '__isGroupRow' in row && !!row.__isGroupRow,
+        disabled: false,
         setExpanded: (value) => {
           const rowIndex = getRowIndexFromCell(cell);
           if (
@@ -558,6 +622,7 @@ export class MasterDetailPlugin<TRow = unknown> extends BaseGridPlugin<MasterDet
             this.rows[rowIndex] !== row ||
             this.config.disclosureRenderer !== renderer ||
             this.config.showExpandColumn === false ||
+            !this.#hasDetail(row) ||
             this.expandedRows.has(row) === value
           )
             return;
@@ -597,7 +662,12 @@ export class MasterDetailPlugin<TRow = unknown> extends BaseGridPlugin<MasterDet
         this.rows[getRowIndexFromCell(cell)] !== record.row
       ) {
         this.#releaseDisclosure(cell);
-      } else if (this.config.disclosureRenderer || record.slot) {
+      } else if (
+        this.config.disclosureRenderer ||
+        record.slot ||
+        !this.#hasDetail(record.row) ||
+        record.element.childElementCount === 0
+      ) {
         this.#renderDisclosure(cell, record.row);
       }
     }
@@ -641,7 +711,7 @@ export class MasterDetailPlugin<TRow = unknown> extends BaseGridPlugin<MasterDet
     if (!column || !isExpanderColumn(column)) return;
 
     const row = this.rows[focusRow];
-    if (!row) return;
+    if (!this.#hasDetail(row)) return;
 
     event.preventDefault();
     this.toggleAndEmit(row, focusRow);
@@ -653,6 +723,7 @@ export class MasterDetailPlugin<TRow = unknown> extends BaseGridPlugin<MasterDet
 
   /** @internal */
   override afterRender(): void {
+    this.#reconcileEligibility();
     this.#refreshDisclosures();
     this.#fixExpanderHeaderSpan();
     this.#syncDetailRows();
@@ -684,6 +755,8 @@ export class MasterDetailPlugin<TRow = unknown> extends BaseGridPlugin<MasterDet
    * @internal
    */
   override onScrollRender(): void {
+    this.#reconcileEligibility();
+    this.#refreshDisclosures();
     if (!this.config.detailRenderer || this.expandedRows.size === 0) return;
     // Full sync needed on scroll to clean up orphaned details
     this.#syncDetailRows();
@@ -705,7 +778,7 @@ export class MasterDetailPlugin<TRow = unknown> extends BaseGridPlugin<MasterDet
     if (!body) return;
 
     const visibleRowMap = this.#collectVisibleRowMap(body);
-    this.#pruneDetachedDetails(visibleRowMap);
+    this.#pruneDetachedDetails(visibleRowMap, body);
 
     // Insert detail rows for expanded rows that are visible. We also toggle
     // `.tbw-row-expanded` on every visible master row (matches Tree /
@@ -717,9 +790,14 @@ export class MasterDetailPlugin<TRow = unknown> extends BaseGridPlugin<MasterDet
     for (const [rowIndex, rowEl] of visibleRowMap) {
       const row = this.rows[rowIndex];
       if (!row) continue;
-      const isExpanded = this.expandedRows.has(row);
-      rowEl.classList.toggle('tbw-row-expanded', isExpanded);
-      if (!isExpanded) continue;
+      const isExpanded = this.#hasDetail(row) && this.expandedRows.has(row);
+      rowEl.classList.toggle('tbw-detail-expanded', isExpanded);
+      rowEl.classList.toggle('tbw-row-expanded', isExpanded || rowEl.getAttribute('aria-expanded') === 'true');
+      if (!isExpanded) {
+        this.#expandedMasters.delete(rowEl);
+        continue;
+      }
+      this.#expandedMasters.set(rowEl, row);
 
       // Check if detail already exists for this row
       const existingDetail = this.detailElements.get(row);
@@ -743,6 +821,13 @@ export class MasterDetailPlugin<TRow = unknown> extends BaseGridPlugin<MasterDet
    * falls back to a DOM query when the pool is not accessible.
    */
   #collectVisibleRowMap(body: Element): Map<number, Element> {
+    const window = getRowWindow(this.grid);
+    if (window) {
+      const { start, end } = this.grid._virtualization;
+      return new Map(
+        [...window.elements].filter(([index, row]) => index >= start && index < end && row.parentNode === body),
+      );
+    }
     const gridInternal = this.grid as any;
     const rowPool: HTMLElement[] | undefined = gridInternal._rowPool;
     const visibleStart: number = gridInternal._virtualization?.start ?? 0;
@@ -774,22 +859,17 @@ export class MasterDetailPlugin<TRow = unknown> extends BaseGridPlugin<MasterDet
    * Remove detail rows whose master row is no longer visible or no longer
    * expanded. Iterates the owned `detailElements` map instead of the DOM.
    */
-  #pruneDetachedDetails(visibleRowMap: Map<number, Element>): void {
-    for (const [row, detailEl] of this.detailElements) {
+  #pruneDetachedDetails(visibleRowMap: Map<number, Element>, body: Element): void {
+    for (const row of this.detailElements.keys()) {
       const rowIndex = this.rows.indexOf(row);
       const isRowVisible = rowIndex >= 0 && visibleRowMap.has(rowIndex);
-      if (this.expandedRows.has(row) && isRowVisible) continue;
-
-      // Clean up framework adapter resources (React root, Vue app, Angular view)
-      // before removing to prevent memory leaks.
-      const adapter = this.#internalGrid.__frameworkAdapter;
-      if (adapter?.unmount) {
-        const detailCell = detailEl.querySelector('.master-detail-cell');
-        const container = detailCell?.firstElementChild as HTMLElement | null;
-        if (container) adapter.unmount(container);
+      if (this.#hasDetail(row) && this.expandedRows.has(row) && isRowVisible) continue;
+      this.#removeDetail(row);
+    }
+    for (const [element, row] of this.#expandedMasters) {
+      if (!body.contains(element) || (element as RowElementInternal).__rowDataRef !== row) {
+        this.#expandedMasters.delete(element);
       }
-      if (detailEl.parentNode) detailEl.remove();
-      this.detailElements.delete(row);
     }
   }
 
@@ -832,15 +912,15 @@ export class MasterDetailPlugin<TRow = unknown> extends BaseGridPlugin<MasterDet
 
   /**
    * Get the height of a specific row, including any expanded detail content.
-   * Always returns a height to ensure the position cache uses plugin-controlled values
-   * rather than stale DOM measurements.
+   * Expanded rows contribute their configured base height plus detail height.
+   * Collapsed rows defer to the grid's normal height resolution.
    *
    * @param row - The row data
-   * @param _index - The row index (unused, but part of the interface)
-   * @returns The row height in pixels (base height for collapsed, base + detail for expanded)
+   * @param index - The row index in the processed rows array
+   * @returns Base plus detail height when expanded, otherwise undefined
    */
-  override getRowHeight(row: unknown, _index: number): number | undefined {
-    const isExpanded = this.expandedRows.has(row as object);
+  override getRowHeight(row: unknown, index: number): number | undefined {
+    const isExpanded = this.#hasDetail(row) && this.expandedRows.has(row);
 
     if (!isExpanded) {
       // Collapsed row - return undefined to let the grid use its measured/estimated height.
@@ -848,9 +928,8 @@ export class MasterDetailPlugin<TRow = unknown> extends BaseGridPlugin<MasterDet
       return undefined;
     }
 
-    // Row is expanded - return base height plus detail height
-    // Use grid's defaultRowHeight which reflects the actual measured/configured height
-    const baseHeight = this.grid.defaultRowHeight ?? 28;
+    const baseHeight =
+      resolveConfiguredRowHeight(this.grid.effectiveConfig?.rowHeight, row, index) ?? this.grid.defaultRowHeight ?? 28;
     const detailHeight = this.getDetailHeight(row);
 
     return baseHeight + detailHeight;
@@ -872,42 +951,47 @@ export class MasterDetailPlugin<TRow = unknown> extends BaseGridPlugin<MasterDet
     if (positionCache && positionCache.length > 0) {
       // Variable heights: use position cache for accurate offset
       for (const row of this.expandedRows) {
+        if (!this.#hasDetail(row)) continue;
         const rowIndex = this.rows.indexOf(row);
         if (rowIndex < 0 || rowIndex >= start) continue;
 
         // Position cache already includes cumulative heights from all expanded details
         const detailBottom = positionCache[rowIndex].offset + positionCache[rowIndex].height;
 
-        if (detailBottom > scrollTop && rowIndex < minStart) {
-          minStart = rowIndex;
+        if (detailBottom > scrollTop) {
+          minStart = Math.min(minStart, rowIndex);
         }
       }
-    } else {
-      // Fixed heights fallback: accumulate detail heights manually
-      // Build sorted list of expanded row indices for cumulative height calculation
-      const expandedIndices: Array<{ index: number; row: any }> = [];
-      for (const row of this.expandedRows) {
-        const index = this.rows.indexOf(row);
-        if (index >= 0) {
-          expandedIndices.push({ index, row });
-        }
+      return minStart;
+    }
+    return this.#adjustFixedVirtualStart(start, scrollTop, rowHeight);
+  }
+
+  #adjustFixedVirtualStart(start: number, scrollTop: number, rowHeight: number): number {
+    const expandedIndices: Array<{ index: number; row: unknown }> = [];
+    for (const row of this.expandedRows) {
+      if (!this.#hasDetail(row)) continue;
+      const index = this.rows.indexOf(row);
+      if (index >= 0) {
+        expandedIndices.push({ index, row });
       }
-      expandedIndices.sort((a, b) => a.index - b.index);
+    }
+    expandedIndices.sort((a, b) => a.index - b.index);
 
-      let cumulativeExtraHeight = 0;
+    let minStart = start;
+    let cumulativeExtraHeight = 0;
 
-      for (const { index: rowIndex, row } of expandedIndices) {
-        const actualRowTop = rowIndex * rowHeight + cumulativeExtraHeight;
-        const detailHeight = this.getDetailHeight(row);
-        const actualDetailBottom = actualRowTop + rowHeight + detailHeight;
+    for (const { index: rowIndex, row } of expandedIndices) {
+      const actualRowTop = rowIndex * rowHeight + cumulativeExtraHeight;
+      const detailHeight = this.getDetailHeight(row);
+      const actualDetailBottom = actualRowTop + rowHeight + detailHeight;
 
-        cumulativeExtraHeight += detailHeight;
+      cumulativeExtraHeight += detailHeight;
 
-        if (rowIndex >= start) continue;
+      if (rowIndex >= start) continue;
 
-        if (actualDetailBottom > scrollTop && rowIndex < minStart) {
-          minStart = rowIndex;
-        }
+      if (actualDetailBottom > scrollTop && rowIndex < minStart) {
+        minStart = rowIndex;
       }
     }
 
@@ -923,7 +1007,7 @@ export class MasterDetailPlugin<TRow = unknown> extends BaseGridPlugin<MasterDet
    */
   expand(rowIndex: number): void {
     const row = this.rows[rowIndex];
-    if (row && !row.__isGroupRow) {
+    if (this.#hasDetail(row)) {
       this.rowsToAnimate.add(row);
       this.expandedRows = expandDetailRow(this.expandedRows, row);
       this.requestRender();
@@ -948,7 +1032,7 @@ export class MasterDetailPlugin<TRow = unknown> extends BaseGridPlugin<MasterDet
    */
   toggle(rowIndex: number): void {
     const row = this.rows[rowIndex];
-    if (row && !row.__isGroupRow) {
+    if (this.#hasDetail(row)) {
       this.expandedRows = toggleDetailRow(this.expandedRows, row);
       if (this.expandedRows.has(row)) {
         this.rowsToAnimate.add(row);
@@ -964,7 +1048,7 @@ export class MasterDetailPlugin<TRow = unknown> extends BaseGridPlugin<MasterDet
    */
   isExpanded(rowIndex: number): boolean {
     const row = this.rows[rowIndex];
-    return row ? isDetailExpanded(this.expandedRows, row) : false;
+    return this.#hasDetail(row) && isDetailExpanded(this.expandedRows, row);
   }
 
   /**
@@ -973,7 +1057,7 @@ export class MasterDetailPlugin<TRow = unknown> extends BaseGridPlugin<MasterDet
    */
   expandAll(): void {
     for (const row of this.rows) {
-      if (row?.__isGroupRow) continue;
+      if (!this.#hasDetail(row)) continue;
       this.rowsToAnimate.add(row);
       this.expandedRows.add(row);
     }
@@ -995,6 +1079,7 @@ export class MasterDetailPlugin<TRow = unknown> extends BaseGridPlugin<MasterDet
   getExpandedRows(): number[] {
     const indices: number[] = [];
     for (const row of this.expandedRows) {
+      if (!this.#hasDetail(row)) continue;
       const idx = this.rows.indexOf(row);
       if (idx >= 0) indices.push(idx);
     }
@@ -1008,7 +1093,7 @@ export class MasterDetailPlugin<TRow = unknown> extends BaseGridPlugin<MasterDet
    */
   getDetailElement(rowIndex: number): HTMLElement | undefined {
     const row = this.rows[rowIndex];
-    return row ? this.detailElements.get(row) : undefined;
+    return this.#hasDetail(row) ? this.detailElements.get(row) : undefined;
   }
 
   /**
@@ -1023,7 +1108,7 @@ export class MasterDetailPlugin<TRow = unknown> extends BaseGridPlugin<MasterDet
    */
   getDetailData(rowIndex: number): unknown[] | undefined {
     const row = this.rows[rowIndex];
-    return row ? this.detailDataMap.get(row) : undefined;
+    return this.#hasDetail(row) ? this.detailDataMap.get(row) : undefined;
   }
 
   /**
@@ -1033,7 +1118,7 @@ export class MasterDetailPlugin<TRow = unknown> extends BaseGridPlugin<MasterDet
    */
   isDetailLoading(rowIndex: number): boolean {
     const row = this.rows[rowIndex];
-    return row ? this.loadingDetails.has(row) : false;
+    return this.#hasDetail(row) && this.loadingDetails.has(row);
   }
 
   /**

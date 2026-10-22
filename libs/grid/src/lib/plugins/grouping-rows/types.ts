@@ -10,14 +10,41 @@
 export type { AggregatorFn, AggregatorRef } from '../../core/internal/aggregators';
 export type { ExpandCollapseAnimation } from '../../core/types';
 
-import type { ExpandCollapseAnimation } from '../../core/types';
+import type { ControlRenderer, ExpandCollapseAnimation, PublicGrid } from '../../core/types';
+import type { AggregatorRef } from '../../core/internal/aggregators';
 
 /**
- * Map of field names to aggregator references
+ * Plugin-owned group identity, state and action for a custom disclosure.
+ * Controls own their accessible name, expanded/disabled semantics and native activation.
+ * The grid retains row/cell navigation. Actions expire when the header is retired.
+ * @since 3.9.0
+ */
+export interface GroupingRowsDisclosureContext {
+  grid: PublicGrid & HTMLElement;
+  /** Stable, semantics-free control host; do not replace or reparent it. */
+  host: HTMLElement;
+  /** Existing group key (composite for groupOn, explicit for pre-defined groups). */
+  key: string;
+  value: unknown;
+  depth: number;
+  /** Loaded data rows, not synthetic group headers. */
+  rows: readonly unknown[];
+  /** Display count, including a pre-defined group's server-reported count. */
+  rowCount: number;
+  /** Localized action label from disclosureLabel, with the native default otherwise. */
+  ariaLabel: string;
+  expanded: boolean;
+  disabled: boolean;
+  /** Uses the same toggle, accordion and broadcast path as the native control. */
+  setExpanded(expanded: boolean): void;
+}
+
+/**
+ * Map of field names to {@link AggregatorRef} values
  *
  * @since 0.1.1
  */
-export type AggregatorMap = Record<string, import('../../core/internal/aggregators').AggregatorRef>;
+export type AggregatorMap = Record<string, AggregatorRef>;
 
 /**
  * Pre-defined group definition for server-side grouping.
@@ -90,18 +117,84 @@ export interface GroupCollapseDetail {
 export type DefaultExpandedValue = boolean | number | string | string[];
 
 /**
+ * Second argument passed to {@link GroupingRowsConfig.groupOn}.
+ *
+ * Grouping applies to every list of sibling rows. Without TreePlugin there is
+ * only the root list (`parent: null`, `depth: 0`); with TreePlugin the
+ * children of every expanded tree node form their own list.
+ *
+ * @since 3.9.0
+ */
+export interface GroupOnContext {
+  /** The tree row whose children are being grouped, or `null` for the root rows. */
+  parent: unknown;
+  /** Nesting depth of the rows being grouped (0 = root rows). */
+  depth: number;
+}
+
+/**
  * Configuration options for the row grouping plugin
  *
  * @since 0.1.1
  */
 export interface GroupingRowsConfig {
   /**
+   * Declare structural group paths even without members, within this admitted
+   * natural sibling list. Omission preserves member-driven grouping.
+   * The consumer must omit categories excluded by its filtering/eligibility policy.
+   * For empty Tree parents, provide `children: []` and Tree `hasChildren`.
+   * Collapsed/filtered-out parents do not emit their declared groups.
+   * @since 3.10.0
+   */
+  emptyGroups?: (context: GroupOnContext) => readonly (readonly string[])[];
+  /**
+   * Replace only the disclosure, retaining generated labels, counts and aggregates.
+   * HTMLElement outputs are replaceable; ControlView mounts once and receives updates;
+   * null deliberately leaves the slot empty. Ignored when groupRowRenderer handles the row.
+   * @since 3.9.0
+   */
+  disclosureRenderer?: ControlRenderer<GroupingRowsDisclosureContext>;
+  /**
+   * Localize native and custom disclosure action labels.
+   * Defaults to "Collapse group" / "Expand group". Kept plugin-local like the control itself.
+   * @since 3.9.0
+   */
+  disclosureLabel?: (expanded: boolean) => string;
+  /**
    * Callback to determine group path for a row.
    * Return an array of group keys, a single key, null/false to skip grouping.
    *
+   * The second argument tells which list of sibling rows is being grouped.
+   * Combined with TreePlugin, `groupOn` runs for the children of every
+   * expanded tree node — return `null` for a whole list to leave that level
+   * ungrouped.
+   *
    * Mutually exclusive with `groups` — when `groups` is provided, `groupOn` is ignored.
+   *
+   * @example Group only the children of tree nodes
+   * ```ts
+   * groupOn: (row, { depth }) => (depth > 0 ? row.kind : null)
+   * ```
    */
-  groupOn?: (row: any) => any[] | any | null | false;
+  groupOn?: (row: any, context: GroupOnContext) => any[] | any | null | false;
+  /**
+   * Ordered category segments for groups in a natural sibling list.
+   * Return `undefined` to retain normal value/direction ordering in that scope.
+   * Segments use the same string normalization as `groupOn` keys (null becomes
+   * `"∅"`). This changes ordering only, not category values, labels or group keys.
+   *
+   * Listed categories form a fixed prefix, independent of column sort direction.
+   * Unlisted categories follow in normal sort order; absent categories create no
+   * groups. Duplicate entries use the first position.
+   *
+   * Resolved once per sibling-list model build using the same parent/depth context
+   * as `groupOn`; that ranking is reused across nested group-path levels within
+   * the list. Does not reorder data rows or predefined groups.
+   * @example Keep child sections ordered without changing global group ordering
+   * groupOrder: ({ parent }) => parent === null ? undefined : ['Primary', 'Secondary']
+   * @since 3.9.0
+   */
+  groupOrder?: (context: GroupOnContext) => readonly string[] | undefined;
   /**
    * Pre-defined group structure for server-side grouping.
    *
@@ -129,9 +222,44 @@ export interface GroupingRowsConfig {
    * - `number`: Expand group at this index (0-based)
    * - `string`: Expand group with this key (composite key format: "parent||child")
    * - `string[]`: Expand groups with these keys
+   *
+   * Beneath real Tree parents, a numeric default is resolved independently
+   * against each parent's first nonempty list of top-level child groups.
+   * `0` opens its first group and `1` its second. Empty lists do not consume
+   * the default; an out-of-range index on a nonempty list opens nothing.
+   * Later rebuilds do not reapply it, preserving explicit user collapses.
    * @default false
    */
   defaultExpanded?: DefaultExpandedValue;
+  /**
+   * Override initial expansion for top-level groups beneath each real Tree parent.
+   * Root/global groups still use {@link defaultExpanded}. When omitted, child
+   * groups retain the existing `defaultExpanded` behavior.
+   *
+   * `true` opens newly encountered child groups; `false` leaves them collapsed.
+   * A numeric index is resolved once per parent's first nonempty group list,
+   * preserving explicit collapses across rebuilds. Explicit expansion actions,
+   * including the pending override in `setGroupOn`, take precedence.
+   *
+   * Does not expand real Tree rows. Ignored without Tree or in predefined-group mode.
+   * @example Open global groups, but keep sections beneath Tree parents closed
+   * { defaultExpanded: true, childDefaultExpanded: false }
+   * @since 3.9.0
+   */
+  childDefaultExpanded?: boolean | number;
+  /**
+   * Whether groups beneath real Tree parents can collapse.
+   * `false` makes every group-path level in those child lists a fixed, open
+   * section, without disclosure controls or expansion ARIA. The Tree parent
+   * still controls visibility. Root/global and predefined groups are unchanged.
+   *
+   * Fixed sections override initial/pending expansion, bulk collapse and accordion.
+   * Their keys remain expanded; single-group expansion actions are no-ops.
+   * Omitted or `true` preserves existing collapsible grouping.
+   * @default true
+   * @since 3.9.0
+   */
+  childGroupsCollapsible?: boolean;
   /** Custom group row renderer - takes full control of group row rendering */
   groupRowRenderer?: (params: GroupRowRenderParams) => HTMLElement | string | void;
   /** Show row count in group headers (default: true) */
@@ -155,9 +283,11 @@ export interface GroupingRowsConfig {
   /**
    * Accordion mode - only one group can be expanded at a time.
    * Expanding a group will automatically collapse all other groups at the same depth.
+   *
+   * Pass a function to choose per depth, e.g. `(depth) => depth === 0`.
    * @default false
    */
-  accordion?: boolean;
+  accordion?: boolean | ((depth: number) => boolean);
   /**
    * Height of group header rows in pixels.
    * Used by the variable row height system to provide consistent heights
@@ -193,6 +323,8 @@ export interface GroupRowRenderParams {
   rows: any[];
   /** Whether the group is expanded */
   expanded: boolean;
+  /** `false` for fixed child sections; omit expansion controls. @since 3.9.0 */
+  collapsible?: boolean;
   /** Toggle expand/collapse */
   toggleExpand: () => void;
 }
@@ -235,6 +367,8 @@ export interface GroupRowModelItem {
   rows: any[];
   /** Whether this group is currently expanded (children visible). */
   expanded: boolean;
+  /** `false` for fixed child sections; omitted means collapsible. @since 3.9.0 */
+  collapsible?: boolean;
 }
 
 /**

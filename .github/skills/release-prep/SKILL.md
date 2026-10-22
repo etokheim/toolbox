@@ -32,6 +32,19 @@ If any command in steps 1–7 fails (lint error, failing test, type error, build
 
 Do not proceed to the **Release Process** section until every checklist step has passed cleanly in a single uninterrupted run.
 
+### Missing hosted checks on a fork
+
+An empty check list is not a passing gate. Verify the exact PR head, workflow
+triggers and enabled state, then inspect the repository's Actions page. GitHub's
+fork usage pause can coexist with API `enabled: true` and workflow `active`;
+workflow-level enable alone may not remove that repository-level pause.
+Obtain authorization for the supported signed-in maintainer re-enable control.
+After the pause banner disappears, verify a real run exists; earlier PR events
+are not necessarily replayed. Obtain separate authorization for any needed
+close/reopen event, preserving head/base/content, and verify restored open state
+and actual CI scheduling. Do not add empty commits or dispatch release-oriented
+workflows as a substitute for the required validation.
+
 ## Pre-Release Checklist
 
 ### 1. Lint, Test & Build All Projects (parallel)
@@ -52,13 +65,13 @@ This covers grid, grid-angular, grid-react, and grid-vue. All targets must pass:
 
 ### 2. Check Bundle Size Budget
 
-Step 1's build already hard-enforces the budget via the Vite `bundleBudget` plugin (build fails if `dist/libs/grid/index.js` exceeds 170 kB raw or 50 kB gzipped). To read the exact raw/gzip sizes for every entry deterministically, run the shared report script:
+Step 1's build enforces `tools/core-bundle-budget.ts`: core ≤170 KiB raw / ≤52 KiB gzip using authoritative Bun default gzip, including Node-hosted builds. To read exact bytes and enforce the same core limit, run:
 
 ```bash
 bun run tools/build-size-report.ts
 ```
 
-Confirm the **core (index.js)** `grid` cell is within budget (≤ 170 kB raw, ≤ 50 kB gzipped; soft warning at 45 kB gzipped). For a soft-warning or over-budget result, follow the `bundle-check` skill's investigation checklist.
+Confirm core is ≤174080 raw / ≤53248 gzip bytes (soft warning at 46080 gzip bytes). The report exits nonzero on core failure; other entry limits remain enforced by owning builds. Follow `bundle-check` for investigation or a documented increase under standing user permission, never select a favorable runtime compressor.
 
 ### 3. Review CHANGELOG
 

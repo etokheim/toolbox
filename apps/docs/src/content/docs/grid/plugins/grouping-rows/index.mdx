@@ -1,6 +1,7 @@
 ---
 title: "Row Grouping Plugin"
 description: "Group rows by column values with expandable groups."
+pluginKinds: [structural, functional]
 ---
 
 import { TabItem, Tabs } from '@astrojs/starlight/components';
@@ -8,6 +9,7 @@ import GroupingRowsDefaultDemo from '@components/demos/grouping-rows/GroupingRow
 import GroupingRowsEventsDemo from '@components/demos/grouping-rows/GroupingRowsEventsDemo.astro';
 import GroupingRowsMultiLevelDemo from '@components/demos/grouping-rows/GroupingRowsMultiLevelDemo.astro';
 import GroupingRowsWithAggregatorsDemo from '@components/demos/grouping-rows/GroupingRowsWithAggregatorsDemo.astro';
+import HierarchyTreeGroupingDemo from '@components/demos/hierarchy/HierarchyTreeGroupingDemo.astro';
 import ShowSource from '@components/ShowSource.astro';
 
 
@@ -19,6 +21,124 @@ The Row Grouping plugin organizes your rows into collapsible hierarchical groups
 ```ts
 import '@toolbox-web/grid/features/grouping-rows';
 ```
+
+## Custom Disclosure Controls
+
+`disclosureRenderer` customizes only the expand/collapse control. Generated labels,
+counts, aggregates and group navigation remain plugin-owned. A whole-header
+`groupRowRenderer` result still takes precedence.
+
+```tsx
+import { DataGrid, type GroupingRowsConfig } from '@toolbox-web/grid-react';
+import '@toolbox-web/grid-react/features/grouping-rows';
+
+const groupingRows: GroupingRowsConfig = {
+  groupOn: (row) => row.category,
+  disclosureRenderer: (context) => (
+    <span className="app-disclosure">
+      <button
+        type="button"
+        aria-label={context.ariaLabel}
+        aria-expanded={context.expanded}
+        disabled={context.disabled}
+        style={{ minWidth: 24, minHeight: 24 }}
+        onClick={() => context.setExpanded(!context.expanded)}
+      >
+        {context.expanded ? '-' : '+'}
+      </button>
+    </span>
+  ),
+};
+
+<DataGrid rows={items} columns={[{ field: 'name' }]} groupingRows={groupingRows} />;
+```
+
+The same typed config works in `gridConfig.features.groupingRows`. Import the
+React feature entry to normalize JSX through the grid's provider-preserving portal
+manager. Manually constructed core plugins remain DOM-only.
+
+In React, setting the last `groupingRows` feature prop to `undefined` removes the
+plugin even without a `gridConfig` prop. Removing an explicit `gridConfig` also
+clears configuration last applied by that DataGrid; a later imperative config
+replacement is not erased.
+
+Core renderers return an `HTMLElement`, a persistent `ControlView<GroupingRowsDisclosureContext>`
+(`element`, `update`, optional `dispose`), or deliberate empty `null`; React also
+accepts JSX elements. Strings, `undefined` and thrown errors are diagnostic failures,
+not default-control fallbacks. Same-group updates preserve persistent views and
+focus; replacement, recycling, removal and disconnect dispose them and revoke stale
+actions. Vue/Angular retain the DOM contract without a native template facade.
+
+The context contains `grid`, stable `host`, existing group `key`, `value`, `depth`,
+read-only `rows`, `rowCount`, `expanded`, `disabled`, `ariaLabel` and
+`setExpanded(boolean)`. Identity is the composite grouping key or explicit predefined
+key, not a row ID or view index. Use `disclosureLabel: (expanded) => ...` to localize
+the shared native/custom label. Custom controls own their name, expanded/disabled
+semantics and native click/Space/Enter activation; the grid retains navigation and
+row/cell ARIA. Keep adequate button targets and avoid private `.group-toggle`
+markup. Omitting the hook preserves the native control and its minimum target size.
+
+## Accessibility
+
+[SC 1.3.1: Info and Relationships](https://www.w3.org/WAI/WCAG22/Understanding/info-and-relationships.html):
+grouping supplies treegrid hierarchy metadata while active. Disabling grouping or
+removing the plugin restores its owned row attributes, depth styles and container
+role, rather than leaving ordinary rows marked as expandable groups.
+
+[SC 4.1.2: Name, Role, Value](https://www.w3.org/WAI/WCAG22/Understanding/name-role-value.html):
+native controls expose their state automatically. Custom disclosure controls must
+apply their own name, role and expanded/disabled state from the context.
+Fixed child sections keep hierarchy metadata without plugin-owned expansion ARIA
+or disclosure controls. Whole-header renderers receive `collapsible: false` and
+must omit their own expansion affordances; ordinary cell navigation is unchanged.
+
+## Grouping Tree Children
+
+Combine Tree and GroupingRows to group natural sibling lists beneath real parents:
+
+```ts
+groupOn: (row, { parent }) => parent === null ? null : row.category
+```
+
+The automatic [Hierarchy plugin](/grid/plugins/hierarchy/) preserves Tree structure
+and supplies shared positional ARIA. Composed groups have opaque parent-scoped keys;
+read them from state/events or disclosure contexts. Equal labels under different
+parents expand independently, including in accordion mode. `groupOn` arrays still
+describe nested paths, not multiple placements.
+
+Aggregators receive direct sibling members. Recursive canonical totals, filtered
+ancestor retention and hidden-level promotion remain consumer projection policies.
+Removing grouping leaves Tree's hierarchy active; removing both releases shared
+position metadata. Existing disclosure controls and standalone group keys are unchanged.
+
+## Declared Empty Groups
+
+`emptyGroups({ parent, depth })` optionally declares group paths for the current
+natural sibling list, for example `parent ? [['Primary'], ['Secondary']] : []`.
+These are structural headers, not fake domain rows. They retain normal group
+selection, hierarchy metadata and ARIA. Existing `groupOrder` only orders
+admitted groups; it still does not create missing categories.
+
+Declarations are parent-occurrence-local. A collapsed, removed or filtered-out
+real parent does not invoke the child-list hook. For an otherwise empty real
+parent, provide `children: []` and compose Tree's existing `hasChildren` predicate
+to return true only for eligible parents. Expanding that parent visits the empty
+list without a loading state when no lazy loader is configured. `defaultExpanded`
+and `expandAll()` include explicitly admitted empty arrays; unrelated leaves
+remain leaves. `childGroupsCollapsible: false` admits declared child groups as
+expanded, while collapsible declarations use the normal group expansion policy.
+
+**Filtering policy belongs to the consumer.** If a real parent remains visible
+but a category is excluded by the application filter, omit that category from
+`emptyGroups` too. Native grouping cannot distinguish an eligible empty category
+from one hidden by your projection. Declarations must not reintroduce excluded
+categories. Omitting this hook preserves legacy grouping semantics.
+
+`setEmptyGroups(callback)` updates an existing plugin without resetting expansion.
+React callback replacement works through the feature prop and canonical
+`gridConfig.features.groupingRows`. Combine this with
+[scoped footers](/grid/plugins/pinned-rows/#scoped-non-data-footers) to expose an
+application action at an empty admitted section's end.
 
 ## Basic Usage
 
@@ -312,14 +432,125 @@ features: { groupingRows: { defaultExpanded: 'Engineering', groupOn: ... } }
 features: { groupingRows: { defaultExpanded: ['Engineering', 'Sales'], groupOn: ... } }
 ```
 
+With Tree, `childDefaultExpanded` optionally overrides the default beneath real
+parents. Root/global groups continue using `defaultExpanded`:
+
+```ts
+features: {
+  tree: { defaultExpanded: false },
+  groupingRows: {
+    groupOn: (row) => row.category,
+    defaultExpanded: true,
+    childDefaultExpanded: false,
+  },
+}
+```
+
+This opens global groups while real Tree parents and their child sections start
+collapsed, without a post-render initializer. The override accepts `true`, `false`
+or a numeric index. Omitting it preserves the shared default behaviour.
+Standalone and predefined groups ignore it.
+
+A numeric child default is resolved independently for each real parent's
+first nonempty list of top-level child groups. For example, `0` opens the first
+group under Alpha and the first under Beta; `1` opens each parent's second group.
+Parents without groups wait until their groups first appear. If the index is out
+of range at that point, no group opens and the default is not retried as the list
+changes.
+
+This initialization happens once per parent occurrence during the plugin's
+lifetime. Rebuilding rows, replacing a parent with the same occurrence ID, or
+collapsing and reopening Tree parents does not reopen explicitly collapsed groups.
+Removing and reattaching the plugin resets initialization. Explicit expansion APIs
+remain available for subsequent changes and take precedence over either default.
+For example, `setGroupOn(fn, true)` still opens every visited scope, not only
+root/global groups. Keep configuration identity stable for data-only React updates;
+replacing the plugin configuration follows the existing detach/reinitialize lifetime.
+
 :::note
 When using `accordion: true`, prefer `defaultExpanded` with a single value
 (number or string) rather than `true` or an array with multiple values.
 :::
 
+### Fixed Child Sections
+
+With Tree, `childGroupsCollapsible: false` makes every group-path level beneath a
+real parent non-collapsible. Members stay projected whenever the Tree parent is
+open. Root/global groups, Tree parent expansion, standalone and predefined grouping
+retain their existing behaviour. Omitted/true keeps child groups collapsible.
+
+This overrides child defaults, pending expansion, accordion and bulk collapse;
+single-group `expand`, `collapse` and `toggle` calls are no-ops for fixed sections.
+Unlike an always-expanded default, user actions cannot collapse them. Their public
+model reports `expanded: true` and `collapsible: false`, with unchanged keys,
+counts and category order. Rebuilding or reparenting data needs no reopening repair.
+
+The plugin omits expansion ARIA and disclosure controls for fixed sections.
+Whole-header `groupRowRenderer` receives `collapsible: false`; use it to omit your
+own expansion controls. Ordinary cell navigation remains available.
+
+For sticky sections, use the existing [StickyRows](/grid/plugins/sticky-rows/) push
+mode and identify fixed groups through the current public model:
+
+```ts
+const sticky = new StickyRowsPlugin({
+  mode: 'push',
+  isSticky: (_row, index) => {
+    const item = grouping.getFlattenedRows()[index];
+    return item?.kind === 'group' && item.collapsible === false;
+  },
+});
+```
+
+Here `grouping` is the attached `GroupingRowsPlugin` instance. Native header cells
+and `.cell`-based whole-header output receive current processed indexes from
+GroupingRows, including after recycling. Do not stamp `data-row` in consumer code.
+Custom cells must be direct row children for StickyRows' existing capture lookup.
+Nested grids' header and body cells are not stamped with the outer group's index.
+For content-measured variable-height rows, the grid measures owned rendered rows
+on forced layout refreshes, including small datasets that bypass virtualization.
+Sticky push boundaries therefore use those measured offsets rather than repeating
+the first row's estimated height. Explicit configured and plugin-provided heights
+remain authoritative; application code should not repair the private position cache.
+StickyRows push mode is not ancestor stacking or automatic parent-boundary expiry;
+rich headers that have never rendered may not be synthesized.
+
+### Category Order
+
+Use `groupOrder` for a semantic category order independent of column sorting:
+
+```ts
+groupingRows: {
+  groupOn: (row) => row.category,
+  groupOrder: ({ parent }) => parent === null ? undefined : ['Primary', 'Secondary'],
+}
+```
+
+The callback receives the same `{ parent, depth }` context as `groupOn`. It is
+resolved once per natural sibling-list model build; the ranking is reused across
+nested group-path levels within that list. Returning `undefined` at the root keeps
+global Group by ordering unchanged.
+
+Listed normalized category segments form a fixed prefix, even with descending
+column sorting. Unlisted categories follow normal value/direction ordering.
+Duplicates use their first position, and absent categories create no empty groups.
+Values, labels, scoped keys, counts and data-row sorting are unchanged. Omitted,
+`undefined` or empty rankings preserve normal ordering. Predefined groups retain
+their supplied order.
+
+`setGroupOrder(callback)` updates an attached plugin without resetting expansion
+or selection; `setGroupOrder(undefined)` restores normal ordering. The same callback
+reference is a no-op. React's `groupingRows` prop and `gridConfig.features.groupingRows`
+both apply callback-only replacement and clearing through this setter. Other config
+changes retain their existing initialization lifecycle.
+
 ### Animation Options
 
-The `animation` option controls how grouped rows appear/disappear:
+The `animation` option controls how newly revealed rows appear, including nested
+group headers and fixed child sections. Reveal tracking uses stable row occurrence
+IDs and parent-scoped group keys, not view indexes. Collapsing an earlier group
+does not animate surviving rows that shift position. Supply `getRowId` when row
+objects may be replaced while retaining the same logical occurrence.
 
 ```ts
 // Slide animation (default)
@@ -347,6 +578,17 @@ features: {
   groupingRows: {
     groupOn: (row) => row.department,
     accordion: true, // Only one group open at a time
+  },
+},
+```
+
+Pass a function to apply accordion mode only at some depths. It receives the group's depth (0 = top level):
+
+```ts
+features: {
+  groupingRows: {
+    groupOn: (row) => [row.region, row.department],
+    accordion: (depth) => depth === 0, // One region open at a time; departments open freely
   },
 },
 ```
@@ -409,6 +651,37 @@ features: {
   },
 },
 ```
+
+## Grouping Tree Children
+
+Row Grouping combines with the [Tree plugin](/grid/plugins/tree/). Grouping then applies to every list of sibling rows: the root rows and the children of each expanded tree node. `groupOn` receives a second argument describing the list being grouped:
+
+| Property | Description |
+| -------- | ----------- |
+| `parent` | The tree row whose children are being grouped, or `null` for the root rows |
+| `depth` | Nesting depth of the rows being grouped (0 = root rows) |
+
+Return `null` for every row of a list to leave that level ungrouped:
+
+```ts
+features: {
+  tree: { childrenField: 'children' },
+  groupingRows: {
+    // Keep the root rows ungrouped; group each node's children by kind
+    groupOn: (row, { depth }) => (depth > 0 ? row.kind : null),
+  },
+},
+```
+
+Groups under a tree node have opaque parent-scoped keys, so the same group value under different parents expands independently. Read keys from group state, events or disclosure contexts rather than constructing them. `defaultExpanded: true` opens new top-level child groups unless `childDefaultExpanded` overrides it. `setGroupOn(fn, true)` opens the top-level groups of every visited list.
+
+<ShowSource file="demos/hierarchy/HierarchyTreeGroupingDemo.astro">
+  <HierarchyTreeGroupingDemo />
+</ShowSource>
+
+With **Group** set to `every level`, `groupOn` returns `row.region` at depth 0 and `row.kind` below it, so the plans are grouped too.
+
+The two plugins don't know about each other. The [Hierarchy plugin](/grid/plugins/hierarchy/), which both depend on and which the grid attaches automatically, combines their output.
 
 ## Programmatic API
 
@@ -738,11 +1011,10 @@ const groups: GroupDefinition[] = [
 :::caution[Incompatible Plugins]
 The Row Grouping plugin **cannot** be used with the following plugins:
 
-- **[Tree](/grid/plugins/tree/)** — Both plugins transform the entire row model. Tree flattens nested hierarchies while Row Grouping groups flat rows with synthetic headers. Use one approach per grid.
 - **[Pivot](/grid/plugins/pivot/)** — Pivot creates its own aggregated row and column structure. Row grouping cannot be applied on top of pivot-generated rows.
 :::
 
-A development-mode warning is shown if incompatible plugins are loaded together.
+A development-mode warning is shown if incompatible plugins are loaded together. Row Grouping **does** combine with [Tree](/grid/plugins/tree/) — see [Grouping Tree Children](#grouping-tree-children).
 
 ## See Also
 

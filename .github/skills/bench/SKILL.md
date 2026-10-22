@@ -1,7 +1,7 @@
 ---
 name: bench
 description: Run @toolbox-web benchmarks as local regression testing during development — either current-vs-previous-run (`bun run bench`) or current-vs-tag (the bundled bench-vs-tag.ts orchestrator). Covers writing `.bench.ts` files as part of issue development, running the suites, locating artifacts, and interpreting regressions. Use when implementing a perf-sensitive change, before opening a PR that touches hot paths, or when asked to benchmark.
-argument-hint: '[optional tag e.g. grid-2.7.0] [optional "report-only"]'
+argument-hint: '[optional tag or version e.g. 2.7.0 | grid-2.7.0] [optional "report-only"]'
 ---
 
 # Benchmarking & Local Regression Testing
@@ -10,9 +10,21 @@ Benchmarks are the project's guard against silent performance regressions. Treat
 unit tests for speed: write a `.bench.ts` when you add or change a hot path, and run the
 suite to confirm a change didn't make things slower before you open a PR.
 
-This skill backs the `/bench` slash command (`.github/prompts/bench.prompt.md`) but is also
-meant to be invoked autonomously by agents during issue development. For _fixing_ a confirmed
-regression, hand off to the `debug-perf` skill.
+Invoke manually as `/bench [tag|version] [report-only]`, or autonomously during issue development.
+For _fixing_ a confirmed regression, hand off to the `perf-fix` skill (one hotspot, end-to-end)
+or the `debug-perf` skill (profiling reference).
+
+## Argument handling (slash-command use)
+
+The text after `/bench` may contain:
+
+- **A git tag or bare version** (`grid-2.7.0`, `2.7.0`, `grid-react-1.2.0`) → current-vs-tag run.
+  Resolve per [Tag resolution](#tag-resolution), echo the resolved tag, then run
+  `bun .github/skills/bench/bench-vs-tag.ts --ref <tag>`.
+- **Nothing** → `bun run bench` (current-vs-previous-run).
+- **The literal `report-only`** (alone or after the tag) → produce the report but skip the fix plan.
+
+If a run fails, report the error verbatim and stop.
 
 ## When to write a `.bench.ts`
 
@@ -69,7 +81,7 @@ setup hooks only for immutable fixture construction). Mirror the style of existi
 
 The `bench-vs-tag.ts` orchestrator materialises the baseline ref in a sibling git worktree,
 runs `vitest bench` on **both** sides on this machine (same CPU / kernel / thermal state — the
-whole point of the methodology), merges max-of-N per side via `tools/merge-bench-runs.ts`, and
+whole point of the methodology), selects the highest-Hz run per case on each side via `tools/merge-bench-runs.ts`, and
 compares via `tools/compare-benches.ts`. Artifacts land under `tmp/` (`bench-current-*.json`,
 `bench-baseline-*.json`).
 
@@ -79,9 +91,10 @@ compares via `tools/compare-benches.ts`. Artifacts land under `tmp/` (`bench-cur
 bun .github/skills/bench/bench-vs-tag.ts                    # default: last tag, all projects, 1 iter
 bun .github/skills/bench/bench-vs-tag.ts --ref grid-2.7.0   # explicit tag/SHA baseline
 bun .github/skills/bench/bench-vs-tag.ts --project grid     # subset (repeatable)
-bun .github/skills/bench/bench-vs-tag.ts --iterations 3     # max-of-N per side (noisy suites)
+bun .github/skills/bench/bench-vs-tag.ts --iterations 3     # highest Hz per side (noisy suites)
 bun .github/skills/bench/bench-vs-tag.ts --threshold 0.20   # tighter regression gate (default 0.30)
 bun .github/skills/bench/bench-vs-tag.ts --keep-worktree    # don't delete ../base on exit
+bun .github/skills/bench/bench-vs-tag.ts --fail-on-regression  # exit non-zero on regression (CI-style; off by default)
 bun .github/skills/bench/bench-vs-tag.ts --help             # full flag list
 ```
 
@@ -105,8 +118,24 @@ Echo the resolved tag back before starting (e.g. _"Resolved `2.7.0` → `grid-2.
 ## Reading the results
 
 Read the JSON / comparison-Markdown artifacts directly for precise numbers — do not parse console
-output. For each suite compare current vs baseline mean and flag any regression above the script's
-threshold (default `0.30` for vs-tag). When asked for a report, produce:
+output. The script's threshold (default `0.30` for vs-tag) is a **throughput loss**:
+`current.hz / baseline.hz - 1 < -threshold`, with slower disjoint confidence intervals.
+It is not a duration-increase threshold. Report mean-duration deltas separately.
+
+- **Name the aggregation and units before claiming qualification.** Highest-Hz selection keeps
+  the winning entry's mean/error/sample count together, independently per side. It is not a ratio
+  of largest means or the worst paired delta. Never abbreviate these different methods as just
+  "max-of-three".
+- **Preserve an explicitly agreed duration criterion.** A 30% throughput loss corresponds
+  approximately to a 42.86% duration increase, not 30%. Repository PASS does not waive a stricter
+  duration requirement. If earlier reporting used another aggregation, disclose the change and
+  show both methods on the same retained runs; do not silently switch acceptance metrics.
+- **Keep every paired result available.** For alternating runs, record baseline/candidate
+  absolute means, duration and Hz deltas, and aggregate selected run IDs. Identify any paired
+  threshold crossings even when the aggregate passes. Preserve first failures rather than
+  replacing them with favorable repeats.
+
+When asked for a report, produce:
 
 - **Check comparability before diagnosing a flagged row.** Diff the benchmark file and compare the
   Git blob hashes of the implementation and dependency lockfile against the baseline. If the
@@ -119,18 +148,25 @@ threshold (default `0.30` for vs-tag). When asked for a report, produce:
   in one benchmark process. Preserve and report both results; a passing paired control does not erase
   the earlier flag. Remove the diagnostic imports/wrappers and verify the fixture has no diff.
 
-- **Verdict** — one line: Faster / Slower / Mixed vs the named baseline, with the headline delta.
+- **Verdict** — one line: Faster / Slower / Mixed vs the named baseline (`grid-2.7.0` or
+  `previous local run @ <timestamp>`), with the headline delta.
 - **Per-suite table** — `Suite | Baseline mean | Current mean | Δ | Regression?`, sorted by |Δ%|.
 - **Hotspots** — map each regressed suite to its `*.bench.ts` and the code under test; use
-  `git log --oneline <baseline>..HEAD -- <path>` to surface suspect commits. For grid-core,
+  `git log --oneline <baseline>..HEAD -- <path>` to surface the top 1–3 suspect commits. For grid-core,
   cross-reference `.github/knowledge/grid-render-pipeline.md`, `.github/knowledge/grid-data-pipeline.md` and `.github/knowledge/data-flow-traces.md`.
+- **Fix plan** (skip under `report-only`) — per hotspot: **Hypothesis** (what's slower and why) ·
+  **Investigation** (minimal next step — `debug-perf`, microbench, bisect) · **Candidate fix**
+  (concrete change, file + symbol) · **Risk/scope** (public API, plugin compat, bundle size).
+  Order by impact-to-effort ratio.
 
-If regressions exist, hand off to the `debug-perf` skill (profiling + fix) and the `/perf-fix`
-prompt (execute one fix-plan item end-to-end).
+Print the report inline (no Markdown file unless asked). End with the one-line verdict and the
+exact command to reproduce the run. If regressions exist, point to `/perf-fix` (executes one
+fix-plan item end-to-end: profile → patch → re-bench → verdict).
 
 ## Constraints
 
 - **Never push, never commit.** Benchmarking is read + analyze.
 - Cite numbers; do not paraphrase deltas. Flag noisy-below-threshold suites explicitly.
+- If a tag cannot be resolved, surface the error and stop — do not fall back silently.
 - Do not "fix" the bench harness unless explicitly asked.
 - Respect the bundle and perf invariants in `.github/knowledge/build-and-deploy.md`.

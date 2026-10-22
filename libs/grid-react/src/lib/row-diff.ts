@@ -10,6 +10,8 @@ export interface RowUpdate {
  * Returns an array of updates (possibly empty) when the diff is value-only, or
  * `null` when a structural change is detected (different count, different IDs
  * in sequence, or initial load from an empty snapshot).
+ * Callers can conservatively classify replaced array fields as structural when
+ * a hierarchical row model owns their contents.
  *
  * Used by the DataGrid component to decide whether to call `grid.updateRows()`
  * (value-only, fast path) or `grid.rows =` (full replace). Kept as a pure
@@ -17,7 +19,12 @@ export interface RowUpdate {
  *
  * @since 3.5.0
  */
-export function computeRowDiff<T>(next: T[], prev: T[], getId: (row: T) => string): RowUpdate[] | null {
+export function computeRowDiff<T>(
+  next: T[],
+  prev: T[],
+  getId: (row: T) => string,
+  arrayChangesAreStructural = false,
+): RowUpdate[] | null {
   if (prev.length === 0 || next.length !== prev.length) return null;
 
   const updates: RowUpdate[] = [];
@@ -28,6 +35,14 @@ export function computeRowDiff<T>(next: T[], prev: T[], getId: (row: T) => strin
     const prevId = getId(prevRow);
     if (nextId !== prevId) return null;
     if (prevRow !== nextRow) {
+      if (arrayChangesAreStructural) {
+        const before = prevRow as Record<string, unknown>;
+        const after = nextRow as Record<string, unknown>;
+        for (const field of new Set([...Object.keys(before), ...Object.keys(after)])) {
+          if (before[field] !== after[field] && (Array.isArray(before[field]) || Array.isArray(after[field])))
+            return null;
+        }
+      }
       updates.push({ id: nextId, changes: nextRow as Record<string, unknown> });
     }
   }

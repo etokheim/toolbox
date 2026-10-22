@@ -8,8 +8,8 @@
  * manager for a given container using `container.closest('tbw-grid, [data-tbw-grid]')`
  * or the explicit `gridEl` parameter.
  *
- * When no PortalManager is available (e.g., adapter used standalone),
- * the bridge falls back to `createRoot()`.
+ * Fresh standalone hosts may fall back to `createRoot()`. Once portal-owned,
+ * a host keeps that owner through detachment and cannot fall back after retirement.
  *
  * @internal
  */
@@ -24,8 +24,17 @@ import type { PortalManagerHandle } from './portal-manager';
 /** Map of grid elements to their PortalManager handles. */
 const portalManagers = new Map<HTMLElement, PortalManagerHandle>();
 
-/** Reverse lookup: portal key → owning grid element. */
-const keyToGrid = new Map<string, HTMLElement>();
+interface PortalOwner {
+  key: string;
+  grid: HTMLElement;
+  manager: PortalManagerHandle;
+  retired: boolean;
+}
+
+/** Live keys own one manager; weak host records also remember retired ownership. */
+const portalOwners = new Map<string, PortalOwner>();
+let containerOwners = new WeakMap<HTMLElement, PortalOwner>();
+let retiredGrids = new WeakSet<HTMLElement>();
 
 /** Fallback React roots for when no PortalManager is available. */
 const fallbackRoots = new Map<string, Root>();
@@ -45,8 +54,15 @@ let nextKey = 0;
  */
 export function setPortalManager(gridEl: HTMLElement, pm: PortalManagerHandle | null): void {
   if (pm) {
+    retiredGrids.delete(gridEl);
     portalManagers.set(gridEl, pm);
   } else {
+    retiredGrids.add(gridEl);
+    for (const [key, owner] of portalOwners) {
+      if (owner.grid !== gridEl) continue;
+      owner.retired = true;
+      portalOwners.delete(key);
+    }
     portalManagers.delete(gridEl);
   }
 }
@@ -111,6 +127,9 @@ function cleanupFallbackRoot(key: string): void {
  * @param existingKey - Reuse a previously-returned key for updates.
  * @param gridEl - Explicit grid element (avoids DOM traversal).
  * @returns The portal key (for future updates or removal).
+ * @remarks Previously portal-owned containers retain their original manager.
+ * Updates after release or owning-grid teardown are retired lifecycle work and
+ * do not render. A successor view must use a fresh container.
  */
 export function renderToContainer(
   container: HTMLElement,
@@ -118,14 +137,26 @@ export function renderToContainer(
   existingKey?: string,
   gridEl?: HTMLElement,
 ): string {
+  const owner = containerOwners.get(container);
+  if (owner) {
+    // A detached or retiring portal must never become a second React root.
+    if (!owner.retired && portalManagers.get(owner.grid) === owner.manager) {
+      owner.manager.renderPortal(owner.key, container, element);
+    }
+    return owner.key;
+  }
   const key = existingKey ?? `p-${nextKey++}`;
   const grid = resolveGrid(container, gridEl);
+  // React's host teardown may still trigger one last native render.
+  if (grid && retiredGrids.has(grid)) return key;
   const pm = grid ? portalManagers.get(grid) : undefined;
 
-  if (pm) {
+  if (pm && grid) {
     // Transitioning from fallback → PortalManager: clean up old root
     cleanupFallbackRoot(key);
-    if (grid) keyToGrid.set(key, grid);
+    const owner: PortalOwner = { key, grid, manager: pm, retired: false };
+    portalOwners.set(key, owner);
+    containerOwners.set(container, owner);
     pm.renderPortal(key, container, element);
   } else {
     let root = fallbackRoots.get(key);
@@ -148,10 +179,12 @@ export function renderToContainer(
  */
 export function removeFromContainer(key: string, options?: { sync?: boolean }): void {
   // Find the correct PortalManager via reverse lookup
-  const grid = keyToGrid.get(key);
-  const pm = grid ? portalManagers.get(grid) : undefined;
-  pm?.removePortal(key, options?.sync);
-  keyToGrid.delete(key);
+  const owner = portalOwners.get(key);
+  if (owner) {
+    owner.retired = true;
+    portalOwners.delete(key);
+    owner.manager.removePortal(key, options?.sync);
+  }
 
   cleanupFallbackRoot(key);
 }
@@ -165,10 +198,11 @@ export function clearContainersForGrid(gridEl: HTMLElement): void {
   pm?.clear();
 
   // Clean up reverse lookup entries for this grid
-  for (const [key, grid] of keyToGrid) {
-    if (grid === gridEl) {
+  for (const [key, owner] of portalOwners) {
+    if (owner.grid === gridEl) {
+      owner.retired = true;
       cleanupFallbackRoot(key);
-      keyToGrid.delete(key);
+      portalOwners.delete(key);
     }
   }
 }
@@ -210,7 +244,8 @@ export function clearAllContainers(): void {
   for (const pm of portalManagers.values()) {
     pm.clear();
   }
-  keyToGrid.clear();
+  for (const owner of portalOwners.values()) owner.retired = true;
+  portalOwners.clear();
 
   for (const root of fallbackRoots.values()) {
     try {
@@ -265,7 +300,9 @@ export function resetKeyCounter(): void {
 export function resetBridge(): void {
   clearAllContainers();
   portalManagers.clear();
-  keyToGrid.clear();
+  portalOwners.clear();
+  containerOwners = new WeakMap();
+  retiredGrids = new WeakSet();
   nextKey = 0;
 }
 

@@ -1,12 +1,13 @@
 /// <reference types="vitest" />
 import { copyFileSync, mkdirSync, readdirSync, readFileSync } from 'fs';
 import { Features } from 'lightningcss';
-import { resolve } from 'path';
+import { dirname, resolve } from 'path';
 import cleanup from 'rollup-plugin-cleanup';
 import { build, BuildOptions, defineConfig, LibraryOptions, Plugin } from 'vite';
 import dts from 'vite-plugin-dts';
 import { gzipSync } from 'zlib';
 import { bundleBudget } from '../../tools/vite-bundle-budget';
+import { CORE_BUNDLE_BUDGET } from '../../tools/core-bundle-budget';
 
 // Read package.json version for build-time injection
 const pkg = JSON.parse(readFileSync(resolve(__dirname, 'package.json'), 'utf-8'));
@@ -92,12 +93,27 @@ function externalizeCore(): Plugin {
     name: 'externalize-core',
     enforce: 'pre',
     resolveId(source, importer) {
+      // The public core already exports these defaults; do not copy its growing
+      // announcement catalog into every plugin through core/internal/aria.
+      if (importer && resolve(dirname(importer), source) === resolve(__dirname, 'src/lib/core/defaults')) {
+        return { id: '@toolbox-web/grid', external: true };
+      }
       const norm = importer?.replace(/\\/g, '/');
       if (!norm?.includes('/plugins/')) return null;
       // Don't externalize utils/diagnostics — small utilities that should be inlined.
       if (source.endsWith('core/internal/utils') || source.endsWith('core/internal/diagnostics')) return null;
       if (source.startsWith('../../components/') || source.startsWith('../../../')) {
         return { id: '@toolbox-web/grid', external: true };
+      }
+      // A hard dependency on another plugin (`import { HierarchyPlugin } from '../hierarchy'`)
+      // stays a separate module so the consumer's bundler includes it once.
+      if (importer && source.startsWith('../')) {
+        const target = resolve(dirname(importer), source).replace(/\\/g, '/');
+        const dep = target.match(/\/lib\/plugins\/([\w-]+)$/)?.[1];
+        const own = norm.match(/\/lib\/plugins\/([\w-]+)\//)?.[1];
+        if (dep && dep !== own && dep !== 'shared') {
+          return { id: `@toolbox-web/grid/plugins/${dep}`, external: true };
+        }
       }
       return null;
     },
@@ -360,6 +376,10 @@ function buildUmdBundles(): Plugin {
       });
 
       // Individual plugin UMDs (parallel)
+      // DEPRECATED (remove in v4): a plugin's hard dependency on another plugin
+      // (`../hierarchy`) matches neither external pattern below, so it is INLINED
+      // into the dependent UMD file. v4 externalizes it to the dependency's own
+      // `TbwGridPlugin_<name>` global instead (documented in umd-readme.md).
       await Promise.all(
         pluginNames.map((name) =>
           build({
@@ -487,9 +507,7 @@ export default defineConfig(({ command }) => ({
           bundleBudget({
             outDir,
             budgets: [
-              // Core: warn at 45 kB gzip, hard fail at 50 kB gzip / 170 kB raw.
-              // Keep core lean — push features to plugins unless they cost performance.
-              { path: 'index.js', maxSize: 170 * 1024, maxGzip: 50 * 1024, warnGzip: 45 * 1024 },
+              CORE_BUNDLE_BUDGET,
               // Plugins: 55 kB raw ceiling. Editing is the outlier — it owns editors,
               // dirty tracking, validation, cell/row/grid modes, undo integration,
               // cascade, and focus management, and legitimately needs the headroom.

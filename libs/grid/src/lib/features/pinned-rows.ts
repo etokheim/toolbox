@@ -13,9 +13,9 @@ import { PinnedRowsPlugin, type PinnedRowsConfig } from '../plugins/pinned-rows'
 import { registerFeature } from './registry';
 
 declare module '../core/types' {
-  interface FeatureConfig {
+  interface FeatureConfig<TRow> {
     /** Enable pinned (frozen) rows at top/bottom of the grid. */
-    pinnedRows?: boolean | PinnedRowsConfig;
+    pinnedRows?: boolean | PinnedRowsConfig<TRow>;
   }
 }
 

@@ -1,6 +1,6 @@
 ---
 name: bundle-check
-description: Check that the @toolbox-web/grid build stays within bundle size budget (index.js ≤170 kB raw, ≤50 kB gzipped hard limit, ≤45 kB gzipped soft warning). Run after any code change that could affect bundle size.
+description: Check the grid bundle budget using authoritative Bun gzip (index.js ≤170 KiB raw, ≤52 KiB gzip hard limit, 45 KiB gzip soft warning). Run after code changes that could affect bundle size.
 argument-hint: library-name (optional)
 ---
 
@@ -10,12 +10,12 @@ Verify that the grid library build stays within its budget constraints.
 
 ## Budget Limits
 
-| Metric              | Threshold        | Action                                                                                                                  |
-| ------------------- | ---------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| `index.js` raw size | > 170 kB         | **Hard fail** — the build exits non-zero; you must reduce size before merging.                                          |
-| `index.js` gzipped  | > 50 kB          | **Hard fail** — the build exits non-zero; you must reduce size before merging.                                          |
-| `index.js` gzipped  | > 45 kB, ≤ 50 kB | **Soft warning** — the build succeeds; investigate the cause and reduce size if reasonable, but a merge is not blocked. |
-| `index.js` gzipped  | ≤ 45 kB          | **Pass** — no action required.                                                                                          |
+| Metric              | Threshold            | Action                                                                         |
+| ------------------- | -------------------- | ------------------------------------------------------------------------------ |
+| `index.js` raw size | > 174080 B (170 KiB) | **Hard fail** — reduce size or document a justified budget increase.           |
+| `index.js` gzipped  | > 53248 B (52 KiB)   | **Hard fail** — reduce size or document a justified budget increase.           |
+| `index.js` gzipped  | > 46080 B, ≤ 53248 B | **Soft warning** — investigate; do not trade readability for marginal savings. |
+| `index.js` gzipped  | ≤ 46080 B (45 KiB)   | **Pass**, provided raw size also passes.                                       |
 
 ## Steps
 
@@ -27,7 +27,9 @@ Verify that the grid library build stays within its budget constraints.
 bun nx build grid
 ```
 
-The Vite `bundleBudget` plugin (`tools/vite-bundle-budget.ts`) runs during this build and **exits non-zero** if `index.js` exceeds the hard limits (170 kB raw / 50 kB gzipped). A clean build means the hard budget already passed; a failed build prints the exact offending size.
+The Vite `bundleBudget` plugin enforces `tools/core-bundle-budget.ts` (170 KiB raw / 52 KiB gzip) and existing plugin rules. Both it and the report use `tools/bundle-size.ts`: Bun's default `node:zlib.gzipSync`, with one batched Bun subprocess for a Node-hosted caller. Missing Bun, failed measurement and malformed child output are errors, never grounds to substitute Node gzip. Record the printed Bun version with exact bytes and bundle hash.
+
+Vite's inherited progress/sub-build size banners still use the hosting runtime and are informational. The explicitly labeled **Bundle budget authority** output and the report determine acceptance, not those rounded banners.
 
 ### 2. Print Exact Sizes
 
@@ -37,26 +39,28 @@ Run the shared size-report script — it measures raw **and** gzip for `index.js
 bun run tools/build-size-report.ts
 ```
 
-This replaces ad-hoc `wc -c` / PowerShell gzip snippets — do not hand-measure. Read the `grid` column of the **core (index.js)** row for the numbers you need.
+Read the exact byte values in the **core (index.js)** row. The report now exits nonzero for missing/over-budget core, including `--ci`; other entries remain informational and their owning build/bundle-check targets enforce limits. `--dist <directory>` selects another built library root without changing limits. Historical reports before this enforcement were rounded display-only output: exit 0 did not prove acceptance.
+
+Upstream is Bun-first, not Bun-only: inherited Nx/Vite uses a Node shebang and CI installs Node 24 alongside Bun. `node:` built-in imports are also supported under Bun; they do not identify the executing runtime. Keep the toolchain unchanged and record Bun versions rather than choosing whichever compressor passes.
 
 ### 3. Evaluate Results
 
 Use this checklist in order. Stop at the first matching outcome.
 
-#### 3a. Under budget (gzipped ≤ 45 kB and raw ≤ 170 kB)
+#### 3a. Under budget (gzipped ≤ 45 KiB and raw ≤ 170 KiB)
 
 - [ ] Report the raw and gzipped sizes.
 - [ ] Confirm the build is good. No further investigation required.
 
-#### 3b. Soft warning (gzipped > 45 kB and ≤ 50 kB, raw ≤ 170 kB)
+#### 3b. Soft warning (gzip > 45 KiB and ≤ 52 KiB, raw ≤ 170 KiB)
 
 - [ ] Report the sizes and flag the warning explicitly.
 - [ ] Briefly investigate using the **Over-budget investigation checklist** below.
 - [ ] Document any size increase in the commit message; merging is allowed.
 
-#### 3c. Over budget (gzipped > 50 kB **or** raw > 170 kB)
+#### 3c. Over budget (gzip > 52 KiB **or** raw > 170 KiB)
 
-The build will hard-fail. Work through the **Over-budget investigation checklist** below until the size is back under the hard limit.
+The build/report must fail. Evaluate the checklist, then either reduce size without harming code quality or use the user's standing permission for a justified increase. Record feature need, plugin-placement decision, readability/performance trade-offs, old/new limits and before/after authoritative bytes. Update the shared rule, active docs and threshold tests together. No per-increase approval is needed; this grants no commit or remote permission.
 
 #### Over-budget investigation checklist
 
@@ -80,37 +84,33 @@ The build will hard-fail. Work through the **Over-budget investigation checklist
 - Extract pure functions and ensure tree-shaking works
 - Remove unused exports and dead code
 - Minimize CSS by combining selectors
-- Use `const enum` instead of `enum` where possible
 - Audit `import` statements for unnecessary pulls
 
 ## Plugin Bundle Sizes
 
-Individual plugins are separate entry points. The `tools/build-size-report.ts` table from step 2 lists every plugin's raw/gzip size. `libs/grid/vite.config.ts` enforces 55 KiB raw per plugin, except Selection's explicitly approved 60 KiB ceiling for embedded checkbox lifetimes. Do not raise the shared cap or move always-loaded bytes to core to satisfy an entry limit. Disabled configuration does not remove an imported plugin's download/parse cost.
+Individual plugins are separate entry points. The report lists their raw/gzip bytes. Existing limits remain 55 KiB raw per plugin, except Selection at 60 KiB. Any future increase must justify the affected entry, not silently loosen a shared wildcard or move always-loaded bytes into core. Disabled configuration does not remove an imported plugin's download/parse cost.
+
+## Tooling regression checks
+
+Run focused measurement, threshold, runtime and CLI failure tests through Nx:
+
+```bash
+bun nx exec --projects=grid --excludeTaskDependencies -- vitest run --root "$PWD" --config "$PWD/tools/vitest.config.mts"
+```
+
+Tests are Node-environment tooling tests (no DOM). They exercise the inherited Node caller and real Bun worker, exact below/equal/over boundaries, one batch, child failure, missing Bun, and report exit status.
 
 ## Dead Code Removal
 
-Actively identify and remove dead code to minimize bundle size.
-
-### Before each commit, check for:
-
-- Unused imports (ESLint will flag these)
-- Unused functions, variables, or type definitions
-- Commented-out code blocks (remove or convert to documentation)
-- Deprecated code that's no longer referenced
-- Unused CSS classes or variables
-
-### Tools to identify dead code:
+Actively identify and remove dead code to minimize bundle size. Use the `fallow` skill for
+deterministic detection instead of hand-grepping exports:
 
 ```bash
-# TypeScript compiler flags unused locals
-bun nx build grid
-
-# ESLint checks unused variables/imports
-bun nx lint grid
-
-# Search for potentially unused exports
-grep -r "export.*functionName" --include="*.ts"
+bunx fallow dead-code --format json > tmp/fallow-dead-code.json   # unused exports/files, circular deps
+bun nx lint grid                                                 # unused imports/locals
 ```
+
+Also remove commented-out code blocks and deprecated code with no remaining references.
 
 ### When removing code:
 

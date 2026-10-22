@@ -4,6 +4,14 @@ import type { RowDragHandleContext } from './types';
 
 export const DRAG_HANDLE_LABEL = 'Drag to reorder, or activate for move options';
 
+/** Form controls and non-body chrome own the chord (e.g. select's Alt+ArrowDown). */
+export function isKeyboardMoveBlocked(grid: HTMLElement, event: KeyboardEvent): boolean {
+  const target = event.composedPath?.()[0] ?? event.target;
+  if (!(target instanceof Element) || target === grid) return false;
+  if (!target.closest('.rows-body')) return true;
+  return target.matches('input,select,textarea') || (target instanceof HTMLElement && target.isContentEditable);
+}
+
 export interface HandleRecord<T> {
   identity: unknown;
   element: HTMLElement;
@@ -99,7 +107,7 @@ export class DragHandleBinding {
       'keydown',
       (event) => {
         if (event.defaultPrevented || !this.owns(event) || !this.valid) return;
-        if (event.ctrlKey && (event.key === 'ArrowUp' || event.key === 'ArrowDown')) {
+        if ((event.altKey || event.ctrlKey) && (event.key === 'ArrowUp' || event.key === 'ArrowDown')) {
           this.key(event);
           return;
         }

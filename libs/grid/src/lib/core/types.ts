@@ -512,6 +512,8 @@ export interface InternalGrid<T = any> extends PublicGrid<T>, GridConfig<T> {
   effectiveConfig?: GridConfig<T>;
   findHeaderRow?: () => HTMLElement;
   refreshVirtualWindow: (full: boolean, skipAfterRender?: boolean) => boolean;
+  /** @internal Dispatch a native scroll batch using the configured vertical owner. */
+  _onScrollBatched(scrollTop: number): void;
   /** @internal Trigger a COLUMNS-phase re-render. */
   refreshColumns?: () => void;
   updateTemplate?: () => void;
@@ -1883,6 +1885,15 @@ export interface FrameworkAdapter {
   releaseCell?(cellEl: HTMLElement): void;
 
   /**
+   * Opt in an adapter-owned, non-editing view to unchanged utility-cell retention
+   * during column reprocessing. Return true only for a currently tracked reusable
+   * view, never for arbitrary DOM-returning renderers. Core still checks occurrence,
+   * column order and unchanged options; true replacements always call releaseCell.
+   * @since 3.8.3
+   */
+  canRetainCellView?(cellEl: HTMLElement): boolean;
+
+  /**
    * Open a teardown batch. Grid core wraps multi-cell teardown sequences
    * (e.g., `_clearRowPool`, row-pool shrink, full row rebuild) where every
    * affected cell will be detached from the DOM before the batch ends.
@@ -2577,6 +2588,12 @@ export interface A11yMessages {
   columnSelectionCleared: () => string;
   /** Announced when the active selection axis flips between row and column. @since 2.8.0 */
   selectionAxisChanged: (toAxis: 'row' | 'column') => string;
+  /**
+   * Announced when `Shift+Space` / `Ctrl+Space` in range mode selects whole rows or columns.
+   * Optional so existing full `A11yMessages` objects keep compiling; the English default applies when omitted.
+   * @since 3.9.0
+   */
+  rangeSpanSelected?: (axis: 'row' | 'column', count: number) => string;
   /** Announced when row editing starts. */
   editingStarted: (rowIndex: number) => string;
   /** Announced when row editing is committed. */
@@ -2828,6 +2845,12 @@ export interface GridConfig<TRow = any, TField extends string = ColumnFieldKey<T
    *
    * **Variable Row Heights**: When a function is provided, the grid enables variable height
    * virtualization. Heights are measured on first render and cached by row identity.
+   *
+   * Replacing the configured number or callback preserves the top visible occurrence and
+   * its intra-row offset, clamped to the new row and scroll range. Newer scrolling,
+   * source-data/identity replacement, and removed occurrences cancel that one-shot anchor.
+   * An unchanged callback, ordinary `forceLayout()`, or removing this setting retains
+   * the existing pixel-scroll/measurement behavior.
    *
    * **Numeric form**: the value is written to the `--tbw-row-height` custom property on the host
    * element (overriding the theme) and is never replaced by a measured height, even when a plugin

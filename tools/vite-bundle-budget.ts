@@ -1,7 +1,7 @@
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { relative, resolve } from 'node:path';
-import { gzipSync } from 'node:zlib';
 import type { Plugin } from 'vite';
+import { measureBundles, type BundleSize } from './bundle-size.ts';
 
 export interface BudgetEntry {
   /** Path pattern relative to outDir. Use `*` for single-level directory wildcard. */
@@ -47,6 +47,29 @@ export interface BudgetCheckResult {
   violations: string[];
   /** Soft-warn messages (warnSize/warnGzip exceeded but under hard limit) */
   warnings: string[];
+  /** Exact measurements and the authoritative compressor version. */
+  measurements: ReturnType<typeof measureBundles>;
+}
+
+/** Compare exact bytes; equality is within budget. Display rounding never decides acceptance. */
+export function checkSizeBudget(
+  path: string,
+  size: Pick<BundleSize, 'raw' | 'gzip'>,
+  budget: BudgetEntry,
+): Pick<BudgetCheckResult, 'violations' | 'warnings'> {
+  const violations: string[] = [];
+  const warnings: string[] = [];
+  if (budget.maxSize != null && size.raw > budget.maxSize) {
+    violations.push(`${path}: ${fmt(size.raw)} exceeds budget of ${fmt(budget.maxSize)}`);
+  } else if (budget.warnSize != null && size.raw > budget.warnSize) {
+    warnings.push(`${path}: ${fmt(size.raw)} approaching budget (warn at ${fmt(budget.warnSize)})`);
+  }
+  if (budget.maxGzip != null && size.gzip > budget.maxGzip) {
+    violations.push(`${path}: ${fmt(size.gzip)} gzipped exceeds budget of ${fmt(budget.maxGzip)}`);
+  } else if (budget.warnGzip != null && size.gzip > budget.warnGzip) {
+    warnings.push(`${path}: ${fmt(size.gzip)} gzipped approaching budget (warn at ${fmt(budget.warnGzip)})`);
+  }
+  return { violations, warnings };
 }
 
 /**
@@ -57,9 +80,11 @@ export function checkBudgets(options: BundleBudgetOptions): BudgetCheckResult {
   const { outDir, budgets } = options;
   const violations: string[] = [];
   const warnings: string[] = [];
+  const matchedBudgets = budgets.map((budget) => ({ budget, files: resolveGlob(outDir, budget.path) }));
+  const measurements = measureBundles([...new Set(matchedBudgets.flatMap(({ files }) => files))]);
+  const sizes = new Map(measurements.files.map((file) => [file.path, file]));
 
-  for (const budget of budgets) {
-    const files = resolveGlob(outDir, budget.path);
+  for (const { budget, files } of matchedBudgets) {
     if (files.length === 0) {
       violations.push(`No files matched pattern "${budget.path}"`);
       continue;
@@ -67,22 +92,11 @@ export function checkBudgets(options: BundleBudgetOptions): BudgetCheckResult {
 
     for (const filePath of files) {
       const rel = relative(outDir, filePath).replace(/\\/g, '/');
-      const content = readFileSync(filePath);
-      const rawSize = content.length;
-      const needsGzip = budget.maxGzip != null || budget.warnGzip != null;
-      const gz = needsGzip ? gzipSync(content).length : 0;
-
-      if (budget.maxSize != null && rawSize > budget.maxSize) {
-        violations.push(`${rel}: ${fmt(rawSize)} exceeds budget of ${fmt(budget.maxSize)}`);
-      } else if (budget.warnSize != null && rawSize > budget.warnSize) {
-        warnings.push(`${rel}: ${fmt(rawSize)} approaching budget (warn at ${fmt(budget.warnSize)})`);
-      }
-
-      if (budget.maxGzip != null && gz > budget.maxGzip) {
-        violations.push(`${rel}: ${fmt(gz)} gzipped exceeds budget of ${fmt(budget.maxGzip)}`);
-      } else if (budget.warnGzip != null && gz > budget.warnGzip) {
-        warnings.push(`${rel}: ${fmt(gz)} gzipped approaching budget (warn at ${fmt(budget.warnGzip)})`);
-      }
+      const size = sizes.get(filePath);
+      if (!size) throw new Error(`Missing bundle measurement for ${filePath}`);
+      const result = checkSizeBudget(rel, size, budget);
+      violations.push(...result.violations);
+      warnings.push(...result.warnings);
     }
   }
 
@@ -104,7 +118,7 @@ export function checkBudgets(options: BundleBudgetOptions): BudgetCheckResult {
     }
   }
 
-  return { violations, warnings };
+  return { violations, warnings, measurements };
 }
 
 /**
@@ -116,8 +130,12 @@ export function bundleBudget(options: BundleBudgetOptions): Plugin {
     name: 'bundle-budget',
     apply: 'build',
     closeBundle() {
-      const { violations, warnings } = checkBudgets(options);
+      const { violations, warnings, measurements } = checkBudgets(options);
       const severity = options.severity ?? 'error';
+      console.log(`Bundle budget authority: Bun ${measurements.bunVersion}, node:zlib gzipSync defaults`);
+      for (const file of measurements.files) {
+        console.log(`${relative(options.outDir, file.path)}: ${file.raw} B raw, ${file.gzip} B gzip`);
+      }
 
       if (warnings.length > 0) {
         const msg = `\nBundle budget warnings:\n${warnings.map((w) => `  ⚠ ${w}`).join('\n')}\n`;
@@ -144,7 +162,7 @@ const KB = 1024;
 
 /** Format bytes as a human-readable string */
 function fmt(bytes: number): string {
-  return bytes < KB ? `${bytes} B` : `${(bytes / KB).toFixed(1)} kB`;
+  return bytes < KB ? `${bytes} B` : `${bytes} B (${(bytes / KB).toFixed(1)} KiB)`;
 }
 
 /**

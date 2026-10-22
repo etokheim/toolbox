@@ -186,13 +186,27 @@ function EmployeeGrid() {
 | `features/responsive` | `responsive` | `responsive` (card layout on mobile) |
 | `features/export` | `export` | `export` |
 | `features/print` | `print` | `print` |
-| `features/pinned-rows` | `pinnedRows` | `pinnedRows` or `pinnedRows={{ position: 'bottom' }}` |
+| `features/pinned-rows` | `pinnedRows` | `pinnedRows` (default row count) or custom `slots` |
 | `features/column-virtualization` | `columnVirtualization` | `columnVirtualization` |
 | `features/pivot` | `pivot` | `pivot={{ rowFields: ['category'], valueField: 'sales' }}` |
 | `features/server-side` | `serverSide` | `serverSide={{ pageSize: 50 }}` |
 | `features/sticky-rows` | `stickyRows` | `stickyRows={{ isSticky: 'isSection' }}` |
 | `features/row-drag-drop` | `rowDragDrop` | `rowDragDrop` (cross-grid / external row drag-and-drop) |
 | `features/tooltip` | `tooltip` | `tooltip` (cell / header tooltips) |
+
+For Tree child sections, GroupingRows `childDefaultExpanded` separates child defaults
+from global groups, and `groupOrder({ parent, depth })` supplies semantic category
+ordering. Replacing or clearing only the `groupOrder` callback on either the feature
+prop or `gridConfig.features.groupingRows` preserves plugin instances, selection and
+expansion. Other configuration changes retain their existing lifecycle.
+See [Category Order](/grid/plugins/grouping-rows/#category-order).
+
+`pinnedRows.slots` also updates live on either configuration surface. Inline panel
+renderers, nested aggregation formatters and cell callbacks use their latest values
+without resetting editing, selection or Undo history. Adding, removing or moving
+slots preserves plugin lifetimes. Callback-only updates retain a panel's React
+state; changing its slot identity, position or render zone may remount that panel.
+See [Pinned Rows](/grid/plugins/pinned-rows/).
 
 ### Core Config Props (no import needed)
 
@@ -681,6 +695,32 @@ When the user mutates a row (commit, paste, etc.), invalidate the query to
 trigger a refresh: `queryClient.invalidateQueries({ queryKey: ['employees'] })`.
 The grid will re-request the affected blocks on next scroll.
 :::
+
+## Mixed Native and JSX Columns
+
+Prefer `gridConfig.columns` for an all-JSX configuration. When retaining existing
+native DOM-returning cell/header callbacks, use the `columns` prop for those
+definitions and a matching `GridColumn` child for a JSX field:
+
+```tsx
+<DataGrid rows={rows} columns={nativeColumns} gridConfig={configWithoutColumns}>
+  <GridColumn field="__actions">{renderActions}</GridColumn>
+</DataGrid>
+```
+
+Remove `renderer`/`viewRenderer` only from the matching native field so the child
+provides its view; keep its width/pinning/utility options. Renderer-only children
+do not require Editing. The `columns` prop does not wrap raw JSX callbacks, and
+`gridConfig.columns` must not receive existing DOM callbacks unchanged.
+
+An unchanged utility `GridColumn` keeps its attached cell and component state
+across immutable same-occurrence updates plus unrelated column callback changes.
+Keep its declaration, callback, public `getRowId` occurrence, visible field order
+and primitive/callback options stable. Changing its options (including width),
+renderer, editing ownership, order or occurrence retires the view. Nested option
+objects/arrays disable retention conservatively; raw DOM renderers are unchanged.
+For a portaled action menu, use the explicit
+[pinned-cell expansion lease](/grid/plugins/pinned-columns/#compact-action-cell-expansion).
 
 ## Dynamic Row Updates
 

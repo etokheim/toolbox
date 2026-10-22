@@ -17,17 +17,20 @@ import { FocusManager } from './focus-manager';
 const ROW_H = 30;
 const VIEWPORT_H = 300; // 10 rows
 
-interface ScrollStub {
-  scrollTop: number;
-  scrollTo: (options: ScrollToOptions) => void;
+function createScrollElements(initialScrollTop = 0) {
+  const scrollEl = document.createElement('div');
+  scrollEl.scrollTop = initialScrollTop;
+  scrollEl.scrollTo = vi.fn();
+  const viewportEl = document.createElement('div');
+  Object.defineProperty(viewportEl, 'clientHeight', { value: VIEWPORT_H, configurable: true });
+  return { scrollEl, viewportEl };
 }
 
 function createManager(offsets?: { top: number; bottom: number; skipScroll?: boolean }, initialScrollTop = 0) {
-  const scrollEl: ScrollStub = { scrollTop: initialScrollTop, scrollTo: vi.fn() };
+  const { scrollEl, viewportEl } = createScrollElements(initialScrollTop);
+  const host: HTMLElement = document.createElement('div');
 
-  const grid = {
-    addEventListener: vi.fn(),
-    removeEventListener: vi.fn(),
+  const grid: GridHost = Object.assign(host as GridHost, {
     _rows: Array.from({ length: 100 }, (_, i) => ({ id: i })),
     _columns: [{ field: 'c0' }],
     _visibleColumns: [{ field: 'c0' }],
@@ -35,7 +38,7 @@ function createManager(offsets?: { top: number; bottom: number; skipScroll?: boo
       enabled: true,
       rowHeight: ROW_H,
       container: scrollEl,
-      viewportEl: { clientHeight: VIEWPORT_H },
+      viewportEl,
       positionCache: null,
       variableHeights: false,
       // Non-capped mapping — `fromVirtualScrollTop` is the identity, so the
@@ -48,9 +51,9 @@ function createManager(offsets?: { top: number; bottom: number; skipScroll?: boo
       },
     },
     _getVerticalScrollOffsets: offsets ? () => offsets : undefined,
-  } as GridHost;
+  });
 
-  return { manager: new FocusManager(grid), scrollEl };
+  return { manager: new FocusManager(grid), scrollEl, grid };
 }
 
 describe('FocusManager.scrollToRow — vertical offsets (#449)', () => {
@@ -135,6 +138,56 @@ describe('FocusManager.scrollToRow — vertical offsets (#449)', () => {
   });
 });
 
+describe('public native reveal compatibility', () => {
+  it.each([
+    ['start', 740],
+    ['center', 660],
+    ['end', 580],
+    ['nearest', 580],
+  ] as const)('preserves measured mixed heights for public %s alignment', (align, expected) => {
+    const { manager, scrollEl, grid } = createManager({ top: 60, bottom: 24 });
+    grid._virtualization.variableHeights = true;
+    grid._virtualization.positionCache = grid._rows.map((_, index) => ({
+      offset: Math.floor(index / 2) * 80 + (index % 2) * 56,
+      height: index % 2 ? 24 : 56,
+      measured: true,
+    }));
+
+    manager.scrollToRow(20, { align });
+
+    expect(scrollEl.scrollTop).toBe(expected);
+  });
+
+  it('preserves public capped writes and clamps the requested row index', () => {
+    const { manager, scrollEl, grid } = createManager({ top: 60, bottom: 0 });
+    grid._virtualization.scrollMapping = {
+      capped: true,
+      spacerHeight: 1500,
+      rawContentHeight: 3000,
+      viewportHeight: 300,
+    };
+
+    manager.scrollToRow(20, { align: 'start' });
+    expect(scrollEl.scrollTop).toBe(240);
+    manager.scrollToRow(-10, { align: 'start' });
+    expect(scrollEl.scrollTop).toBe(0);
+    manager.scrollToRow(1000, { align: 'start' });
+    expect(scrollEl.scrollTop).toBeCloseTo((2910 * 1200) / 2700);
+  });
+
+  it('does not write when public navigation has no rows or visible viewport', () => {
+    const { manager, scrollEl, grid } = createManager(undefined, 90);
+    Object.defineProperty(grid._virtualization.viewportEl, 'clientHeight', { value: 0, configurable: true });
+    manager.scrollToRow(20, { align: 'start' });
+    expect(scrollEl.scrollTop).toBe(90);
+
+    Object.defineProperty(grid._virtualization.viewportEl, 'clientHeight', { value: VIEWPORT_H });
+    grid._rows = [];
+    manager.scrollToRow(20, { align: 'start' });
+    expect(scrollEl.scrollTop).toBe(90);
+  });
+});
+
 describe('FocusManager.scrollToRow — reduced motion', () => {
   afterEach(() => {
     document.body.replaceChildren();
@@ -143,12 +196,12 @@ describe('FocusManager.scrollToRow — reduced motion', () => {
   // Needs a real, attached element: the guard reads `--tbw-animation-enabled` off
   // the host, and happy-dom only resolves custom properties once it is in the tree.
   function createHostBackedManager(animationEnabled: string) {
-    const scrollEl: ScrollStub = { scrollTop: 0, scrollTo: vi.fn() };
-    const host = document.createElement('div');
+    const { scrollEl, viewportEl } = createScrollElements();
+    const host: HTMLElement = document.createElement('div');
     host.style.setProperty('--tbw-animation-enabled', animationEnabled);
     document.body.append(host);
 
-    const grid = Object.assign(host, {
+    const grid: GridHost = Object.assign(host as GridHost, {
       _rows: Array.from({ length: 100 }, (_, i) => ({ id: i })),
       _columns: [{ field: 'c0' }],
       _visibleColumns: [{ field: 'c0' }],
@@ -156,7 +209,7 @@ describe('FocusManager.scrollToRow — reduced motion', () => {
         enabled: true,
         rowHeight: ROW_H,
         container: scrollEl,
-        viewportEl: { clientHeight: VIEWPORT_H },
+        viewportEl,
         positionCache: null,
         variableHeights: false,
         scrollMapping: {
@@ -166,7 +219,7 @@ describe('FocusManager.scrollToRow — reduced motion', () => {
           viewportHeight: VIEWPORT_H,
         },
       },
-    }) as GridHost;
+    });
 
     return { manager: new FocusManager(grid), scrollEl };
   }

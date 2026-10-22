@@ -157,6 +157,21 @@ test('TreeDisclosureControlsDemo — 100 expansion/recycle cycles keep independe
       nested: element.querySelectorAll('.tree-cell-wrapper .tree-cell-wrapper').length,
     }));
   await expect(tree).toBeVisible();
+  await host.evaluate(async (element) => {
+    await document.fonts.ready;
+    await (element as DataGridElement).forceLayout();
+  });
+  // React controls can finish sizing after the grid's initial ready/render pass.
+  await expect
+    .poll(() =>
+      host.evaluate((element) => {
+        const grid = element as DataGridElement;
+        const row = element.querySelector<HTMLElement>('.rows > .data-grid-row');
+        return row !== null && grid._virtualization.rowHeight === row.offsetHeight;
+      }),
+    )
+    .toBe(true);
+  await host.evaluate((element) => (element as DataGridElement).forceLayout());
   const baseline = await counts();
   for (let i = 0; i < 100; i++) {
     await tree.click();

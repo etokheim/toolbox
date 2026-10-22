@@ -184,6 +184,7 @@ export function registerColumnRenderer(
   const field = element.getAttribute('field');
 
   const registry = columnRegistries.get(element) ?? {};
+  const replacing = registry.renderer !== undefined && registry.renderer !== renderer;
   registry.renderer = renderer;
   columnRegistries.set(element, registry);
 
@@ -193,6 +194,8 @@ export function registerColumnRenderer(
     fieldRegistry.renderer = renderer;
     fieldRegistries.set(field, fieldRegistry);
   }
+  // Callback replacement does not mutate light DOM, so its cached column needs an explicit reparse.
+  if (replacing) element.closest<DataGridElement>('tbw-grid, [data-tbw-grid]')?.refreshColumns?.();
 }
 
 /**
@@ -444,6 +447,14 @@ export class GridAdapter implements FrameworkAdapter {
    * many cells, where `releaseCell` runs on every cell teardown.
    */
   private containerToKey = new WeakMap<HTMLElement, string>();
+  private columnRenderers = new WeakMap<
+    HTMLElement,
+    {
+      grid: HTMLElement | null;
+      render: (ctx: CellRenderContext<unknown, unknown>) => ReactNode;
+      renderer: ColumnViewRenderer<unknown, unknown>;
+    }
+  >();
   /**
    * Per-editor `before-edit-close` listener teardown functions, keyed by portal key.
    *
@@ -469,6 +480,14 @@ export class GridAdapter implements FrameworkAdapter {
    */
   private editorBeforeCloseUnsubs = new Map<string, () => void>();
   private typeDefaults: TypeDefaultsMap | null = null;
+
+  /** @since 2.6.1 */
+  canRetainCellView(cell: HTMLElement): boolean {
+    const container = cell.firstElementChild;
+    if (!(container instanceof HTMLElement)) return false;
+    const key = this.containerToKey.get(container);
+    return key !== undefined && this.allPortalKeys.has(key) && !this.editorPortalKeys.has(key);
+  }
 
   /**
    * Sets the type defaults map for this adapter.
@@ -549,9 +568,13 @@ export class GridAdapter implements FrameworkAdapter {
 
     // Resolve grid once from the column element (stable in the DOM)
     const gridEl = element.closest('tbw-grid, [data-tbw-grid]') as HTMLElement | null;
+    const existing = this.columnRenderers.get(element);
+    if (existing?.grid === gridEl && existing.render === renderFn) {
+      return existing.renderer as ColumnViewRenderer<TRow, TValue>;
+    }
     // Cell cache for this field - maps cell element to its portal key + container
     const cellCache = new WeakMap<HTMLElement, CellPortalCache>();
-    return (ctx: CellRenderContext<TRow, TValue>) => {
+    const renderer: ColumnViewRenderer<TRow, TValue> = (ctx) => {
       // Get the cell element from context (if available)
       const cellEl = (ctx as any).cellEl as HTMLElement | undefined;
 
@@ -561,7 +584,12 @@ export class GridAdapter implements FrameworkAdapter {
         if (cached) {
           if (cellEl.contains(cached.container)) {
             // Reuse existing portal - update element synchronously
-            renderToContainer(cached.container, renderFn(ctx as CellRenderContext<unknown, unknown>), cached.portalKey);
+            renderToContainer(
+              cached.container,
+              renderFn(ctx as CellRenderContext<unknown, unknown>),
+              cached.portalKey,
+              gridEl ?? undefined,
+            );
             return cached.container;
           }
           // Container was detached (typically by editor-injection's cell wipe).
@@ -607,17 +635,23 @@ export class GridAdapter implements FrameworkAdapter {
 
       return container;
     };
+    this.columnRenderers.set(element, {
+      grid: gridEl,
+      render: renderFn,
+      renderer: renderer as ColumnViewRenderer<unknown, unknown>,
+    });
+    return renderer;
   }
 
   /**
    * Creates an editor spec that renders a React component
    * with commit/cancel callbacks passed as props.
    */
-  createEditor<TRow = unknown, TValue = unknown>(element: HTMLElement): ColumnEditorSpec<TRow, TValue> {
+  createEditor<TRow = unknown, TValue = unknown>(element: HTMLElement): ColumnEditorSpec<TRow, TValue> | undefined {
     const editorFn = getColumnEditor(element) ?? getTypeEditor(element);
 
     if (!editorFn) {
-      return () => document.createElement('div');
+      return undefined;
     }
 
     // Resolve grid once from the column element (stable in the DOM)
@@ -918,6 +952,7 @@ export class GridAdapter implements FrameworkAdapter {
    * Call this when the grid is unmounted.
    */
   destroy(): void {
+    this.columnRenderers = new WeakMap();
     // Remove only this adapter's tracked portals, not all grids' portals
     for (const key of this.allPortalKeys) {
       removeFromContainer(key);
@@ -955,6 +990,7 @@ export class GridAdapter implements FrameworkAdapter {
    * bypass the adapter's own portal tracking.
    */
   releaseCell(cellEl: HTMLElement): void {
+    releaseFeaturePortals(cellEl);
     // Resolve only the portal containers actually inside this cell — avoids
     // an O(total portals) scan per cell teardown, which the core can call
     // many times during a render. Scoped DOM query is O(cell descendants),

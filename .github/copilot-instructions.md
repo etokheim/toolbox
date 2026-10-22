@@ -39,8 +39,8 @@ This project's AI knowledge is organized in four tiers to minimize context windo
 > **Knowledge file style:** Knowledge files are an _agent_ tool — dense, scannable, structured
 > markers (`OWNS:` / `INVARIANT:` / `DECIDED:` …), never changelog prose. Soft budget **≤25 kB**
 > (`wc -c`), hard ceiling 30 kB. The full style rules — `DECIDED` formatting, compress-don't-append,
-> table vs. bullet byte costs, orientation headers, when to split — live in the **`retrospective`
-> skill** (Steps 5b/5c). Read it before writing to any `.github/knowledge/*.md` file.
+> table vs. bullet byte costs, orientation headers, when to split — live in
+> `.github/skills/retrospective/knowledge-style.md`. Read it before writing to any `.github/knowledge/*.md` file.
 
 > **Continuous improvement:** After significant tasks, use the `retrospective` skill to capture lessons learned and update the knowledge base. See the "Scoped Instructions", "Knowledge Reference", and "Skills Reference" sections below.
 
@@ -70,29 +70,32 @@ Fork delivery scope and phase gates: [Toolbox roadmap](knowledge/toolbox-roadmap
 
 Loaded on demand from `.github/knowledge/` — read relevant files before starting work to rebuild the mental model:
 
-| Knowledge file              | Domain                      | Content                                                                                                                            |
-| --------------------------- | --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
-| `grid-core`                 | Grid internals              | Config-manager, column groups, grid.ts lifecycle, DOM structure, state ownership                                                   |
-| `grid-render-pipeline`      | Render pipeline             | Render-scheduler, virtualization, rows hot path, sanitize, `core/internal/` module index                                           |
-| `grid-data-pipeline`        | Data pipeline               | value-accessor & field paths, row-manager & transactions, sort hot path, aggregators                                               |
-| `grid-input`                | Input & pointer             | Pointer modality, pointer-drag capture/promotion, coarse long-press priority policy (#302)                                         |
-| `grid-plugins`              | Plugin system               | Plugin manager, lifecycle, hooks, inter-plugin communication, manifest, scroll dispatch                                            |
-| `grid-plugins-catalog-data` | Plugin catalog (data)       | ServerSide, Tree, GroupingRows, Pivot, pinned/virtualized/grouped columns, sorting, filtering, pinned rows, clipboard/export/print |
-| `grid-plugins-catalog-ui`   | Plugin catalog (UI)         | Selection, MasterDetail, reordering & drag-drop, Responsive, Tooltip, StickyRows, ContextMenu                                      |
-| `grid-plugin-responsive`    | Responsive plugin           | Breakpoints, card layout, view transitions & morph, column fades/`hiddenColumns`, card height                                      |
-| `grid-plugins-editing`      | Editing & UndoRedo          | Editor injection, commit/cancel flow, keyboard guards, dirty tracking, undo transactions                                           |
-| `grid-plugins-shell`        | Shell plugin                | v3 opt-in model, HARD RULE #370, tool panels, header/toolbar content, dropdown mode                                                |
-| `grid-features`             | Feature registry            | Feature vs plugin distinction, registry pattern, feature catalog, opt-out validation                                               |
-| `a11y`                      | Accessibility (WCAG 2.2 AA) | Role tree & `presentation` promotion, `A11yMessages` naming, surface-vs-text colour tokens, landmarks, SC 2.5.8, test gates        |
-| `adapters`                  | Framework adapters (shared) | Shared adapter conformance, shell-content wrappers, bridge registries, three-way parity                                            |
-| `adapters-react`            | React adapter               | Portal manager, overlay editors, feature-prop coverage assertion                                                                   |
-| `adapters-vue`              | Vue adapter                 | Teleport manager, overlay editors, typed slots                                                                                     |
-| `adapters-angular`          | Angular adapter             | `mountComponentRenderer`, per-feature directives, ng-packagr secondary entries                                                     |
-| `build-and-deploy`          | Build, CI, tooling          | Vite config, bundle budgets, Nx/tsconfig, dependency clusters, CI pipeline, bench regression, demos layout                         |
-| `release-versioning`        | Release & versioning        | release-please branch model, `Release-As` recipes, peer-dep cascade, dist-tags, `@since`, v3 cleanup plan                          |
-| `docs-agent-endpoints`      | Agent doc endpoints         | llms.txt / llms-full.txt / per-framework variants, MDX→markdown transform, docs `outDir`                                           |
-| `build-css`                 | Styling & CSS               | CSS layers, custom properties, partials, themes, style injection, demo-asset aliases                                               |
-| `data-flow-traces`          | End-to-end operation maps   | First render, property change, sort, scroll, edit, tree expand, config merge                                                       |
+| Knowledge file              | Domain                      | Content                                                                                                                     |
+| --------------------------- | --------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| `grid-core`                 | Grid internals              | Config-manager, column groups, grid.ts lifecycle, DOM structure, state ownership                                            |
+| `grid-render-pipeline`      | Render pipeline             | Render-scheduler, virtualization, rows hot path, sanitize, `core/internal/` module index                                    |
+| `grid-data-pipeline`        | Data pipeline               | value-accessor & field paths, row-manager & transactions, sort hot path, aggregators                                        |
+| `grid-input`                | Input & pointer             | Pointer modality, pointer-drag capture/promotion, coarse long-press priority policy (#302)                                  |
+| `grid-plugins`              | Plugin system               | Plugin manager, lifecycle, hooks, inter-plugin communication, manifest, scroll dispatch                                     |
+| `grid-hierarchy`            | Hierarchical row models     | Hierarchy, Tree, parent-scoped GroupingRows, occurrence identity, metadata generations and expansion ownership              |
+| `upstream-integration`      | Upstream compatibility      | Frozen source identities, upstream exceptions, conflict decisions and qualification boundary                                |
+| `grid-plugins-catalog-data` | Plugin catalog (data)       | ServerSide, Pivot, pinned/virtualized/grouped columns, sorting, filtering, pinned rows, clipboard/export/print              |
+| `grid-scoped-footers`       | Non-data scoped footers     | Scope admission, empty groups, row-flow offsets, capacity policy and React owner lifetime                                   |
+| `grid-plugins-catalog-ui`   | Plugin catalog (UI)         | Selection, MasterDetail, reordering & drag-drop, Responsive, Tooltip, StickyRows, ContextMenu                               |
+| `grid-plugin-responsive`    | Responsive plugin           | Breakpoints, card layout, view transitions & morph, column fades/`hiddenColumns`, card height                               |
+| `grid-plugins-editing`      | Editing & UndoRedo          | Editor injection, commit/cancel flow, keyboard guards, dirty tracking, undo transactions                                    |
+| `grid-plugins-shell`        | Shell plugin                | v3 opt-in model, HARD RULE #370, tool panels, header/toolbar content, dropdown mode                                         |
+| `grid-features`             | Feature registry            | Feature vs plugin distinction, registry pattern, feature catalog, opt-out validation                                        |
+| `a11y`                      | Accessibility (WCAG 2.2 AA) | Role tree & `presentation` promotion, `A11yMessages` naming, surface-vs-text colour tokens, landmarks, SC 2.5.8, test gates |
+| `adapters`                  | Framework adapters (shared) | Shared adapter conformance, shell-content wrappers, bridge registries, three-way parity                                     |
+| `adapters-react`            | React adapter               | Portal manager, overlay editors, feature-prop coverage assertion                                                            |
+| `adapters-vue`              | Vue adapter                 | Teleport manager, overlay editors, typed slots                                                                              |
+| `adapters-angular`          | Angular adapter             | `mountComponentRenderer`, per-feature directives, ng-packagr secondary entries                                              |
+| `build-and-deploy`          | Build, CI, tooling          | Vite config, bundle budgets, Nx/tsconfig, dependency clusters, CI pipeline, bench regression, demos layout                  |
+| `release-versioning`        | Release & versioning        | release-please branch model, `Release-As` recipes, peer-dep cascade, dist-tags, `@since`, v3 cleanup plan                   |
+| `docs-agent-endpoints`      | Agent doc endpoints         | llms.txt / llms-full.txt / per-framework variants, MDX→markdown transform, docs `outDir`                                    |
+| `build-css`                 | Styling & CSS               | CSS layers, custom properties, partials, themes, style injection, demo-asset aliases                                        |
+| `data-flow-traces`          | End-to-end operation maps   | First render, property change, sort, scroll, edit, tree expand, config merge                                                |
 
 > **Schema:** Each entry uses structured notation — OWNS, READS FROM, WRITES TO, INVARIANT, FLOW, TENSION, DECIDED — optimized for fast scanning and mental model reconstruction.
 
@@ -110,20 +113,23 @@ Loaded on demand from `.github/skills/` for task-specific workflows:
 | `new-adapter`         | Scaffolding a new framework adapter from scratch                                                    |
 | `release-prep`        | Preparing a library version for release                                                             |
 | `astro-demo`          | Adding demos or documentation for features                                                          |
-| `bench`               | Benchmarking as local regression testing; writing `.bench.ts`                                       |
+| `bench`               | Benchmarking as local regression testing; writing `.bench.ts`; `/bench [tag] [report-only]`         |
+| `perf-fix`            | `/perf-fix` (manual only) — fix one bench regression end-to-end: profile → patch → re-bench         |
 | `debug-perf`          | Profiling, hot path analysis, render scheduler issues                                               |
 | `debug-browser`       | DOM inspection, screenshots, console, script eval                                                   |
 | `run-e2e`             | Running e2e suites, demo servers, updating baselines                                                |
 | `docs-update`         | After any feature, fix, or refactor                                                                 |
 | `since-tag`           | Resolving `@since` JSDoc versions for new public API                                                |
-| `pr-comments`         | Read/reply/resolve PR review threads via the `gh` CLI                                               |
+| `qa-pr`               | `/qa-pr <PR>` — remote QA: evaluate PR review comments, fix valid ones, reply + resolve threads     |
+| `qa`                  | `/qa` (manual only) — local QA: pre-commit review + fix of a file/folder/diff/branch                |
 | `fallow`              | Codebase intelligence: health score, complexity, dead code, duplication, PR audit via `bunx fallow` |
-| `qa-apply-findings`   | Shared findings execution core for `/qa` and `/pr-qa`                                               |
+| `qa-apply-findings`   | Shared findings execution core for `qa` and `qa-pr` (not user-invocable)                            |
 | `retrospective`       | Post-task lessons learned; update instructions & skills                                             |
+| `ai-mode`             | `/ai-mode [setup \| saving \| full]` (manual only) — toggle the token-budget flag                   |
 
 ## AI Usage Mode (token budget)
 
-A project-scoped token-budget flag (`full` | `saving`) governs how aggressively I spend tokens/credits. The **single source of truth** — both the active flag and the full behavioral rules (including the saving-mode handoff/deferral list) — is `.github/instructions/ai-mode.instructions.md`, auto-loaded every session via `applyTo: '**'`. Toggle it with the `/ai_mode saving` / `/ai_mode full` prompt; install it on a new project with `/ai_mode setup`. The flag never overrides safety/consent rules. See `delivery-workflow.instructions.md` → "Saving mode" for how it interacts with the delivery checklist.
+A project-scoped token-budget flag (`full` | `saving`) governs how aggressively I spend tokens/credits. The **single source of truth** — both the active flag and the full behavioral rules (including the saving-mode handoff/deferral list) — is `.github/instructions/ai-mode.instructions.md`, auto-loaded every session via `applyTo: '**'`. Toggle it with the `/ai-mode saving` / `/ai-mode full` skill; install it on a new project with `/ai-mode setup`. The flag never overrides safety/consent rules. See `delivery-workflow.instructions.md` → "Saving mode" for how it interacts with the delivery checklist.
 
 ## Core Constraints
 
@@ -132,7 +138,7 @@ Constraints fall into three categories. Read the category summary first; the bul
 | Category               | Where it bites                                    | Key rules (full text below)                                                                                                                                                                              |
 | ---------------------- | ------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Workflow & safety**  | Git, delivery checklist, completion gate          | No remote pushes without consent; mandatory 7-step delivery; todo-list precondition; self-audit before final message                                                                                     |
-| **Technical limits**   | Bundle size, TypeScript strictness, Nx            | `index.js` ≤170 kB raw / ≤50 kB gz; strict TS; always use Nx                                                                                                                                             |
+| **Technical limits**   | Bundle size, TypeScript strictness, Nx            | `index.js` ≤170 KiB raw / ≤52 KiB gzip; strict TS; always use Nx                                                                                                                                         |
 | **Environment quirks** | Code style, web components, terminal, Git tooling | ESLint+Prettier; `tbw-` prefix custom elements; do not pipe Nx commands through `tail`/`head`/`2>&1` on Windows / Git Bash; use the `gh`/`git` CLI for all Git & GitHub work — never GitKraken MCP tools |
 
 - **Never push or merge to a remote without explicit per-request user consent.** Local commits are fine; `git push`, `gh pr create`, `gh pr merge`, force-pushes, tag pushes, and any GitHub-mutating tool call are **forbidden** unless the user asked for that exact action in the current turn. Never commit directly to `main` — switch to a topic branch first. See the "Git Safety Rules" section in `delivery-workflow.instructions.md` for the full list and recovery procedure if you slip.
@@ -140,7 +146,8 @@ Constraints fall into three categories. Read the category summary first; the bul
   - **Hard precondition:** Before calling any file-editing or code-running tool, you MUST first call `manage_todo_list` with the seven delivery steps. Read-only exploration does not require the list; the moment you intend to modify the workspace, it does.
   - **Completion gate:** Do not output "done", "complete", or a wrap-up summary until every todo is marked completed. A step may be marked completed with "N/A" only in the specific cases listed in `delivery-workflow.instructions.md` — state the reason explicitly; never silently skip.
   - **Self-audit:** Before the final message, state in one concrete sentence what was done for each completed step (e.g. "Read `grid-plugins.md`; ran `bun nx test grid` — 3225 passed; added `DECIDED` entry for pinned-rows count derivation"). End with `📦 **Good commit point:** type(scope): ...`.
-- **Bundle budget:** `index.js` ≤170 KiB raw and ≤50 KiB gzipped (build fails) with a soft warning at 45 KiB gzipped; plugins ≤55 KiB raw except Selection ≤60 KiB (explicitly approved embedded-checkbox exception); adapters: react ≤50 KiB / vue ≤50 KiB — enforced by `tools/vite-bundle-budget.ts` using each package's entry rules. Keep core lean: any feature that can ship as a plugin without hurting performance MUST be a plugin.
+- **Bundle budget:** `index.js` ≤170 KiB raw and ≤52 KiB gzip (174080/53248 bytes), soft warning at 45 KiB (46080 bytes). `tools/core-bundle-budget.ts` is the core limit definition; build and report use Bun's default `node:zlib.gzipSync` via `tools/bundle-size.ts`. Upstream Node-hosted Nx/Vite remains supported, but must delegate measurement to Bun, never choose the favorable compressor. Plugins remain ≤55 KiB raw except Selection ≤60 KiB; React/Vue remain ≤50 KiB raw, with their existing gzip rules unchanged.
+- **Standing budget permission (user-directed):** Future budget increases do not require per-increase approval. First evaluate feature need, correctness, readability/maintainability, plugin placement and measured impact; prefer a clear justified implementation over byte-driven complexity. Record the old/new exact limits, authoritative Bun version, before/after bytes and rationale in the relevant knowledge/docs, update the shared rule and focused tests, and rerun enforcement. Do not silently disable checks or broadly raise unrelated entry limits. This permission grants **no commit, push, PR, release or other remote authorization**.
 - **Always use Nx:** `bun nx <target> <project>`, never invoke Vitest/Vite/ESLint directly
 - **Git & GitHub tooling — `gh`/`git` CLI only, never GitKraken:** The user has **no GitKraken license**, so the GitKraken MCP tools (`mcp_gitkraken_cli_*`) and the GitLens MCP tools are **off-limits** — do not call them for any operation (status, log, diff, blame, branch, commit, push, PR/issue create, comment, review, worktree, etc.). Use the `gh` CLI for all GitHub operations (issues, PRs, releases, reviews) and the `git` CLI for all local repository operations. The VS Code `github-pull-request_*` read tools remain fine for read-only PR/issue lookups. Remote-mutating actions still require explicit per-request consent (see Git Safety Rules in `delivery-workflow.instructions.md`).
 - **Strict TypeScript:** `strict: true`, no implicit any

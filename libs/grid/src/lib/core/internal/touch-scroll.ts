@@ -348,6 +348,45 @@ export function setupTouchScrollListeners(
 }
 
 /**
+ * Resolve an outer vertical owner without crossing a consumer clipping, modal,
+ * or overscroll-containment boundary. Grid-internal clipping is not an owner.
+ */
+function outerWheelOwner(host: HTMLElement, deltaY: number): HTMLElement | undefined {
+  let node: Element | null = host.parentElement;
+  if (!node && host.getRootNode() instanceof ShadowRoot) node = (host.getRootNode() as ShadowRoot).host;
+  while (node instanceof HTMLElement) {
+    const style = getComputedStyle(node);
+    if (style.overflowY === 'hidden' || style.overflowY === 'clip') return undefined;
+    const scrollable = /^(auto|scroll|overlay)$/.test(style.overflowY) || node === host.ownerDocument.scrollingElement;
+    if (scrollable) {
+      const max = node.scrollHeight - node.clientHeight;
+      if ((deltaY > 0 && node.scrollTop < max) || (deltaY < 0 && node.scrollTop > 0)) return node;
+      if (style.overscrollBehaviorY === 'contain' || style.overscrollBehaviorY === 'none') return undefined;
+    }
+    if (node.getAttribute('aria-modal') === 'true' || (node instanceof HTMLDialogElement && node.open))
+      return undefined;
+    const parent = node.parentElement;
+    const root = node.getRootNode();
+    node = parent ?? (root instanceof ShadowRoot ? root.host : null);
+  }
+  return undefined;
+}
+
+function nestedWheelOwner(event: WheelEvent, scrollArea: HTMLElement): boolean {
+  for (const node of event.composedPath()) {
+    if (node === scrollArea) break;
+    if (!(node instanceof HTMLElement)) continue;
+    const style = getComputedStyle(node);
+    if (
+      (/^(auto|scroll|overlay)$/.test(style.overflowY) && node.scrollHeight > node.clientHeight) ||
+      (/^(auto|scroll|overlay)$/.test(style.overflowX) && node.scrollWidth > node.clientWidth)
+    )
+      return true;
+  }
+  return false;
+}
+
+/**
  * Forward wheel gestures from the content area to the faux scrollbar / scroll area.
  *
  * The content area never scrolls natively (rows are positioned via transforms), so
@@ -363,12 +402,42 @@ export function setupWheelScrollListeners(
   gridContentEl.addEventListener(
     'wheel',
     (e: WheelEvent) => {
+      if (e.defaultPrevented || !e.cancelable || e.ctrlKey || e.metaKey || e.altKey) return;
       // A native <select> picker renders in the top layer but its wheel events still
       // target the grid content; scrolling the grid would close the picker.
       try {
         if (gridContentEl.querySelector('select:open')) return;
       } catch {
         /* :open pseudo-class not supported — ignore */
+      }
+
+      if (
+        scrollArea &&
+        !e.shiftKey &&
+        e.deltaX !== 0 &&
+        e.deltaY !== 0 &&
+        fauxScrollbar.scrollHeight <= fauxScrollbar.clientHeight
+      ) {
+        const host = gridContentEl.closest<HTMLElement>('tbw-grid, [data-tbw-grid]');
+        if (!host || nestedWheelOwner(e, scrollArea)) return;
+        const owner = outerWheelOwner(host, e.deltaY);
+        if (!owner) return;
+        const areaStyle = getComputedStyle(scrollArea);
+        if (areaStyle.overscrollBehaviorY === 'contain' || areaStyle.overscrollBehaviorY === 'none') return;
+        const maxX = scrollArea.scrollWidth - scrollArea.clientWidth;
+        const rtl = areaStyle.direction === 'rtl';
+        const minX = rtl ? -maxX : 0;
+        const endX = rtl ? 0 : maxX;
+        if (!((e.deltaX > 0 && scrollArea.scrollLeft < endX) || (e.deltaX < 0 && scrollArea.scrollLeft > minX))) return;
+        const style = getComputedStyle(gridContentEl);
+        const line = Number.parseFloat(style.lineHeight) || Number.parseFloat(style.fontSize) * 1.2;
+        const xScale = e.deltaMode === 1 ? line : e.deltaMode === 2 ? scrollArea.clientWidth : 1;
+        const yScale = e.deltaMode === 1 ? line : e.deltaMode === 2 ? owner.clientHeight : 1;
+        // Cancelling a wheel event cancels BOTH axes; route each exactly once.
+        e.preventDefault();
+        scrollArea.scrollBy({ left: e.deltaX * xScale, behavior: 'instant' });
+        owner.scrollBy({ top: e.deltaY * yScale, behavior: 'instant' });
+        return;
       }
 
       const isHorizontal = e.shiftKey || Math.abs(e.deltaX) > Math.abs(e.deltaY);

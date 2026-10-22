@@ -1,6 +1,7 @@
 ---
 title: "Master-Detail Plugin"
 description: "Show expandable detail rows beneath data rows."
+pluginKinds: [structural, functional]
 ---
 
 import { TabItem, Tabs } from '@astrojs/starlight/components';
@@ -169,6 +170,28 @@ is also accepted in `gridConfig.masterDetail`.
   </TabItem>
 </Tabs>
 
+## Per-Row Eligibility
+
+Use `MasterDetailConfig<T>.hasDetail` to allow details only for eligible real rows:
+
+```ts
+masterDetail: {
+  hasDetail: (row) => row.kind === 'record',
+  detailRenderer: (row) => renderDetails(row),
+}
+```
+
+The predicate applies to native/custom disclosures, row clicks, keyboard actions,
+programmatic expansion, loading and detail heights. Omitted means all real rows;
+synthetic group headers and loading placeholders never have details. After data or
+predicate changes, refresh the grid to release newly ineligible detail state,
+cached data, measured heights and controls. Stale custom actions recheck eligibility.
+
+This works with both feature configuration and manually constructed plugins.
+An eligible Tree parent can have children and a detail panel independently; details
+appear immediately after their owner without entering the row model or domain data.
+See [Hierarchy composition](/grid/plugins/hierarchy/).
+
 ## Demos
 
 ### Default Master-Detail
@@ -228,6 +251,16 @@ features: { masterDetail: { animation: false, ... } }
 :::note
 Animation respects the grid-level `animation.mode` setting. If the grid has `animation: { mode: 'off' }`, plugin animations are disabled.
 :::
+
+## Row heights
+
+`gridConfig.rowHeight` describes the base row, excluding its detail panel. Expanded
+rows contribute that positive numeric or per-row callback height plus the detail
+height to virtualization. Do not add detail height in the callback yourself.
+Without a positive configured base, MasterDetail retains the grid's default
+(configured or CSS-measured) height fallback. Collapsed rows use normal grid height
+resolution. After changing detail content size asynchronously, call
+`grid.invalidateRowHeight(rowIndex)` once layout has settled.
 
 ## Server-Side Data
 

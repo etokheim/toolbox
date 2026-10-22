@@ -174,6 +174,13 @@ and `selection="range"`. The same options work in `gridConfig.features`.
 See [Cell Entry](https://toolboxjs.com/grid/plugins/cell-entry/) for keyboard,
 validation and boundary-focus behaviour.
 
+With `features/pinned-rows` imported, `pinnedRows.slots` updates live on both the
+feature prop and `gridConfig.features.pinnedRows`. Inline panel renderers, aggregation
+formatters and cell callbacks use their latest values without resetting editing,
+selection or Undo history. Slot additions, removals and position changes also apply
+without restarting plugins. Callback-only updates retain the panel's React state;
+changing its slot identity, position or render zone may remount that panel.
+
 ### Import All Features
 
 For prototyping or when bundle size isn't critical, import all features at once:
@@ -194,6 +201,19 @@ import '@toolbox-web/grid-react/features';
   // ... any feature prop
 />;
 ```
+
+### Scoped footer controls
+
+Import `@toolbox-web/grid-react/features/pinned-rows` to use typed
+`PinnedRowsConfig<Row>.scopedFooters` through either the `pinnedRows` prop or
+`gridConfig.features.pinnedRows`. The renderer accepts JSX, DOM, or a persistent
+`ControlView<FooterContext<Row>>`; JSX uses the existing provider-preserving
+portal manager, not a separate React root. Live callback/height updates preserve
+sibling plugins, editor and Undo state. `scope.key` is occurrence identity;
+group scopes also expose `parent` and `path` for application policy.
+
+See the [scoped-footer guide](https://toolboxjs.com/grid/plugins/pinned-rows/#scoped-non-data-footers)
+for empty scopes, explicit heights and replacing only your own global action slot.
 
 ### Full Example
 
@@ -303,6 +323,37 @@ function EmployeeGrid() {
 
 ### Using GridColumn Components
 
+For a mixed DOM/React grid, keep native DOM-returning renderers and headers in the
+`columns` prop, and supply JSX only for the matching `GridColumn` child. Remove
+`renderer` and `viewRenderer` from that field's core definition so the child can
+provide it; retain width, pinning and other column options there. A renderer-only
+child does not require the Editing plugin. Actual editors still require Editing.
+Use stable component types and occurrence keys to retain component state across
+immutable row updates; do not key action components by the row object.
+
+An unchanged `utility: true` JSX `GridColumn` can also keep its attached cell,
+component state and menu lease while other columns replace callbacks. This
+requires the same declaration, renderer callback, public occurrence ID, visible
+field order and primitive/callback column options. Action width/config changes,
+reordering/removal, editing ownership and recycling still revoke retention.
+Nested option objects/arrays conservatively disable it. Raw DOM renderers retain
+their existing replacement behavior; this is not general column reconciliation.
+
+Framework view containers keep their original portal owner during temporary DOM
+detachment and navigation teardown. A retired view cannot acquire a standalone
+React root; late updates to it are ignored. Standalone adapter rendering on fresh
+containers retains its fallback behavior.
+
+```tsx
+<DataGrid rows={rows} columns={nativeColumns} gridConfig={configWithoutColumns}>
+  <GridColumn field="__actions">{renderActions}</GridColumn>
+</DataGrid>
+```
+
+`gridConfig.columns` is the JSX-normalizing configuration path; do not move
+existing DOM callbacks into it unchanged. The `columns` prop does not normalize
+raw JSX callbacks.
+
 Use the `GridColumn` component with a render prop:
 
 ```tsx
@@ -386,9 +437,9 @@ const config: GridConfig<Employee> = {
 
 ## Master-Detail with GridDetailPanel
 
-Tree and MasterDetail also accept typed `disclosureRenderer` callbacks returning JSX,
+Tree, MasterDetail and GroupingRows accept typed `disclosureRenderer` callbacks returning JSX,
 DOM elements, persistent `ControlView` objects, or `null`. Import the corresponding React
-feature module and use `TreeConfig<T>` / `MasterDetailConfig<T>` from this package.
+feature module and use `TreeConfig<T>` / `MasterDetailConfig<T>` / `GroupingRowsConfig` from this package.
 Both feature props and `gridConfig.features` normalize these hooks; manually supplied
 core plugins remain DOM-only.
 
@@ -412,8 +463,33 @@ Providers are shared with Name renderers and detail panels, using separate mount
 Replacing only disclosure callbacks preserves plugin expansion state. Keep the native
 control mounted across state updates; do not add a second Space/Enter toggle handler.
 MasterDetail exposes `context.ariaLabel` and remains in its standalone utility column.
-Its config-level `detailRenderer` still supports JSX/string/HTMLElement, while a
+GroupingRows also exposes `ariaLabel`, with existing group keys rather than row IDs.
+It preserves generated labels/counts/aggregates; use `disclosureLabel` for localization
+and keep custom markup independent of private `.group-toggle` classes.
+MasterDetail's config-level `detailRenderer` still supports JSX/string/HTMLElement, while a
 `GridDetailPanel` child takes precedence.
+
+Removing the last feature prop (for example, `groupingRows={undefined}`) also removes
+its plugin without requiring an empty `gridConfig`. Removing an explicit `gridConfig`
+clears the configuration last applied by that DataGrid, but not a later imperative
+replacement. An initially unconfigured grid keeps its declarative columns.
+
+For native Tree child sections, GroupingRows supports `childDefaultExpanded` and
+`groupOrder({ parent, depth })`. Callback-only replacement or clearing of `groupOrder`
+on either `groupingRows` or `gridConfig.features.groupingRows` preserves the existing
+plugins, selection and expansion; an unchanged callback does not invalidate the model.
+Other config changes retain the normal initialization lifecycle. See
+[category ordering](https://toolboxjs.com/grid/plugins/grouping-rows/#category-order).
+
+When Tree is active, immutable `rows` updates that replace, add or remove an
+array-valued field run the full row-processing pipeline, even when parent IDs
+are unchanged. This includes custom `childrenField` names and nested updates
+that replace their ancestor child arrays. Plugin instances and expansion state
+are retained. Because explicit Tree instances do not expose their configuration
+as public API, unrelated array replacements on Tree rows conservatively take
+the same path. Scalar-only updates retain the lightweight `updateRows(..., 'sync')`
+path; non-Tree grids keep their existing diff behavior. Replace row objects and
+ancestor arrays rather than mutating nested children in place.
 
 Create expandable row details using the `GridDetailPanel` component:
 

@@ -68,6 +68,21 @@ declare module '../../core/types' {
      * @default false
      */
     lockPinning?: boolean;
+    /**
+     * Expanded border-box width for a utility action cell on the active row.
+     * A number specifies pixels. `'content'` (since 3.10.0) fits each mounted cell's
+     * intrinsic in-flow content, including labels, gaps and padding. Hidden in-flow
+     * controls contribute; absolutely positioned or display:none controls do not.
+     * Only LTR grids with `pinned: 'right'` or `'end'` are supported.
+     * RTL (including inherited direction) is diagnosed and expansion is disabled.
+     * After changing direction, run forceLayout() to reconcile ownership.
+     * The column track and header keep their normal width. Expansion is clamped to
+     * free viewport space, never below the normal cell width and never over another
+     * pinned rail. Keep a persistent menu exposing all actions for touch/narrow views.
+     * Requires PinnedColumnsPlugin. Omit to preserve normal cell geometry.
+     * @since 3.9.0
+     */
+    expandedCellWidth?: number | 'content';
   }
 
   interface PluginNameMap {

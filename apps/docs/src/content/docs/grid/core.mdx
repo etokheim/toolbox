@@ -44,8 +44,9 @@ The grid implements [ARIA grid keyboard patterns](https://www.w3.org/WAI/ARIA/ap
 |-----|--------|
 | <kbd>↑</kbd> <kbd>↓</kbd> <kbd>←</kbd> <kbd>→</kbd> | Move between cells |
 | <kbd>Home</kbd> / <kbd>End</kbd> | Jump to first/last cell in row |
-| <kbd>Ctrl</kbd> + <kbd>Home</kbd> / <kbd>Ctrl</kbd> + <kbd>End</kbd> | Jump to first/last cell in grid |
-| <kbd>PgUp</kbd> / <kbd>PgDn</kbd> | Scroll by viewport height |
+| <kbd>Ctrl</kbd>/<kbd>⌘</kbd> + <kbd>Home</kbd> / <kbd>End</kbd> | Jump to first/last cell in grid |
+| <kbd>Ctrl</kbd>/<kbd>⌘</kbd> + <kbd>↑</kbd> / <kbd>↓</kbd> | Jump to first/last row in the same column |
+| <kbd>PgUp</kbd> / <kbd>PgDn</kbd> | Move focus up/down one page — as many rows as the viewport shows. A grid without a height limit pages to its first/last row. |
 | <kbd>↵ Enter</kbd> | Start editing (with EditingPlugin) |
 | <kbd>Esc</kbd> | Cancel editing |
 | <kbd>⇥ Tab</kbd> / <kbd>⇧ Shift</kbd> + <kbd>⇥ Tab</kbd> | Move to next/previous editable cell |
@@ -1685,6 +1686,21 @@ The loading overlay always wins: while `grid.loading === true` the empty overlay
 
 ---
 
+## Scrolling in an Outer Container
+
+When an auto-height grid has no internal vertical scroll range, a diagonal wheel
+gesture can move the grid horizontally and its nearest user-scrollable outer
+container vertically. Both axes are handled once; this supplements browsers
+that otherwise assign the entire gesture to the inner horizontal scroller.
+
+Scrollable editors keep ownership of their wheel input. The grid does not forward
+through an `overflow: hidden`/`clip` ancestor, an exhausted scroll container with
+`overscroll-behavior-y: contain`/`none`, or an open dialog/modal boundary. Without
+an eligible outer owner, or when horizontal movement is exhausted, native browser
+handling remains in charge. Pure-axis gestures, Shift-wheel horizontal scrolling,
+and fixed-height internal scrolling retain their existing behaviour; browser
+zoom/modifier gestures are not intercepted.
+
 ## Variable Row Heights
 
 By default all rows share a fixed height (`--tbw-row-height`, default 28 px). You can configure per-row heights using a function.
@@ -1704,6 +1720,14 @@ grid.gridConfig = {
 If your function returns `undefined` for a row, the grid **auto-measures** that row's actual DOM height after rendering.
 
 A **numeric** `rowHeight` is authoritative: the grid writes it to the `--tbw-row-height` custom property on the host element (overriding the theme value) and never replaces it with a measured height — including when a plugin such as **MasterDetailPlugin** enables variable-height virtualization.
+
+### Changing configured heights
+
+Replacing `gridConfig.rowHeight` with a new positive number or callback preserves the top visible occurrence and its pixel offset within that row. The grid rebuilds authoritative row positions before restoring the anchor, in both virtualized and small-dataset paths. Offsets are clamped inside a shrinking row and to the new scroll range; horizontal scrolling is unchanged.
+
+Keep a callback's identity stable between density changes. Synchronous replacements coalesce into one restoration. A newer scroll position or explicit `scrollToRow()` / `scrollToRowById()` call takes precedence, even if that navigation leaves the current pixel position unchanged. Source-data or identity-function replacement cancels preservation; a removed occurrence is never restored.
+
+This is not general scroll anchoring: an unchanged callback, ordinary `forceLayout()`, and removing `rowHeight` retain their existing pixel-scroll and measurement behavior. Await layout before issuing navigation that must use the newly configured geometry.
 
 ### How Auto-Measurement Works
 

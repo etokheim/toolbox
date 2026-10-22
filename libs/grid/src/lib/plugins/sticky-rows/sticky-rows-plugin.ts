@@ -8,12 +8,15 @@
  */
 
 import { resolveCellValue } from '../../core/internal/value-accessor';
+import { stripRevealAnimation } from '../hierarchy/reveal-animation';
 import type { RowPosition } from '../../core/internal/virtualization';
 import { BaseGridPlugin } from '../../core/plugin/base-plugin';
 import type { ScrollEvent } from '../../core/plugin/types';
 import type { ColumnConfig } from '../../core/types';
 import styles from './sticky-rows.css?inline';
 import type { StickyPredicate, StickyRowsConfig } from './types';
+import { ActiveAncestors } from './active-ancestors';
+import type { GridElement } from '../../core/plugin/base-plugin';
 
 /** Internal shape of the virtualization state we read from the grid. */
 interface VirtualStateLike {
@@ -80,6 +83,7 @@ export class StickyRowsPlugin extends BaseGridPlugin<StickyRowsConfig> {
   /** Cached clone DOM keyed by row index. Survives the row leaving the
    *  virtualization window so we can keep showing it while stuck. */
   private cloneCache: Map<number, HTMLElement> = new Map();
+  private cloneOwners = new Map<number, unknown>();
 
   /** Currently displayed indices (in DOM order). Used to skip work when the
    *  set hasn't changed between scroll ticks. */
@@ -97,14 +101,29 @@ export class StickyRowsPlugin extends BaseGridPlugin<StickyRowsConfig> {
    *  multiple scroll ticks into a single re-capture. See
    *  {@link maybeScheduleSettlePass}. */
   private settlePassScheduled = false;
+  private captureScheduled: object | null = null;
+  private liveAncestors: ActiveAncestors | null = null;
   // #endregion
 
   // #region Lifecycle
   /** @internal */
+  override attach(grid: GridElement): void {
+    super.attach(grid);
+    if (this.config.mode === 'ancestors') {
+      this.liveAncestors = new ActiveAncestors(grid, this.config, this.disconnectSignal);
+    }
+  }
+
+  /** @internal */
   override detach(): void {
+    this.liveAncestors?.dispose();
+    this.liveAncestors = null;
+    super.detach();
+    this.captureScheduled = null;
     this.container?.remove();
     this.container = null;
     this.cloneCache.clear();
+    this.cloneOwners.clear();
     this.templateClone = null;
     this.stickyIndices = [];
     this.displayedIndices = [];
@@ -117,32 +136,27 @@ export class StickyRowsPlugin extends BaseGridPlugin<StickyRowsConfig> {
 
   /** @internal Recompute the sticky-index list and refresh display. */
   override afterRender(): void {
+    if (this.liveAncestors) {
+      this.liveAncestors.layout();
+      return;
+    }
     // A style pass is now running — possibly the deferred settle pass we
     // requested. Clear the flag so a later scroll tick can queue a fresh one.
     this.settlePassScheduled = false;
     this.recomputeStickyIndices();
     this.ensureContainer();
-    // Pre-cache clones for any sticky row currently in the rendered window
-    // BEFORE it scrolls out — otherwise findRenderedRow() returns null at
-    // display time and we'd render an empty container.
-    this.primeCloneCache();
-    // Re-capture the clones that are CURRENTLY displayed from the (now
-    // settled) live DOM. WHY: `primeCloneCache` refreshes the cache, but
-    // `refreshDisplay` only swaps the container's child nodes when the
-    // displayed *set* changes. On the deferred settle pass after a small
-    // scroll-up — where the sticky set is unchanged (e.g. row 0 stays the
-    // single pinned row) — the stale clone captured during `onScrollRender`
-    // would otherwise remain in the DOM forever, since `sameSet` short-
-    // circuits the rebuild. Reconciling displayed clones here replaces the
-    // stale node with the freshly-settled content. Symptom it fixes: scroll
-    // down past the sticky row, then up a few px → a non-sticky row's content
-    // is pinned until you scroll all the way to the absolute top.
-    this.refreshClonesInWindow();
+    // Keep last-settled captures until queued framework content commits.
+    // Bypass scrolling also calls this hook without a scheduler render.
     this.refreshDisplay();
+    this.scheduleSettledCapture();
   }
 
   /** @internal Re-render clones after a scroll-driven row pool refresh. */
   override onScrollRender(): void {
+    if (this.liveAncestors) {
+      this.liveAncestors.layout();
+      return;
+    }
     // Pre-cache clones for any sticky row currently in the rendered window so
     // we have one ready when it scrolls past. Do NOT re-capture the DISPLAYED
     // clones synchronously here. WHY: when a sticky row is recycled back into
@@ -163,6 +177,10 @@ export class StickyRowsPlugin extends BaseGridPlugin<StickyRowsConfig> {
 
   /** @internal Update which clones show / how they're positioned. */
   override onScroll(event: ScrollEvent): void {
+    if (this.liveAncestors) {
+      this.liveAncestors.layout();
+      return;
+    }
     this.refreshDisplay(event.scrollTop);
   }
 
@@ -176,6 +194,7 @@ export class StickyRowsPlugin extends BaseGridPlugin<StickyRowsConfig> {
   override getVerticalScrollOffsets(
     focusedRowIndex?: number,
   ): { top: number; bottom: number; skipScroll?: boolean } | undefined {
+    if (this.liveAncestors) return this.liveAncestors.offsets(focusedRowIndex);
     if (!this.container || this.displayedIndices.length === 0) return undefined;
     // The row IS one of the stuck clones — it is already pinned in view, and
     // scrolling to it would only push the row it is stuck above out of reach.
@@ -210,6 +229,26 @@ export class StickyRowsPlugin extends BaseGridPlugin<StickyRowsConfig> {
     this.requestAfterRender();
   }
 
+  private scheduleSettledCapture(): void {
+    if (this.captureScheduled || !this.container || !this.stickyIndices.length) return;
+    if (!this.stickyIndices.some((idx) => this.findRenderedRow(idx))) return;
+    const token = (this.captureScheduled = {});
+    const signal = this.disconnectSignal;
+    // First leave the synchronous plugin-hook turn, then let adapter commits
+    // queued by ANY hook run. Capture only; never request another STYLE pass.
+    queueMicrotask(() => {
+      if (this.captureScheduled !== token || signal.aborted) return;
+      queueMicrotask(() => {
+        if (this.captureScheduled !== token || signal.aborted) return;
+        this.captureScheduled = null;
+        if (!this.container?.isConnected) return;
+        this.primeCloneCache(true);
+        this.refreshClonesInWindow();
+        this.refreshDisplay();
+      });
+    });
+  }
+
   // #endregion
 
   // #region Private — predicate + indices
@@ -238,8 +277,16 @@ export class StickyRowsPlugin extends BaseGridPlugin<StickyRowsConfig> {
     // shuffled, predicate flipped). Indices that remain may still point at a
     // different row after re-sort — drop those too so we re-clone from the
     // fresh DOM on the next render.
-    if (next.length !== this.stickyIndices.length || next.some((v, i) => v !== this.stickyIndices[i])) {
+    if (
+      next.length !== this.stickyIndices.length ||
+      next.some((v, i) => v !== this.stickyIndices[i]) ||
+      next.some((idx) => this.cloneOwners.has(idx) && this.cloneOwners.get(idx) !== rows[idx])
+    ) {
       this.cloneCache.clear();
+      this.cloneOwners.clear();
+      this.templateClone = null;
+      this.displayedIndices = [];
+      this.container?.replaceChildren();
     }
     this.stickyIndices = next;
   }
@@ -445,11 +492,20 @@ export class StickyRowsPlugin extends BaseGridPlugin<StickyRowsConfig> {
 
   /** Locate a rendered row in the viewport by its data index. */
   private findRenderedRow(index: number): HTMLElement | null {
-    const grid = this.gridElement;
-    if (!grid) return null;
-    // Cells carry `data-row="<index>"`. The row element is the parent.
-    const cell = grid.querySelector(`.rows .data-grid-row .cell[data-row="${index}"]`);
-    return (cell?.parentElement as HTMLElement | null) ?? null;
+    const body = this.grid?._bodyEl;
+    const v = this.getVirtualState();
+    const row = this.grid?._rowPool[index - (v?.start ?? 0)];
+    if (
+      !body ||
+      !row ||
+      index < 0 ||
+      index >= this.rows.length ||
+      index >= (v?.end ?? 0) ||
+      row.parentElement !== body ||
+      row.__rowDataRef !== this.rows[index]
+    )
+      return null;
+    return row.querySelector(`:scope > .cell[data-row="${index}"]`) ? row : null;
   }
 
   /** Build (or refresh) a clone for `index`, using the live row when present. */
@@ -457,6 +513,9 @@ export class StickyRowsPlugin extends BaseGridPlugin<StickyRowsConfig> {
     const live = this.findRenderedRow(index);
     if (!live) return this.cloneCache.get(index) ?? null;
     const clone = live.cloneNode(true) as HTMLElement;
+    clone.removeAttribute('data-tbw-hovered');
+    clone.querySelectorAll('[data-tbw-hovered]').forEach((el) => el.removeAttribute('data-tbw-hovered'));
+    stripRevealAnimation(clone);
     clone.classList.add('tbw-sticky-row');
     clone.removeAttribute('aria-rowindex');
     // Stuck clones are decorative — the original row is still present in the
@@ -466,6 +525,12 @@ export class StickyRowsPlugin extends BaseGridPlugin<StickyRowsConfig> {
     // Drop any focus styling from the source — clones are non-interactive.
     clone.classList.remove('row-focus', 'cell-focus');
     clone.querySelectorAll('.cell-focus, .row-focus').forEach((el) => el.classList.remove('cell-focus', 'row-focus'));
+    clone.querySelectorAll<HTMLElement>('[data-tbw-cell-expanded]').forEach((cell) => {
+      cell.removeAttribute('data-tbw-cell-expanded');
+      cell.style.removeProperty('--tbw-pinned-cell-width');
+      cell.style.removeProperty('--tbw-pinned-cell-min-width');
+      cell.style.removeProperty('--tbw-pinned-cell-max-width');
+    });
     // Strip tabindex on cells so the clone isn't a tab target.
     clone.removeAttribute('tabindex');
     clone.querySelectorAll('[tabindex]').forEach((el) => el.removeAttribute('tabindex'));
@@ -476,6 +541,7 @@ export class StickyRowsPlugin extends BaseGridPlugin<StickyRowsConfig> {
     this.templateClone = clone.cloneNode(true) as HTMLElement;
 
     this.cloneCache.set(index, clone);
+    this.cloneOwners.set(index, this.rows[index]);
     return clone;
   }
 
@@ -551,9 +617,11 @@ export class StickyRowsPlugin extends BaseGridPlugin<StickyRowsConfig> {
    *  have one ready when the row scrolls past. Without this, a sticky row
    *  that's never been displayed-as-stuck won't have a cache entry, and once
    *  the live row leaves the rendered window we have nothing to render. */
-  private primeCloneCache(): void {
+  private primeCloneCache(skipDisplayed = false): void {
     if (!this.stickyIndices.length) return;
     for (const idx of this.stickyIndices) {
+      // Settlement captures displayed rows immediately before replacing each clone.
+      if (skipDisplayed && this.displayedIndices.includes(idx)) continue;
       if (this.findRenderedRow(idx)) {
         // buildClone() handles the live → cache path itself.
         this.buildClone(idx);
@@ -592,7 +660,10 @@ export class StickyRowsPlugin extends BaseGridPlugin<StickyRowsConfig> {
           // `synthesizeClone`). Cached so the next tick reuses it; a real
           // capture overwrites it the moment the row renders.
           clone = this.synthesizeClone(idx);
-          if (clone) this.cloneCache.set(idx, clone);
+          if (clone) {
+            this.cloneCache.set(idx, clone);
+            this.cloneOwners.set(idx, this.rows[idx]);
+          }
         }
         if (clone) {
           fragment.appendChild(clone);
