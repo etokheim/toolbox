@@ -36,9 +36,11 @@ async function mount(page: Page, mode: 'grid' | 'plain' | 'transform' = 'grid'):
   });
   await page.addScriptTag({ url: 'http://hover.test/index.js', type: 'module' });
   await page.evaluate(async (mode) => {
+    // Platform font metrics must not change the final 8px wheel segment.
     const style = document.createElement('style');
     style.textContent = `
       #subject {position:absolute;left:324px;top:190px;width:1100px;height:693px}
+      #subject .header-row {box-sizing:border-box;height:33px;min-height:33px}
       #header {height:34px}
       #viewport {height:658px;overflow:${mode === 'plain' ? 'auto' : 'hidden'}}
       #rows {will-change:transform}
@@ -85,6 +87,12 @@ async function mount(page: Page, mode: 'grid' | 'plain' | 'transform' = 'grid'):
       }
     }
   }, mode);
+  if (mode === 'grid') {
+    await expect(page.locator('#subject .header-row')).toHaveCSS('height', '33px');
+    await expect
+      .poll(() => page.locator('.faux-vscroll').evaluate((element) => element.scrollHeight - element.clientHeight))
+      .toBe(1988);
+  }
 }
 
 async function sample(page: Page) {

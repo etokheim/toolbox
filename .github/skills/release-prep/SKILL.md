@@ -32,6 +32,19 @@ If any command in steps 1–7 fails (lint error, failing test, type error, build
 
 Do not proceed to the **Release Process** section until every checklist step has passed cleanly in a single uninterrupted run.
 
+### Missing hosted checks on a fork
+
+An empty check list is not a passing gate. Verify the exact PR head, workflow
+triggers and enabled state, then inspect the repository's Actions page. GitHub's
+fork usage pause can coexist with API `enabled: true` and workflow `active`;
+workflow-level enable alone may not remove that repository-level pause.
+Obtain authorization for the supported signed-in maintainer re-enable control.
+After the pause banner disappears, verify a real run exists; earlier PR events
+are not necessarily replayed. Obtain separate authorization for any needed
+close/reopen event, preserving head/base/content, and verify restored open state
+and actual CI scheduling. Do not add empty commits or dispatch release-oriented
+workflows as a substitute for the required validation.
+
 ## Pre-Release Checklist
 
 ### 1. Lint, Test & Build All Projects (parallel)

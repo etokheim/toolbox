@@ -304,24 +304,24 @@ describe.each([false, true])('fixed child sections, reversed=%s', (reverse) => {
         expect(Number(row.getAttribute('aria-rowindex'))).toBe(index + 2);
       }
     };
-    checkOwners();
+    await vi.waitFor(checkOwners);
     const pooled = [...f.grid.querySelectorAll('.rows > .group-row')].map((row) => ({
       row,
       text: row.textContent,
     }));
     f.tree.collapse('alpha');
     await vi.waitFor(() => expect(f.grid.rows).not.toContain(f.rows[0].children![0]));
-    checkOwners();
+    await vi.waitFor(checkOwners);
     expect(pooled.some(({ row, text }) => row.isConnected && row.textContent !== text)).toBe(true);
     f.tree.expand('alpha');
     await vi.waitFor(() => expect(f.grid.rows).toContain(f.rows[0].children![0]));
-    checkOwners();
+    await vi.waitFor(checkOwners);
     f.sort.setSortModel([{ field: 'category', direction: 'desc' }]);
     await vi.waitFor(() => expect(f.groups()[0].value).toBe('Global B'));
-    checkOwners();
+    await vi.waitFor(checkOwners);
     f.grid.rows = f.rows.map((row) => ({ ...row, children: row.children?.map((child) => ({ ...child })) }));
     await vi.waitFor(() => expect(f.grid.rows).not.toContain(f.rows[0]));
-    checkOwners();
+    await vi.waitFor(checkOwners);
   });
 
   it('retires custom controls on policy replacement and restores collapsibility on removal/re-add', async () => {
