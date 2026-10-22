@@ -6,7 +6,7 @@
  * - Aggregation rows: Footer/header rows with computed values (sum, avg, etc.)
  */
 
-import { BaseGridPlugin } from '../../core/plugin/base-plugin';
+import { BaseGridPlugin, type GridElement } from '../../core/plugin/base-plugin';
 import type { ColumnConfig } from '../../core/types';
 import {
   buildContext,
@@ -18,6 +18,7 @@ import {
 } from './pinned-rows';
 import styles from './pinned-rows.css?inline';
 import type { AggregationRowConfig, PinnedRowSlot, PinnedRowsConfig, PinnedRowsContext } from './types';
+import { ScopedFooters } from './scoped-footers';
 
 /**
  * Pinned Rows (Status Bar) Plugin for tbw-grid
@@ -85,14 +86,14 @@ import type { AggregationRowConfig, PinnedRowSlot, PinnedRowsConfig, PinnedRowsC
  * @internal Extends BaseGridPlugin
  * @since 0.1.1
  */
-export class PinnedRowsPlugin extends BaseGridPlugin<PinnedRowsConfig> {
+export class PinnedRowsPlugin<TRow = unknown> extends BaseGridPlugin<PinnedRowsConfig<TRow>> {
   /** @internal */
   readonly name = 'pinnedRows';
   /** @internal */
   override readonly styles = styles;
 
   /** @internal */
-  protected override get defaultConfig(): Partial<PinnedRowsConfig> {
+  protected override get defaultConfig(): Partial<PinnedRowsConfig<TRow>> {
     return {
       slots: [
         {
@@ -111,11 +112,47 @@ export class PinnedRowsPlugin extends BaseGridPlugin<PinnedRowsConfig> {
   private footerWrapper: HTMLElement | null = null;
   /** Slot-mode wrapper: holds top slot rows when `config.slots` is provided. */
   private headerWrapper: HTMLElement | null = null;
+  #scoped?: ScopedFooters<TRow>;
   // #endregion
 
   // #region Lifecycle
   /** @internal */
+  override attach(grid: GridElement): void {
+    super.attach(grid);
+    if (this.config.scopedFooters) this.#scoped = new ScopedFooters(grid, () => this.config);
+  }
+
+  /** Replace scoped eligibility/rendering without replacing sibling plugins. @since 3.10.0 */
+  setScopedFooters(callback: PinnedRowsConfig<TRow>['scopedFooters']): void {
+    if (this.config.scopedFooters === callback) return;
+    this.config.scopedFooters = callback;
+    this.userConfig.scopedFooters = callback;
+    if (!callback) {
+      this.#scoped?.dispose();
+      this.#scoped = undefined;
+    } else if (!this.#scoped) this.#scoped = new ScopedFooters(this.grid, () => this.config);
+    this.requestRender();
+  }
+
+  /** @internal */
+  override onScroll(): void {
+    this.#scoped?.layout();
+  }
+
+  /** @internal */
+  override onScrollRender(): void {
+    this.#scoped?.layout();
+  }
+
+  /** @internal */
+  override getVerticalScrollOffsets(): { top: number; bottom: number } | undefined {
+    return this.#scoped ? { top: 0, bottom: this.#scoped.bottom() } : undefined;
+  }
+
+  /** @internal */
   override detach(): void {
+    this.#scoped?.dispose();
+    this.#scoped = undefined;
     this.cleanup();
   }
   // #endregion
@@ -157,6 +194,7 @@ export class PinnedRowsPlugin extends BaseGridPlugin<PinnedRowsConfig> {
 
     // Slot-driven layout: one DOM row per slot in declared order.
     this.renderSlotMode(container as HTMLElement, gridEl, context);
+    this.#scoped?.layout();
   }
   // #endregion
 

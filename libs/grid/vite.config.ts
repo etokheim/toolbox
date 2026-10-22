@@ -7,6 +7,7 @@ import { build, BuildOptions, defineConfig, LibraryOptions, Plugin } from 'vite'
 import dts from 'vite-plugin-dts';
 import { gzipSync } from 'zlib';
 import { bundleBudget } from '../../tools/vite-bundle-budget';
+import { CORE_BUNDLE_BUDGET } from '../../tools/core-bundle-budget';
 
 // Read package.json version for build-time injection
 const pkg = JSON.parse(readFileSync(resolve(__dirname, 'package.json'), 'utf-8'));
@@ -506,9 +507,7 @@ export default defineConfig(({ command }) => ({
           bundleBudget({
             outDir,
             budgets: [
-              // Core: warn at 45 kB gzip, hard fail at 50 kB gzip / 170 kB raw.
-              // Keep core lean — push features to plugins unless they cost performance.
-              { path: 'index.js', maxSize: 170 * 1024, maxGzip: 50 * 1024, warnGzip: 45 * 1024 },
+              CORE_BUNDLE_BUDGET,
               // Plugins: 55 kB raw ceiling. Editing is the outlier — it owns editors,
               // dirty tracking, validation, cell/row/grid modes, undo integration,
               // cascade, and focus management, and legitimately needs the headroom.

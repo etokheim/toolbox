@@ -58,15 +58,27 @@ grid.columns = [
 
 ### Compact action cells (LTR only)
 
-Set `expandedCellWidth` to a finite positive pixel width on a right-pinned
+Set `expandedCellWidth` to `'content'` or a finite positive pixel width on a right-pinned
 `utility: true` column. Its normal `width` reserves space for persistent controls;
 only the active row's **actual cell** grows inward. The header, column track,
 other rows, adjacent right-pinned columns and horizontal scroll extent do not grow.
 No renderer nodes are moved or cloned.
 
 ```typescript
-{ field: '__actions', utility: true, pinned: 'right', width: 88, expandedCellWidth: 240 }
+{ field: '__actions', utility: true, pinned: 'right', width: 88, expandedCellWidth: 'content' }
 ```
+
+Use `'content'` (since 3.10.0) for occurrence-specific actions: CSS intrinsic sizing
+fits each cell's mounted in-flow controls, labels, gaps and padding. A row whose
+content fits its normal track does not grow, even when another row has many actions.
+Content, font and label changes update through normal browser layout; no explicit
+measurement or refresh call is required. Use a number when you need a fixed expanded
+pixel target; existing numeric behaviour is unchanged.
+
+In-flow `visibility: hidden` children contribute to intrinsic width; `display: none`
+and absolutely positioned children do not. Avoid fixed widths or size containment on
+renderer wrappers that hide their intrinsic contribution. Keep persistent controls
+non-shrinking and right-aligned so clipped secondary content cannot displace them.
 
 Keep renderer children in one inline strip, with secondary actions before the
 persistent controls. Do not use an absolute floating container or `overflow: visible`.
@@ -128,11 +140,18 @@ It describes active expansion **intent**, not guaranteed extra pixels: clamping
 can leave the cell at its normal width. Do not set or remove the attribute yourself.
 Internal width variables are not part of this styling contract.
 
+Set `--tbw-pinned-cell-shadow` to customise the active cell's shadow, for example
+`-4px 0 8px var(--tbw-color-shadow)`. It paints from the actual expanded border-box's
+inner edge, not the shared column boundary; the default is the existing one-pixel
+border shadow. Replace any consumer full-height body shadow at the old track edge
+with row-local boundary paint, otherwise that independent overlay can cross actions.
+Inactive rows and headers keep their existing boundaries.
+
 Supported pins are `right` and `end` in **LTR** grids. Effective/inherited RTL
 disables this opt-in behavior and emits a deduplicated diagnostic; it does not
 repair the pre-existing RTL pinning geometry. After changing direction, call
 `await grid.forceLayout()` to reconcile the rendered cells and retire old leases.
-Left/non-pinned cells, per-row expanded widths and editor expansion are not supported.
+Left/non-pinned cells, per-row numeric callbacks and editor expansion are not supported.
 
 ## Accessibility
 

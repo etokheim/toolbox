@@ -12,6 +12,8 @@ export type {
   AggregatorConfig,
   AggregatorDefinition,
   AggregatorFormatter,
+  FooterContext,
+  FooterScope,
   PanelRender,
   PanelSlot,
   PanelZone,
@@ -19,5 +21,6 @@ export type {
   PinnedRowsConfig,
   PinnedRowsContext,
   PinnedRowsPosition,
+  ScopedFooter,
   ZonedPanelRender,
 } from './types';

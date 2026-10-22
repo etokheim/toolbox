@@ -30,6 +30,9 @@ import type {
   GroupingRowsConfig as CoreGroupingRowsConfig,
   MasterDetailConfig as CoreMasterDetailConfig,
   PinnedRowsConfig as CorePinnedRowsConfig,
+  ScopedFooter as CoreScopedFooter,
+  FooterContext,
+  FooterScope,
   ResponsivePluginConfig as CoreResponsivePluginConfig,
   ExportConfig,
   FeatureConfig,
@@ -194,8 +197,14 @@ export type PinnedRowSlot = PanelSlot | AggregationSlot;
  *
  * @since 1.8.2
  */
-export type PinnedRowsConfig = Omit<CorePinnedRowsConfig, 'slots'> & {
+export type PinnedRowsConfig<TRow = unknown> = Omit<CorePinnedRowsConfig<TRow>, 'slots' | 'scopedFooters'> & {
   slots?: PinnedRowSlot[];
+  scopedFooters?: (scope: FooterScope<TRow>) => ScopedFooter<TRow> | null;
+};
+
+/** React content for a single native non-data footer. @since 2.7.0 */
+export type ScopedFooter<TRow = unknown> = Omit<CoreScopedFooter<TRow>, 'render'> & {
+  render: (context: FooterContext<TRow>) => ReactNode | HTMLElement | ControlView<FooterContext<TRow>>;
 };
 
 /**
@@ -515,7 +524,7 @@ export interface FeatureProps<TRow = unknown> {
    * }} />
    * ```
    */
-  pinnedRows?: boolean | PinnedRowsConfig;
+  pinnedRows?: boolean | PinnedRowsConfig<TRow>;
 
   /**
    * Pin selected data rows below the header as the user scrolls past them.

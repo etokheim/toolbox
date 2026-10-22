@@ -1,7 +1,11 @@
 @layer tbw-plugins {
   tbw-grid .rows > .data-grid-row > .cell[data-tbw-cell-expanded] {
     width: var(--tbw-pinned-cell-width, auto);
+    min-width: var(--tbw-pinned-cell-min-width, 0);
+    max-width: var(--tbw-pinned-cell-max-width, none);
     justify-self: right;
     z-index: 26;
+    /* The active border-box owns its moving inner edge, not the shared track. */
+    box-shadow: var(--tbw-pinned-cell-shadow, -1px 0 0 var(--tbw-color-border));
   }
 }

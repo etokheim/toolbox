@@ -6,16 +6,21 @@
  * refreshVirtualWindow algorithm. Takes the grid reference directly
  * (tightly coupled — this manager can never live outside the grid).
  */
-import type { InternalGrid, VirtualState } from '../types';
+import type { GridConfig, InternalGrid, VirtualState } from '../types';
 import { RenderPhase } from './render-scheduler';
+import { getRowWindow } from './row-window';
+import { applyRowFlow, getRowFlow } from './row-flow';
 import {
   computeAverageExcludingPluginRows,
   computeScrollMapping,
   createIdentityScrollMapping,
+  fromVirtualScrollTop,
+  getRowCacheKey,
   getRowIndexAtOffset,
   getTotalHeight,
   measureRenderedRowHeights,
   rebuildPositionCache,
+  resolveConfiguredRowHeight,
   toVirtualScrollTop,
   updateRowHeight,
 } from './virtualization';
@@ -34,6 +39,7 @@ export class VirtualizationManager<T = any> {
 
   #geometryVerifyHandle = 0;
   #geometryVerifyPasses = 0;
+  #positionRows?: T[];
 
   constructor(grid: InternalGrid<T>, initialState?: Partial<VirtualState>) {
     this.#grid = grid;
@@ -144,6 +150,7 @@ export class VirtualizationManager<T = any> {
     } else {
       rowContentHeight = totalRows * s.rowHeight;
     }
+    if (totalRows === 0) rowContentHeight += getRowFlow(this.#grid)?.emptyHeight() ?? 0;
 
     // Clamp the row-content portion to the browser's max element height. Above
     // this cap (Chromium ~33.5M px), a single element's rendered height is silently
@@ -160,6 +167,19 @@ export class VirtualizationManager<T = any> {
 
   // #region Position Cache
 
+  #positionsStale(): boolean {
+    const s = this.state;
+    return (
+      s.variableHeights &&
+      (this.#positionRows !== this.#grid._rows || s.positionCache?.length !== this.#grid._rows.length)
+    );
+  }
+
+  /** Reconcile a new row generation before imperative navigation reads its geometry. */
+  refreshChangedRows(): void {
+    if (this.#positionsStale()) this.refreshVirtualWindow(true);
+  }
+
   /**
    * Initialize or rebuild the position cache for variable row heights.
    * Called when rows change or variable heights mode is enabled.
@@ -169,6 +189,8 @@ export class VirtualizationManager<T = any> {
     if (!s.variableHeights) return;
 
     const grid = this.#grid;
+    const flow = getRowFlow(grid);
+    flow?.prepare();
     const rows = grid._rows;
     const estimatedHeight = s.rowHeight || 28;
     const getRowId = grid.effectiveConfig?.getRowId;
@@ -177,6 +199,8 @@ export class VirtualizationManager<T = any> {
     s.positionCache = rebuildPositionCache(rows, s.heightCache, estimatedHeight, { rowId: rowIdFn }, (row, index) =>
       this.#resolveRowHeight(row, index),
     );
+    if (flow) applyRowFlow(s.positionCache, flow);
+    this.#positionRows = rows;
 
     const stats = computeAverageExcludingPluginRows(s.positionCache, rows, estimatedHeight, (row, index) =>
       grid._getPluginRowHeight(row, index),
@@ -190,9 +214,7 @@ export class VirtualizationManager<T = any> {
   #resolveRowHeight(row: T, index: number): number | undefined {
     const pluginHeight = this.#grid._getPluginRowHeight(row, index);
     if (pluginHeight !== undefined) return pluginHeight;
-    const configured = this.#grid.effectiveConfig?.rowHeight;
-    const height = typeof configured === 'function' ? configured(row, index) : configured;
-    return height !== undefined && height > 0 ? height : undefined;
+    return resolveConfiguredRowHeight(this.#grid.effectiveConfig?.rowHeight, row, index);
   }
 
   /**
@@ -215,7 +237,7 @@ export class VirtualizationManager<T = any> {
 
     let height = newHeight;
     if (height === undefined) {
-      height = this.#grid._getPluginRowHeight(row, rowIndex);
+      height = this.#resolveRowHeight(row, rowIndex);
     }
     if (height === undefined) {
       height = s.rowHeight;
@@ -273,6 +295,7 @@ export class VirtualizationManager<T = any> {
         defaultHeight: s.rowHeight,
         start,
         end,
+        rowIndices: getRowWindow(grid)?.indices,
         getPluginHeight: (row, index) => this.#resolveRowHeight(row, index),
         getRowId: getRowId ? (row: T) => getRowId(row) : undefined,
       },
@@ -289,6 +312,71 @@ export class VirtualizationManager<T = any> {
   // #endregion
 
   // #region Core Virtual Window
+
+  #restoreHeightAnchor?: (scrollTop: number) => number | undefined;
+
+  /** Capture before configuration can overwrite the old cache or fixed height. */
+  captureHeightAnchor(nextHeight: GridConfig<T>['rowHeight']): void {
+    const grid = this.#grid;
+    const s = this.state;
+    const config = grid.effectiveConfig;
+    const container = s.container;
+    if (this.#restoreHeightAnchor) return;
+    const window = getRowWindow(grid);
+    if (window?.viewport?.()) {
+      this.#restoreHeightAnchor = window.captureHeightAnchor?.(nextHeight);
+      return;
+    }
+    if (!config || !s.enabled || !container || !grid._rows.length || nextHeight === config.rowHeight) return;
+    if (typeof nextHeight !== 'function' && !(typeof nextHeight === 'number' && nextHeight > 0)) return;
+    const nativeTop = container.scrollTop;
+    const top = toVirtualScrollTop(nativeTop, s.scrollMapping);
+    // Fractional capped mapping can round an exact row boundary just below itself.
+    const boundary = top + Math.abs(top) * Number.EPSILON;
+    const index =
+      s.variableHeights && s.positionCache
+        ? getRowIndexAtOffset(s.positionCache, boundary)
+        : Math.floor(boundary / s.rowHeight);
+    if (index < 0 || index >= grid._rows.length) return;
+    const position = s.variableHeights ? s.positionCache?.[index] : undefined;
+    if (s.variableHeights && !position) return;
+    const key = getRowCacheKey(grid._rows[index], config.getRowId);
+    const inside = Math.max(0, top - (position?.offset ?? index * s.rowHeight));
+    const source = grid.sourceRows;
+
+    // One configuration transaction, not scroll state: consume after rebuilding
+    // authoritative positions and resizing the spacer, before choosing the window.
+    this.#restoreHeightAnchor = (currentTop) => {
+      this.cancelHeightAnchor();
+      const effective = grid.effectiveConfig;
+      if (
+        !effective ||
+        container !== s.container ||
+        currentTop !== nativeTop ||
+        source !== grid.sourceRows ||
+        config.getRowId !== effective.getRowId ||
+        config.rowHeight === effective.rowHeight ||
+        effective.rowHeight === undefined
+      )
+        return undefined;
+      const currentIndex = grid._rows.findIndex((row) => getRowCacheKey(row, effective.getRowId) === key);
+      if (currentIndex < 0) return undefined;
+      const position = s.variableHeights ? s.positionCache?.[currentIndex] : undefined;
+      const offset = position?.offset ?? currentIndex * s.rowHeight;
+      const height = position?.height ?? s.rowHeight;
+      const target = offset + Math.min(inside, Math.max(0, height - 1));
+      const max = Math.max(0, s.scrollMapping.rawContentHeight - s.scrollMapping.viewportHeight);
+      const restored = fromVirtualScrollTop(Math.max(0, Math.min(target, max)), s.scrollMapping);
+      container.scrollTop = restored;
+      return restored;
+    };
+  }
+
+  /** Explicit navigation and teardown take precedence over a pending height change. */
+  cancelHeightAnchor(): void {
+    this.#restoreHeightAnchor = undefined;
+    getRowWindow(this.#grid)?.cancelHeightAnchor?.();
+  }
 
   /**
    * Render every row without a virtual window (virtualization disabled).
@@ -322,6 +410,8 @@ export class VirtualizationManager<T = any> {
       // Both layout reads happen before either write, so the whole force path
       // costs a single reflow.
       let offset = s.container?.scrollTop ?? 0;
+      const restoreAnchor = this.#restoreHeightAnchor;
+      const rawScrollTop = offset;
       if (s.totalHeightEl) {
         const spacerHeight = this.calculateTotalSpacerHeight(totalRows, true);
         s.totalHeightEl.style.height = `${spacerHeight}px`;
@@ -330,6 +420,7 @@ export class VirtualizationManager<T = any> {
         const maxScroll = spacerHeight - s.cachedFauxHeight;
         if (offset > maxScroll) offset = maxScroll > 0 ? maxScroll : 0;
       }
+      offset = restoreAnchor?.(rawScrollTop) ?? offset;
       // Re-apply the live scroll offset. Hard-coding translateY(0) desynced the
       // rows from the faux scrollbar, which keeps its scrollTop across a force
       // refresh — the tail rows became unreachable. Raw (un-mapped) scrollTop is
@@ -483,24 +574,35 @@ export class VirtualizationManager<T = any> {
     const grid = this.#grid;
     const bodyEl = grid._bodyEl;
     if (!bodyEl) return false;
+    // A property microtask or reentrant data-change can publish rows before the ROWS frame.
+    force ||= this.#positionsStale();
+    if (force) this.configureVariableHeights();
 
     const totalRows = grid._rows.length;
+    const window = getRowWindow(grid);
+    let external = window?.viewport?.();
 
-    if (!s.enabled) return this.#renderUnvirtualized(totalRows, skipAfterRender);
+    if (!s.enabled && !external) return this.#renderUnvirtualized(totalRows, skipAfterRender);
     if (force) this.#scheduleGeometryVerification();
-    if (totalRows <= s.bypassThreshold) return this.#renderBypassWindow(bodyEl, totalRows, force, skipAfterRender);
+    if (!external && totalRows <= s.bypassThreshold)
+      return this.#renderBypassWindow(bodyEl, totalRows, force, skipAfterRender);
 
     // --- Normal virtualization path with faux scrollbar pattern ---
     const fauxScrollbar = s.container!;
     const viewportEl = s.viewportEl ?? fauxScrollbar;
+    // External windows use a clipped visible band, but the faux spacer still
+    // needs a current physical viewport height alongside scroll-area geometry.
+    if (force && external) s.cachedViewportHeight = viewportEl.clientHeight;
 
-    const viewportHeight = force
-      ? (s.cachedViewportHeight = viewportEl.clientHeight)
-      : s.cachedViewportHeight || (s.cachedViewportHeight = viewportEl.clientHeight);
-    const rawScrollTop = fauxScrollbar.scrollTop;
+    const viewportHeight =
+      external?.height ??
+      (force
+        ? (s.cachedViewportHeight = viewportEl.clientHeight)
+        : s.cachedViewportHeight || (s.cachedViewportHeight = viewportEl.clientHeight));
+    const rawScrollTop = external?.container.scrollTop ?? fauxScrollbar.scrollTop;
     // Translate native scrollTop (clamped spacer space) into virtual row-content
     // space. Identity for datasets within MAX_ELEMENT_HEIGHT_PX. See computeScrollMapping.
-    const scrollTop = toVirtualScrollTop(rawScrollTop, s.scrollMapping);
+    let scrollTop = external?.scrollTop ?? toVirtualScrollTop(rawScrollTop, s.scrollMapping);
 
     // On force refresh with variable heights, rebuild the position cache
     // to pick up any height changes from plugins (e.g., ResponsivePlugin
@@ -509,14 +611,14 @@ export class VirtualizationManager<T = any> {
       this.initializePositionCache();
     }
 
-    const start = this.#computeWindowStart(scrollTop, totalRows);
-    const end = this.#computeWindowEnd(start, viewportHeight, totalRows);
+    const restoreAnchor = force ? this.#restoreHeightAnchor : undefined;
+    // Defer plugin window adjustment until the pending anchor has its final geometry.
+    let start = restoreAnchor ? 0 : this.#computeWindowStart(scrollTop, totalRows);
+    let end = restoreAnchor ? 0 : this.#computeWindowEnd(start, viewportHeight, totalRows);
 
     // Early-exit: visible window unchanged and not force
-    if (!force && start === s.start && end === s.end) return false;
-
-    s.start = start;
-    s.end = end;
+    const retainedChanged = !restoreAnchor && window?.select(start, end);
+    if (!force && start === s.start && end === s.end && !retainedChanged) return false;
 
     // Read faux scrollbar height (cached on scroll path, fresh on force)
     const fauxScrollHeight = force
@@ -528,7 +630,7 @@ export class VirtualizationManager<T = any> {
     }
 
     // Guard: stale DOM references
-    if (fauxScrollHeight === 0 && viewportHeight > 0) {
+    if (!external && fauxScrollHeight === 0 && viewportHeight > 0) {
       grid._requestSchedulerPhase(RenderPhase.VIRTUALIZATION, 'stale-refs-retry');
       return false;
     }
@@ -537,12 +639,22 @@ export class VirtualizationManager<T = any> {
     if (force && s.totalHeightEl) {
       s.totalHeightEl.style.height = `${this.calculateTotalSpacerHeight(totalRows)}px`;
     }
+    if (restoreAnchor) {
+      this.#restoreHeightAnchor = undefined;
+      const restored = restoreAnchor(rawScrollTop) ?? rawScrollTop;
+      external = window?.viewport?.();
+      scrollTop = external?.scrollTop ?? toVirtualScrollTop(restored, s.scrollMapping);
+      start = this.#computeWindowStart(scrollTop, totalRows);
+      end = this.#computeWindowEnd(start, viewportHeight, totalRows);
+    }
+    s.start = start;
+    s.end = end;
 
     // Calculate sub-pixel transform offset
     const positionCache = s.positionCache;
     const startRowOffset =
       s.variableHeights && positionCache && positionCache[start] ? positionCache[start].offset : start * s.rowHeight;
-    bodyEl.style.transform = `translateY(${-(scrollTop - startRowOffset)}px)`;
+    bodyEl.style.transform = `translateY(${external ? startRowOffset : startRowOffset - scrollTop}px)`;
 
     grid._renderVisibleRows(start, end, grid.__rowRenderEpoch);
 
@@ -601,7 +713,7 @@ export class VirtualizationManager<T = any> {
     const hasRowHeightPlugin = this.#hasRowHeightPlugin();
     const fixedHeight = typeof userRowHeight === 'number' && userRowHeight > 0 ? userRowHeight : null;
 
-    if (typeof userRowHeight === 'function' || hasRowHeightPlugin) {
+    if (typeof userRowHeight === 'function' || hasRowHeightPlugin || getRowFlow(this.#grid)) {
       // Re-run on every merge, not just the first: `rowHeight` can gain, change or lose its
       // numeric form long after a plugin turned variable heights on.
       if (!s.variableHeights || fixedHeight !== this.#configuredRowHeight) {
@@ -835,6 +947,7 @@ export class VirtualizationManager<T = any> {
 
   /** Tear down row-height observation and measurement state on disconnect. */
   disposeRowHeightObserver(): void {
+    this.cancelHeightAnchor();
     if (!this.#rowHeightObserver) return;
     this.#rowHeightObserver.disconnect();
     this.#rowHeightObserver = undefined;

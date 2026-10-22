@@ -5,7 +5,42 @@
  * Includes both info bar functionality and aggregation row support.
  */
 
-import type { ColumnConfig } from '../../core/types';
+import type { ColumnConfig, ControlRenderer } from '../../core/types';
+
+/**
+ * An admitted scope in the current processed hierarchy. Keys are opaque native
+ * occurrence identities, not domain IDs or processed indexes.
+ * @since 3.10.0
+ */
+export type FooterScope<TRow = unknown> =
+  | { kind: 'grid'; key: string }
+  | { kind: 'row'; key: string | object; row: TRow }
+  | { kind: 'group'; key: string; parent: TRow | null; path: readonly string[] };
+
+/** Live context for one non-data footer owner. @since 3.10.0 */
+export interface FooterContext<TRow = unknown> {
+  scope: FooterScope<TRow>;
+  grid: HTMLElement;
+  /**
+   * Zero-based presentation depth of the owning occurrence, not an inserted
+   * child's depth. Matches the owner's Tree/group renderer; zero for grid scope.
+   * @since 3.10.0
+   */
+  depth: number;
+  /**
+   * Whether the owning group has a disclosure control. Undefined for row/grid
+   * scopes; false for fixed group headings.
+   * @since 3.10.0
+   */
+  collapsible?: boolean;
+}
+
+/** Non-data flow surface; the consumer owns its commands and accessible labels. @since 3.10.0 */
+export interface ScopedFooter<TRow = unknown> {
+  /** Explicit positive height, including borders, in CSS pixels. */
+  height: number;
+  render: ControlRenderer<FooterContext<TRow>>;
+}
 
 /**
  * Position of the status bar (info bar) relative to the grid body.
@@ -134,7 +169,17 @@ export interface AggregationRowConfig {
  *
  * @since 0.1.1
  */
-export interface PinnedRowsConfig {
+export interface PinnedRowsConfig<TRow = unknown> {
+  /**
+   * Opt-in non-data footer at the end of each admitted scope. Only the innermost
+   * active footer sticks; all others retain their natural extent. `null` omits it.
+   * Invoked for the whole grid even when empty. Remove any replaced global panel
+   * from `slots` explicitly; unrelated totals/status panels remain independent.
+   * Insufficient room for the footer plus a data/editor surface releases sticky
+   * ancestors and leaves the footer in normal flow with a configuration diagnostic.
+   * @since 3.10.0
+   */
+  scopedFooters?: (scope: FooterScope<TRow>) => ScopedFooter<TRow> | null;
   /**
    * Unified ordered list of pinned-row slots. Slots are rendered in declared
    * order within their `position` ('top' or 'bottom', default 'bottom').

@@ -21,6 +21,12 @@ interface CellOwner {
   leases: Set<object>;
 }
 
+interface CellSize {
+  width: string;
+  base: number;
+  limit: number;
+}
+
 /** Optional, bounded DOM ownership for right-pinned action surfaces. */
 export class CellExpansion {
   // #region State
@@ -32,7 +38,7 @@ export class CellExpansion {
   #viewport: HTMLElement | null = null;
   #columns: readonly ColumnConfig[] = [];
   #eligibleFields = new Set<string>();
-  #widths = new Map<string, number>();
+  #sizes = new Map<string, CellSize>();
   #disposed = false;
   #warnedRtl = false;
   // #endregion
@@ -88,8 +94,7 @@ export class CellExpansion {
     } else {
       current.data = data;
     }
-    const width = this.#widths.get(column.field);
-    if (width !== undefined) cell.style.setProperty('--tbw-pinned-cell-width', `${width}px`);
+    this.#applySize(cell, column.field);
   }
 
   afterRender(): void {
@@ -177,9 +182,10 @@ export class CellExpansion {
         .filter(
           (column) =>
             column.utility === true &&
-            typeof column.expandedCellWidth === 'number' &&
-            Number.isFinite(column.expandedCellWidth) &&
-            column.expandedCellWidth > 0 &&
+            (column.expandedCellWidth === 'content' ||
+              (typeof column.expandedCellWidth === 'number' &&
+                Number.isFinite(column.expandedCellWidth) &&
+                column.expandedCellWidth > 0)) &&
             physicalPin(column, direction) === 'right',
         )
         .map((column) => column.field),
@@ -198,7 +204,17 @@ export class CellExpansion {
     owner.leases.clear();
     owner.cell.removeAttribute('data-tbw-cell-expanded');
     owner.cell.style.removeProperty('--tbw-pinned-cell-width');
+    owner.cell.style.removeProperty('--tbw-pinned-cell-min-width');
+    owner.cell.style.removeProperty('--tbw-pinned-cell-max-width');
     this.#owners.delete(owner.cell);
+  }
+
+  #applySize(cell: HTMLElement, field: string): void {
+    const size = this.#sizes.get(field);
+    if (!size) return;
+    cell.style.setProperty('--tbw-pinned-cell-width', size.width);
+    cell.style.setProperty('--tbw-pinned-cell-min-width', `${size.base}px`);
+    cell.style.setProperty('--tbw-pinned-cell-max-width', `${size.limit}px`);
   }
 
   #paint(): void {
@@ -221,7 +237,7 @@ export class CellExpansion {
     this.#configureEligibility(direction);
     this.reconcile();
     const widths = new Map(this.#headers.map((cell) => [cell.dataset.field, cell.getBoundingClientRect().width]));
-    this.#widths.clear();
+    this.#sizes.clear();
     const leftWidth = this.#columns.reduce(
       (sum, column) => (physicalPin(column, direction) === 'left' ? sum + (widths.get(column.field) ?? 0) : sum),
       0,
@@ -235,10 +251,14 @@ export class CellExpansion {
       const base = widths.get(column.field) ?? 0;
       // An inner right-pinned neighbour is an occupied rail, not an overlay target.
       const available = i === 0 ? this.#viewport.clientWidth - leftWidth - offset : base;
-      const width = Math.max(base, Math.min(column.expandedCellWidth ?? base, available));
-      this.#widths.set(column.field, width);
+      const limit = Math.max(base, available);
+      const width =
+        column.expandedCellWidth === 'content'
+          ? 'max-content'
+          : `${Math.max(base, Math.min(column.expandedCellWidth ?? base, limit))}px`;
+      this.#sizes.set(column.field, { width, base, limit });
       for (const owner of this.#owners.values()) {
-        if (owner.field === column.field) owner.cell.style.setProperty('--tbw-pinned-cell-width', `${width}px`);
+        if (owner.field === column.field) this.#applySize(owner.cell, column.field);
       }
       offset += base;
     }

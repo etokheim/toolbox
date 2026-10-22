@@ -18,6 +18,11 @@ export function registerFeatureRendererBridge(name: string, bridge: FeatureRende
   bridges.set(name, bridge);
 }
 
+export function getLiveFeatureConfigKeys(name: string): readonly string[] {
+  const bridge = bridges.get(name);
+  return bridge ? [...bridge.keys, ...(bridge.liveConfigKeys ?? [])] : [];
+}
+
 export function normalizeFeatureRenderers(
   features: Record<string, unknown>,
   owner?: GridOwner,
@@ -73,11 +78,17 @@ export function sameNonRendererConfig(a: unknown, b: unknown): boolean {
   const left = a as { features?: Record<string, unknown> };
   const right = b as { features?: Record<string, unknown> };
   if (!sameConfig(a, b, ['features'])) return false;
-  const names = new Set([...Object.keys(left.features ?? {}), ...Object.keys(right.features ?? {})]);
+  return sameNonRendererFeatures(left.features, right.features);
+}
+
+export function sameNonRendererFeatures(
+  left: Record<string, unknown> | undefined,
+  right: Record<string, unknown> | undefined,
+): boolean {
+  if (left === right) return true;
+  const names = new Set([...Object.keys(left ?? {}), ...Object.keys(right ?? {})]);
   for (const name of names) {
-    const bridge = bridges.get(name);
-    const liveKeys = bridge?.liveConfigKeys ? [...bridge.keys, ...bridge.liveConfigKeys] : bridge?.keys;
-    if (!sameConfig(left.features?.[name], right.features?.[name], liveKeys)) return false;
+    if (!sameConfig(left?.[name], right?.[name], getLiveFeatureConfigKeys(name))) return false;
   }
   return true;
 }

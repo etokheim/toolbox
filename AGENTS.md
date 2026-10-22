@@ -11,3 +11,13 @@
 - If the user needs help with an Nx configuration or project graph error, use the `nx_workspace` tool to get any errors
 
 <!-- nx configuration end-->
+
+## Bundle budget tooling
+
+This is a Bun-first workspace with inherited Node-hosted Nx/Vite. Build and report
+measurement share Bun's default gzip authority, not the caller's compressor.
+Core limits live in `tools/core-bundle-budget.ts` (170 KiB raw / 52 KiB gzip,
+45 KiB gzip soft warning). See `.github/skills/bundle-check/SKILL.md` for focused
+Nx tooling tests and `.github/copilot-instructions.md` for the user's standing
+permission to make justified future increases. That permission does not authorize
+commits or remote operations.

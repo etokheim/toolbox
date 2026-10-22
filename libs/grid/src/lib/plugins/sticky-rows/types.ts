@@ -20,9 +20,11 @@ export type StickyPredicate = (row: unknown, index: number) => unknown;
  *   so the new one slides in (iOS section-header behavior).
  * - `'stack'` — sticky rows accumulate below the header as they scroll past,
  *   building a column of pinned rows. Capped by {@link StickyRowsConfig.maxStacked}.
+ * - `'ancestors'` — live occurrence ancestors retire at their own subtree ends.
+ *   Requires hierarchy metadata; available since 3.10.0.
  * @since 2.7.0
  */
-export type StickyRowsMode = 'push' | 'stack';
+export type StickyRowsMode = 'push' | 'stack' | 'ancestors';
 
 /**
  * Configuration for {@link StickyRowsPlugin}.
@@ -63,8 +65,26 @@ export interface StickyRowsConfig {
   mode?: StickyRowsMode;
 
   /**
+   * External vertical scroll owner for ancestor mode in a content-height grid.
+   * Pass the actual scrolling ancestor element, not a selector. The application
+   * maintains the grid's natural content height inside that owner.
+   * Omit for the grid's internal vertical scrolling. Ignored by legacy modes.
+   * @since 3.10.0
+   */
+  scrollContainer?: HTMLElement;
+
+  /**
+   * Space above the owning header within an external scroll container.
+   * Ignored for internal scrolling.
+   * @default 0
+   * @since 3.10.0
+   */
+  topOffset?: number;
+
+  /**
    * Maximum number of rows stacked below the header in `'stack'` mode.
-   * Ignored in `'push'` mode (which is always 1).
+   * Ignored in `'push'` and `'ancestors'`; ancestor capacity uses natural heights
+   * and available viewport space, releasing outermost context first.
    * @default Infinity
    */
   maxStacked?: number;

@@ -327,6 +327,12 @@ Replace the affected **row** `:hover` predicate; do not combine the marker with 
 For opted-in pinned action-cell expansion, reveal secondary actions from the
 cell's `[data-tbw-cell-expanded]` marker instead. Its hover input uses the same
 geometric row state, but retained menu leases and row focus take precedence.
+With `expandedCellWidth: 'content'`, the active cell fits its mounted contents
+without changing the column track. `--tbw-pinned-cell-shadow` controls its moving
+inner-edge shadow (default: the existing one-pixel border shadow); for example,
+`-4px 0 8px var(--tbw-color-shadow)`. Consumer full-height body shadows must be
+replaced with row-local paint so they do not remain across the expanded contents.
+See [compact action-cell expansion](/grid/plugins/pinned-columns/#compact-action-cell-expansion).
 
 The marker is presentation only: it does not select a row, move focus, dispatch
 pointer events or transfer menu/editor ownership. Touch and pen input, pointer

@@ -12,8 +12,10 @@
  */
 import type { CellChangeDetail, GridHost, RowTransaction, TransactionResult, UpdateSource } from '../types';
 import { MISSING_ROW_ID, ROW_NOT_FOUND, throwDiagnostic, warnDiagnostic } from './diagnostics';
+import { invalidateCellContent } from './control-lifecycle';
 import { RenderPhase } from './render-scheduler';
 import { animateRow } from './row-animation';
+import { getRowWindow } from './row-window';
 import { invalidateCellCache } from './rows';
 import { invalidateAccessorCache, readCellField, writeCellField } from './value-accessor';
 
@@ -74,6 +76,17 @@ export class RowManager<T = any> {
 
   // --- Row updates ---
 
+  #invalidateRetainedContent(row: T): void {
+    if (!getRowWindow(this.#grid)) return;
+    // Accessors and renderers can depend on any field. Repaint in-place; do not release owners.
+    for (const element of this.#grid._rowPool) {
+      if (element.__rowDataRef !== row) continue;
+      for (const cell of element.children) {
+        if (cell instanceof HTMLElement && cell.hasAttribute('data-col')) invalidateCellContent(cell);
+      }
+    }
+  }
+
   /**
    * Apply a set of field changes to a single already-resolved row, routing each
    * change through data plugins (e.g. editing) so validation, dirty tracking,
@@ -121,15 +134,13 @@ export class RowManager<T = any> {
       if (!responses?.includes(true)) {
         // No data plugin handled it — apply in place (legacy behavior).
         writeCellField(row, field, newValue);
-        // Invalidate the WHOLE row's accessor cache, not just (row, field): a
-        // `valueAccessor` can read ANY property (e.g. field `deal.comments`
-        // reading `row.dealComment`), so the cache entry — keyed by
-        // `column.field` — need not match the mutated property name.
-        invalidateAccessorCache(row as object);
       }
-      // else: a data plugin already applied (and tracked) the value.
+      // Accessors can depend on any field. Core owns its cache even when a
+      // separately bundled data plugin applied and tracked the value.
+      invalidateAccessorCache(row as object);
 
       changedFields.push({ field, oldValue, newValue });
+      this.#invalidateRetainedContent(row);
 
       grid.dispatchEvent(
         new CustomEvent('cell-change', {
@@ -390,6 +401,7 @@ export class RowManager<T = any> {
         // other than `column.field`, so per-field invalidation can miss
         // the stale cache entry keyed by `column.field`.
         invalidateAccessorCache(row as object);
+        this.#invalidateRetainedContent(row);
 
         grid.dispatchEvent(
           new CustomEvent('cell-change', {

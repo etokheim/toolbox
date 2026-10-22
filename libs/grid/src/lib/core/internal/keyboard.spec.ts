@@ -1,5 +1,6 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { handleGridKeyDown } from './keyboard';
+import { setRowFlow } from './row-flow';
 
 function key(grid: any, k: string, opts: any = {}) {
   const e: any = new KeyboardEvent('keydown', {
@@ -612,10 +613,50 @@ describe('keyboard navigation', () => {
       expect(grid._focusRow).toBe(5);
     });
 
+    it('preserves legacy estimated-height focus scrolling with a variable-height cache', () => {
+      const { grid, scrollEl } = makeVirtualGrid(19, { top: 60, bottom: 24 });
+      grid._virtualization.variableHeights = true;
+      grid._virtualization.positionCache = grid._rows.map((_: unknown, index: number) => ({
+        offset: Math.floor(index / 2) * 80 + (index % 2) * 56,
+        height: index % 2 ? 24 : 56,
+        measured: true,
+      }));
+
+      key(grid, 'ArrowDown');
+
+      expect(grid._focusRow).toBe(20);
+      expect(scrollEl.scrollTop).toBe(354);
+    });
+
     it('PageDown excludes the band an overlay obscures', () => {
       const { grid } = makeVirtualGrid(0, { top: 60, bottom: 30 });
       key(grid, 'PageDown');
       expect(grid._focusRow).toBe(7); // (300 - 90) / 30
+    });
+
+    it('uses cached data surfaces and intervening gaps with scoped non-data flow', () => {
+      const { grid, scrollEl } = makeVirtualGrid(19, { top: 60, bottom: 24 });
+      grid._virtualization.variableHeights = true;
+      grid._virtualization.positionCache = grid._rows.map((_: unknown, index: number) => ({
+        offset: Math.floor(index / 2) * 104 + (index % 2) * 56,
+        height: index % 2 ? 24 : 56,
+        after: index % 2 ? 24 : 0,
+        measured: true,
+      }));
+      setRowFlow(grid, {
+        prepare: vi.fn(),
+        after: (index) => (index % 2 ? 24 : 0),
+        emptyHeight: () => 0,
+        layout: vi.fn(),
+        bottom: () => 24,
+      });
+      key(grid, 'ArrowDown');
+      expect(grid._focusRow).toBe(20);
+      expect(scrollEl.scrollTop).toBe(820); // 1040 + 56 - (300 - 24)
+      scrollEl.scrollTop = 1200;
+      key(grid, 'ArrowUp');
+      expect(grid._focusRow).toBe(19);
+      expect(scrollEl.scrollTop).toBe(932); // 9 * 104 + 56 - 60
     });
 
     it('PageDown reaches the last row when the viewport shows every row', () => {

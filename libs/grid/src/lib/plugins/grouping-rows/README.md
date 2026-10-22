@@ -140,7 +140,7 @@ For child groups, a numeric default (`childDefaultExpanded`, or `defaultExpanded
 
 Real rows retain their original references. Supply distinct occurrence objects and IDs (using `getRowId` when needed) for an entity displayed under several parents; canonical selection deduplication remains consumer-owned. A `groupOn` array is a nested path, not multi-membership.
 
-Grouping counts and aggregators use the direct sibling members in each group, not implicit recursive Tree membership. Keep complete-hierarchy totals and ancestor-retaining filtering in the consumer's eager projection. Native Filtering still filters the root input; this composition does not introduce descendant-filter semantics. Empty real parents remain rows; empty semantic groups are omitted. Existing standalone predefined/server-count groups are unchanged.
+Grouping counts and aggregators use the direct sibling members in each group, not implicit recursive Tree membership. Keep complete-hierarchy totals and ancestor-retaining filtering in the consumer's eager projection. Native Filtering still filters the root input; this composition does not introduce descendant-filter semantics. Empty real parents remain rows; empty semantic groups are omitted unless explicitly declared with `emptyGroups`. Existing standalone predefined/server-count groups are unchanged.
 
 Both plugins depend on `HierarchyPlugin`, which the grid attaches automatically.
 
@@ -184,6 +184,27 @@ Whole-header custom cells should be direct children of the row; StickyRows' exis
 clone lookup uses the matched cell's parent. Push mode follows the latest preceding
 qualifying row, not the current ancestor path, and has no automatic parent-boundary
 expiry. Rich headers never rendered into the viewport may not be synthesizable.
+
+### Declared Empty Groups
+
+`emptyGroups({ parent, depth })` returns explicit group paths for an admitted
+natural sibling list, such as `parent ? [['Primary']] : []`. It adds structural
+headers with normal selection/ARIA, never fake domain entities. `groupOrder`
+still only sorts admitted groups. Fixed noncollapsible child groups are expanded,
+including declared empties.
+
+For eligible empty real parents, supply `children: []` and Tree `hasChildren`
+returning true only for those parents. Expansion (including `defaultExpanded`
+or `expandAll`) then visits the empty list without loading when no lazy loader
+is configured. Arbitrary leaves do not become parents. Collapsed, removed and
+filtered-out parents produce no child declarations.
+
+For a retained parent whose category is excluded by consumer filtering, omit
+that category from the declaration callback too. Native cannot infer whether
+your projection removed members intentionally. `setEmptyGroups` replaces the
+callback without resetting group expansion; omission preserves legacy behaviour.
+See the [admission rules](https://toolboxjs.com/grid/plugins/grouping-rows/#declared-empty-groups)
+and [scoped footers](https://toolboxjs.com/grid/plugins/pinned-rows/#scoped-non-data-footers).
 
 ### Category Order
 

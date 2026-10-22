@@ -107,9 +107,9 @@ export type GridConfig<TRow = unknown, TField extends string = ColumnFieldKey<TR
 > & {
   features?: Omit<
     NonNullable<BaseGridConfig<TRow>['features']>,
-    'selection' | 'tree' | 'masterDetail' | 'rowDragDrop' | 'groupingRows'
+    'selection' | 'tree' | 'masterDetail' | 'rowDragDrop' | 'groupingRows' | 'pinnedRows'
   > &
-    Pick<FeatureProps<TRow>, 'selection' | 'tree' | 'masterDetail' | 'rowDragDrop' | 'groupingRows'>;
+    Pick<FeatureProps<TRow>, 'selection' | 'tree' | 'masterDetail' | 'rowDragDrop' | 'groupingRows' | 'pinnedRows'>;
   columns?: ColumnConfig<TRow, TField>[];
   /**
    * Custom loading renderer - can be a vanilla DOM function or a React render function returning JSX.

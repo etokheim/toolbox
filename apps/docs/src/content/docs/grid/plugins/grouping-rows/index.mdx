@@ -111,6 +111,35 @@ ancestor retention and hidden-level promotion remain consumer projection policie
 Removing grouping leaves Tree's hierarchy active; removing both releases shared
 position metadata. Existing disclosure controls and standalone group keys are unchanged.
 
+## Declared Empty Groups
+
+`emptyGroups({ parent, depth })` optionally declares group paths for the current
+natural sibling list, for example `parent ? [['Primary'], ['Secondary']] : []`.
+These are structural headers, not fake domain rows. They retain normal group
+selection, hierarchy metadata and ARIA. Existing `groupOrder` only orders
+admitted groups; it still does not create missing categories.
+
+Declarations are parent-occurrence-local. A collapsed, removed or filtered-out
+real parent does not invoke the child-list hook. For an otherwise empty real
+parent, provide `children: []` and compose Tree's existing `hasChildren` predicate
+to return true only for eligible parents. Expanding that parent visits the empty
+list without a loading state when no lazy loader is configured. `defaultExpanded`
+and `expandAll()` include explicitly admitted empty arrays; unrelated leaves
+remain leaves. `childGroupsCollapsible: false` admits declared child groups as
+expanded, while collapsible declarations use the normal group expansion policy.
+
+**Filtering policy belongs to the consumer.** If a real parent remains visible
+but a category is excluded by the application filter, omit that category from
+`emptyGroups` too. Native grouping cannot distinguish an eligible empty category
+from one hidden by your projection. Declarations must not reintroduce excluded
+categories. Omitting this hook preserves legacy grouping semantics.
+
+`setEmptyGroups(callback)` updates an existing plugin without resetting expansion.
+React callback replacement works through the feature prop and canonical
+`gridConfig.features.groupingRows`. Combine this with
+[scoped footers](/grid/plugins/pinned-rows/#scoped-non-data-footers) to expose an
+application action at an empty admitted section's end.
+
 ## Basic Usage
 
 The `groupOn` callback receives each row and should return an array representing the group path. For single-level grouping, return a one-element array. For multi-level grouping, return multiple elements (e.g., `['Region', 'Department']`).

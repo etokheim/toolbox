@@ -119,8 +119,8 @@ describe('React selection checkbox controls', () => {
       const { root, grid } = await mount(app(config));
       unmounts.mockClear();
       const input = grid.querySelector<HTMLInputElement>('.rows [data-provider]')!;
-      expect(input.dataset.provider).toBe('scoped');
-      expect(input.dataset.owned).toBe('true');
+      expect(input.dataset['provider']).toBe('scoped');
+      expect(input.dataset['owned']).toBe('true');
       expect(grid.querySelectorAll<HTMLInputElement>('.rows [data-provider]')[1].disabled).toBe(true);
       const plugin = grid.getPluginByName('selection')!;
       const onChange = vi.fn();
@@ -156,6 +156,8 @@ describe('React selection checkbox controls', () => {
       });
       expect(grid.querySelector('.rows button')?.textContent).toBe('New');
       expect(grid.querySelector('.header-row button')?.textContent).toBe('Header');
+      expect(grid.getPluginByName('selection')).toBe(plugin);
+      expect(plugin.getSelectedRowIndices()).toEqual([0]);
     },
   );
 
@@ -224,12 +226,12 @@ describe('React selection checkbox controls', () => {
     );
     expect(
       Array.from(first.grid.querySelectorAll<HTMLElement>('[data-provider]')).every(
-        (el) => el.dataset.provider === 'first',
+        (el) => el.dataset['provider'] === 'first',
       ),
     ).toBe(true);
     expect(
       Array.from(second.grid.querySelectorAll<HTMLElement>('[data-provider]')).every(
-        (el) => el.dataset.provider === 'second',
+        (el) => el.dataset['provider'] === 'second',
       ),
     ).toBe(true);
     unmounts.mockClear();

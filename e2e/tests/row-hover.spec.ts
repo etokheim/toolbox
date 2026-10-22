@@ -219,9 +219,9 @@ test('overlay hit testing and touch input do not keep an underlying row highligh
   await expect(page.locator('[data-tbw-hovered]')).toHaveCount(0);
 });
 
-async function mountActions(page: Page): Promise<void> {
+async function mountActions(page: Page, expandedWidth: number | 'content' = 240): Promise<void> {
   await mount(page);
-  await page.evaluate(async () => {
+  await page.evaluate(async (expandedWidth) => {
     const { PinnedColumnsPlugin } = await import('@toolbox-web/grid/plugins/pinned-columns');
     const grid = document.querySelector('tbw-grid') as DataGridElement<{ id: string; name: string }>;
     grid.gridConfig = {
@@ -234,7 +234,7 @@ async function mountActions(page: Page): Promise<void> {
           width: 200,
           pinned: 'right',
           utility: true,
-          expandedCellWidth: 240,
+          expandedCellWidth: expandedWidth,
           renderer: ({ row }) => {
             const button = document.createElement('button');
             button.textContent = `Action ${row.id}`;
@@ -256,7 +256,7 @@ async function mountActions(page: Page): Promise<void> {
     `;
     document.head.append(style);
     await grid.forceLayout();
-  });
+  }, expandedWidth);
 }
 
 test('pinned row actions follow stationary and moving pointers without changing activation ownership', async ({
@@ -276,54 +276,56 @@ test('pinned row actions follow stationary and moving pointers without changing 
   await expect(action).toBeFocused();
 });
 
-test('stationary 1980 to 1988 scroll transfers unleased action expansion while focus and leases take precedence', async ({
-  page,
-}) => {
-  await mountActions(page);
-  await page.mouse.move(pointer.x, pointer.y);
-  for (let step = 0; step < 9; step++) {
+for (const expandedWidth of [240, 'content'] as const) {
+  test(`stationary 1980 to 1988 scroll transfers unleased action expansion while focus and leases take precedence (${expandedWidth})`, async ({
+    page,
+  }) => {
+    await mountActions(page, expandedWidth);
+    await page.mouse.move(pointer.x, pointer.y);
+    for (let step = 0; step < 9; step++) {
+      await page.mouse.wheel(0, 220);
+      await new Promise((resolve) => setTimeout(resolve, 55));
+    }
+    await settle(page);
+    expect((await sample(page)).scrollTop).toBe(1980);
+    const oldAction = page.getByRole('button', { name: 'Action row-44', exact: true });
+    const newAction = page.getByRole('button', { name: 'Action row-45', exact: true });
+    const oldCell = oldAction.locator('..');
+    const newCell = newAction.locator('..');
+    await expect(oldCell).toHaveAttribute('data-tbw-cell-expanded', '');
     await page.mouse.wheel(0, 220);
-    await new Promise((resolve) => setTimeout(resolve, 55));
-  }
-  await settle(page);
-  expect((await sample(page)).scrollTop).toBe(1980);
-  const oldAction = page.getByRole('button', { name: 'Action row-44', exact: true });
-  const newAction = page.getByRole('button', { name: 'Action row-45', exact: true });
-  const oldCell = oldAction.locator('..');
-  const newCell = newAction.locator('..');
-  await expect(oldCell).toHaveAttribute('data-tbw-cell-expanded', '');
-  await page.mouse.wheel(0, 220);
-  await expect.poll(async () => (await sample(page)).scrollTop).toBe(1988);
-  await settle(page);
-  expect((await sample(page)).marked).toEqual(['Row 45Action row-45']);
-  await expect(oldCell).not.toHaveAttribute('data-tbw-cell-expanded');
-  await expect(newCell).toHaveAttribute('data-tbw-cell-expanded', '');
-  await expect(newAction).toHaveCSS('opacity', '1');
+    await expect.poll(async () => (await sample(page)).scrollTop).toBe(1988);
+    await settle(page);
+    expect((await sample(page)).marked).toEqual(['Row 45Action row-45']);
+    await expect(oldCell).not.toHaveAttribute('data-tbw-cell-expanded');
+    await expect(newCell).toHaveAttribute('data-tbw-cell-expanded', '');
+    await expect(newAction).toHaveCSS('opacity', '1');
 
-  await oldAction.focus();
-  await expect(oldCell).toHaveAttribute('data-tbw-cell-expanded', '');
-  await expect(newCell).not.toHaveAttribute('data-tbw-cell-expanded');
-  await page.evaluate(() => {
-    const grid = document.querySelector('tbw-grid') as DataGridElement;
-    const plugin = grid.getPluginByName('pinnedColumns');
-    if (!plugin || !('retainCellExpansion' in plugin)) throw new Error('Missing pinned expansion');
-    const release = (
-      plugin as import('@toolbox-web/grid/plugins/pinned-columns').PinnedColumnsPlugin
-    ).retainCellExpansion('row-44', 'id');
-    Object.assign(window, { releaseExpansion: release });
-    (document.activeElement as HTMLElement).blur();
+    await oldAction.focus();
+    await expect(oldCell).toHaveAttribute('data-tbw-cell-expanded', '');
+    await expect(newCell).not.toHaveAttribute('data-tbw-cell-expanded');
+    await page.evaluate(() => {
+      const grid = document.querySelector('tbw-grid') as DataGridElement;
+      const plugin = grid.getPluginByName('pinnedColumns');
+      if (!plugin || !('retainCellExpansion' in plugin)) throw new Error('Missing pinned expansion');
+      const release = (
+        plugin as import('@toolbox-web/grid/plugins/pinned-columns').PinnedColumnsPlugin
+      ).retainCellExpansion('row-44', 'id');
+      Object.assign(window, { releaseExpansion: release });
+      (document.activeElement as HTMLElement).blur();
+    });
+    await settle(page);
+    await expect(oldCell).toHaveAttribute('data-tbw-cell-expanded', '');
+    await expect(newCell).not.toHaveAttribute('data-tbw-cell-expanded');
+    await page.evaluate(() => {
+      (window as typeof window & { releaseExpansion: () => void }).releaseExpansion();
+    });
+    await expect(oldCell).not.toHaveAttribute('data-tbw-cell-expanded');
+    await expect(newCell).toHaveAttribute('data-tbw-cell-expanded', '');
+    await page.mouse.move(10, 10);
+    await expect(page.locator('[data-tbw-cell-expanded]')).toHaveCount(0);
   });
-  await settle(page);
-  await expect(oldCell).toHaveAttribute('data-tbw-cell-expanded', '');
-  await expect(newCell).not.toHaveAttribute('data-tbw-cell-expanded');
-  await page.evaluate(() => {
-    (window as typeof window & { releaseExpansion: () => void }).releaseExpansion();
-  });
-  await expect(oldCell).not.toHaveAttribute('data-tbw-cell-expanded');
-  await expect(newCell).toHaveAttribute('data-tbw-cell-expanded', '');
-  await page.mouse.move(10, 10);
-  await expect(page.locator('[data-tbw-cell-expanded]')).toHaveCount(0);
-});
+}
 
 test('ordinary nonvirtualized overflow scroll retargets browser hover', async ({ page }) => {
   await mount(page, 'plain');

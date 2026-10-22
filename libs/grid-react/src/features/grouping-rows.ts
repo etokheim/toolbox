@@ -61,7 +61,7 @@ function normalizeDisclosure(config: GroupingRowsConfig): CoreGroupingRowsConfig
 
 registerFeatureRendererBridge('groupingRows', {
   keys: ['disclosureRenderer'],
-  liveConfigKeys: ['groupOrder'],
+  liveConfigKeys: ['groupOrder', 'emptyGroups'],
   normalize(config, owner) {
     const options = config as GroupingRowsConfig;
     const renderer = options.groupRowRenderer;
@@ -85,5 +85,6 @@ registerFeatureRendererBridge('groupingRows', {
     const options = config as GroupingRowsConfig;
     plugin?.setDisclosureRenderer(normalizeDisclosure(options));
     plugin?.setGroupOrder(options.groupOrder);
+    plugin?.setEmptyGroups(options.emptyGroups);
   },
 });

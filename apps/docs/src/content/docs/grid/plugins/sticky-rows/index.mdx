@@ -13,7 +13,10 @@ header while the user scrolls past them. Useful for section markers, group
 headers in flat lists, "you are here" anchors, and any scenario where you
 want a row to remain visible after it would naturally scroll out of view.
 
-Stuck rows are **clones** of the real rows — the originals stay in the data
+The default `'push'` mode and optional `'stack'` mode use decorative snapshots.
+The opt-in `'ancestors'` mode retains the original interactive hierarchy rows.
+
+In the two legacy modes, stuck rows are **clones** of the real rows — the originals stay in the data
 flow, remain interactive, and continue to participate in keyboard navigation.
 Clones are decorative, marked `aria-hidden="true"`, and inherit the row's
 column-template alignment so they line up perfectly with the data below.
@@ -194,8 +197,86 @@ features: {
 }
 ```
 
-Best for: hierarchical breadcrumbs where multiple levels of context should
-remain visible.
+Best for: accumulating decorative markers. This mode does not enforce hierarchy
+subtree boundaries; use `'ancestors'` for live hierarchy context.
+
+### `'ancestors'`
+
+Eligible occurrence ancestors remain live below the header and retire at their
+own subtree boundaries. Tree and GroupingRows provide the hierarchy metadata;
+`isSticky: () => true` includes both entity ancestors and structural headings.
+Flat rows without hierarchy metadata do not become ancestors.
+
+With scoped non-data footers, an ancestor's extent includes its own and descendant
+footers, not co-terminal parent or whole-grid footers. Each footer segment keeps
+its owning scope until that segment ends; non-data gaps do not select the next
+unrelated subtree. Rows can still be pushed behind an outer ancestor or clipped
+at their own boundary, and short-viewport capacity release remains unchanged.
+
+```ts
+import '@toolbox-web/grid/features/tree';
+import '@toolbox-web/grid/features/sticky-rows';
+
+grid.gridConfig = {
+  features: {
+    tree: { defaultExpanded: true },
+    stickyRows: { mode: 'ancestors', isSticky: () => true },
+  },
+};
+```
+
+Rows keep their existing disclosure, selection and action controls, including
+framework-rendered content. Configure title-only structural headings through
+their normal grouping options and renderer. StickyRows does not assign
+application-specific roles or clone active controls.
+
+Natural row heights determine the available context. On short viewports,
+outermost ancestors release first so nearer context and data space can remain.
+`maxStacked` is ignored. Released ancestors are not mounted in a hidden pool:
+live row surfaces are limited to the visible window plus the ancestors actually
+retained. Once an occurrence leaves both sets, normal renderer teardown applies.
+
+Ancestry follows occurrence identity and the authoritative row model. Filtering
+out an ancestor does not attach its promoted descendants to a neighbouring
+branch; collapsed, removed and excluded occurrences cannot remain pinned.
+
+For immutable updates, configure a stable `getRowId` that identifies each
+rendered occurrence uniquely, rather than returning a shared entity ID. The
+same live row then survives an object replacement, allowing compatible cell
+views to preserve focus and menu state. Missing or ambiguous IDs permit only
+reference-based reuse. Removal or an ID-resolver change retires the old owner.
+
+#### External scroll owner
+
+Internal grid scrolling is the default. For an existing content-height grid
+inside a definite-height `overflow-y: auto` element, pass that actual ancestor
+element as `scrollContainer`. Keep the native horizontal scroll area and maintain
+the grid's natural total height; do not add a second vertical scroller or a
+consumer-side row/header translation.
+
+```ts
+stickyRows: {
+  mode: 'ancestors',
+  isSticky: () => true,
+  scrollContainer: scrollOwner,
+  topOffset: 12,
+}
+```
+
+`topOffset` is the space above the actual grid header within the external owner.
+The element is compared by reference, including through React feature props and
+`gridConfig.features`; replace the option when the scrolling owner changes.
+No selector lookup or implicit owner discovery is used.
+
+Omit `topOffset` (or use `0`) for internal scrolling: the native header is
+measured separately. In external mode, changing `rowHeight` preserves the visible
+occurrence and intra-row offset after the application's natural-height layout
+settles. New user scrolling, public navigation and data replacement take
+precedence; horizontal offset is unchanged.
+
+If the header and inset exhaust the external owner's height, the plugin reports
+a diagnostic. It does not reduce row density or hide controls to manufacture
+usable space; the application must provide a taller viewport.
 
 ## Predicate Function
 
@@ -210,8 +291,9 @@ features: {
 }
 ```
 
-The predicate runs once per row whenever the row set changes (via
-`afterRender`), so keep it cheap.
+In legacy modes the predicate is refreshed during `afterRender`. Ancestor mode
+indexes eligibility with the row-model/configuration generation, rather than
+scanning the dataset on every scroll. Keep the predicate cheap.
 
 ## Configuration Options
 
@@ -221,7 +303,7 @@ predicate for anything more involved.
 
 ## Styling
 
-The plugin renders a single `<div class="tbw-sticky-rows">` between the
+The legacy modes render a single `<div class="tbw-sticky-rows">` between the
 header and the rows region. Each clone carries `class="tbw-sticky-row"` and
 the data attribute `data-sticky-row="<rowIndex>"`.
 
@@ -242,6 +324,8 @@ tbw-grid .tbw-sticky-row {
 
 ## Accessibility
 
+The following clone rules apply to `'push'` and `'stack'`:
+
 - Clones are marked `aria-hidden="true"` so screen readers don't double-read.
 - Focus styles and `tabindex` are stripped from clones — keyboard navigation
   goes through the underlying rows only.
@@ -250,7 +334,8 @@ tbw-grid .tbw-sticky-row {
 
 ### Focus Not Obscured
 
-The plugin satisfies [WCAG 2.2 SC 2.4.11 Focus Not Obscured (Minimum)](https://www.w3.org/WAI/WCAG22/Understanding/focus-not-obscured-minimum.html).
+The plugin reports its occupied region to support
+[WCAG 2.2 SC 2.4.11 Focus Not Obscured (Minimum)](https://www.w3.org/WAI/WCAG22/Understanding/focus-not-obscured-minimum.html).
 
 The clone overlay is absolutely positioned over the top of the rows viewport, so
 a row scrolled to the exact top would land underneath it and its focus indicator
@@ -258,16 +343,15 @@ would be completely hidden. The plugin reports the overlay's height to the grid,
 which offsets keyboard scrolling by that much — arrowing upwards always brings
 the focused row clear of the stuck clones.
 
-When the focused row **is** one of the stuck clones it is already pinned in view,
-so the grid is told to skip scrolling entirely: scrolling to it would only push
-the row it is stuck above out of reach.
+Legacy clones never receive focus. When the focused row is represented in the
+decorative overlay, the legacy path skips scrolling; interactive controls remain
+on the original row. Use ancestor mode when the pinned surface itself must
+support interaction.
 
-This is automatic and needs no configuration.
-
-## Bundle Size
-
-The plugin is **≈4 kB gzipped** (ESM) / **≈2 kB gzipped** (UMD). It does
-not pull in any other plugins or core internals.
+Ancestor mode keeps the original rows in logical DOM/ARIA order, with their
+row-index metadata and one live interaction owner. Keyboard reveal accounts for
+the retained ancestor region; external mode scrolls the configured owner.
+Stickiness preserves natural heights and does not shrink checkbox targets.
 
 ## See Also
 

@@ -166,8 +166,8 @@ The plugin has no configuration options. It is activated when columns have `pinn
 
 ### Compact action-cell expansion
 
-For an LTR right-pinned utility column, `expandedCellWidth` specifies the active
-row's cell width in pixels. The column's normal `width` reserves only its persistent
+For an LTR right-pinned utility column, `expandedCellWidth` accepts `'content'` or a
+finite positive pixel width. The column's normal `width` reserves only its persistent
 controls. Mouse hover or focus within a row expands its actual cell inward, without
 widening its header, other rows, the column track or the horizontal scroll extent.
 
@@ -177,13 +177,25 @@ widening its header, other rows, the column track or the horizontal scroll exten
   utility: true,
   pinned: 'right',
   width: 88,
-  expandedCellWidth: 240,
+  expandedCellWidth: 'content',
   renderer: renderActions,
 }
 ```
 
+Use `'content'` (since 3.10.0) for occurrence-specific actions. It fits the mounted
+in-flow content of each active cell, including labels, gaps and padding. Content
+narrower than the normal track does not widen the cell. Dynamic action, label and
+font changes participate in browser layout without a measurement callback or an
+explicit refresh. Use a number for a fixed expanded pixel target; numeric behaviour
+is unchanged.
+
+`visibility: hidden` children still contribute to intrinsic width; `display: none`
+and absolutely positioned children do not. Do not fix renderer wrappers to a pixel
+width or apply size containment when their content should determine expansion.
+
 Keep secondary and persistent controls in one inline renderer strip, persistent
 controls at the right. No separate floating container or overflow override is needed.
+Keep persistent controls non-shrinking; clip secondary overflow before those controls.
 The plugin does not move, clone or remount renderer children. Expansion is clamped
 to the visible scroll area and the opposite pinned rail, never below normal width.
 A right-pinned chooser after the action column keeps its offset. A pinned neighbour
@@ -242,11 +254,25 @@ not that every action fits or that the width exceeds its normal size after clamp
 Select by presence, never by a specific value, and do not mutate the attribute.
 Internal width variables are not a supported styling API.
 
+The public `--tbw-pinned-cell-shadow` CSS property customises the active cell's
+moving inner-edge shadow:
+
+```css
+tbw-grid {
+  --tbw-pinned-cell-shadow: -4px 0 8px var(--tbw-color-shadow);
+}
+```
+
+Its default is the existing one-pixel border shadow. The shadow follows the actual
+cell border-box; inactive rows and headers retain their normal boundary paint.
+Remove or replace consumer full-height body shadows at the old column edge with
+row-local paint: native expansion cannot relocate an unrelated overlay.
+
 **Scope:** LTR `right` or `end` pins only; effective/inherited RTL is diagnosed
 once per controller lifetime and disables expansion and retention. The option does
 not fix pre-existing RTL pinning geometry. Call `await grid.forceLayout()` after a
-direction change to reconcile ownership. Width must be finite and positive.
-Per-row expanded widths, non-pinned cells and editor expansion are not supported.
+direction change to reconcile ownership. Numeric widths must be finite and positive.
+Per-row numeric callbacks, non-pinned cells and editor expansion are not supported.
 
 ## Accessibility
 

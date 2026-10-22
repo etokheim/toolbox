@@ -8,7 +8,7 @@
  *     '[{"path":"fesm2022/toolbox-web-grid-angular.mjs","maxSize":262144}]'
  */
 import { resolve } from 'node:path';
-import { checkBudgets, type BudgetEntry } from './vite-bundle-budget';
+import { checkBudgets, type BudgetEntry } from './vite-bundle-budget.ts';
 
 const [outDir, budgetJson] = process.argv.slice(2);
 
@@ -18,7 +18,9 @@ if (!outDir || !budgetJson) {
 }
 
 const budgets: BudgetEntry[] = JSON.parse(budgetJson);
-const { violations, warnings } = checkBudgets({ outDir: resolve(outDir), budgets });
+const { violations, warnings, measurements } = checkBudgets({ outDir: resolve(outDir), budgets });
+console.log(`Bundle budget authority: Bun ${measurements.bunVersion}, node:zlib gzipSync defaults`);
+for (const file of measurements.files) console.log(`${file.path}: ${file.raw} B raw, ${file.gzip} B gzip`);
 
 if (warnings.length > 0) {
   console.warn(`\n\x1b[33mBundle budget warnings:\x1b[0m`);

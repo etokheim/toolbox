@@ -33,6 +33,7 @@ import { animateRow, animateRowById, animateRows } from './internal/row-animatio
 import { resolveRowIdOrThrow, RowManager, tryResolveRowId } from './internal/row-manager';
 import { releaseCell } from './internal/control-lifecycle';
 import { invalidateCellCache, renderVisibleRows } from './internal/rows';
+import { getRowWindow } from './internal/row-window';
 import { applySort, reapplyCoreSort, toggleSort } from './internal/sorting';
 import { addPluginStyles, injectStyles } from './internal/style-injector';
 import { getActiveGridTag, GRID_TAG_NAME, setActiveGridTag } from './internal/tag-registry';
@@ -498,6 +499,7 @@ export class DataGridElement<T = any> extends HTMLElement implements InternalGri
     const oldValue = this.#rows;
     this.#rows = next;
     if (oldValue !== next) {
+      this.#virtManager.cancelHeightAnchor();
       this.#queueUpdate('rows');
     }
   }
@@ -613,6 +615,9 @@ export class DataGridElement<T = any> extends HTMLElement implements InternalGri
       value = this.__frameworkAdapter.processConfig(value);
     }
     const oldValue = this.#configManager?.getGridConfig();
+    if (oldValue !== value && !this.#pendingUpdateFlags.rows) {
+      this.#virtManager.captureHeightAnchor(value?.rowHeight);
+    }
     this.#configManager?.setGridConfig(value);
     if (oldValue !== value) {
       // Clear light DOM column cache so columns are re-parsed from light DOM
@@ -1531,6 +1536,7 @@ export class DataGridElement<T = any> extends HTMLElement implements InternalGri
         () => {
           // Fast exit if no scroll processing needed
           if (!this._virtualization.enabled && !this.#hasScrollPlugins) return;
+          if (getRowWindow(this)?.viewport?.()) return;
 
           const rawScrollTop = fauxScrollbar.scrollTop;
           rowsEl.style.transform = `translateY(${computeRowsTranslateY(
@@ -1546,7 +1552,7 @@ export class DataGridElement<T = any> extends HTMLElement implements InternalGri
             this.#scrollRaf = requestAnimationFrame(() => {
               this.#scrollRaf = 0;
               if (this.#pendingScrollTop !== null) {
-                this.#onScrollBatched(this.#pendingScrollTop);
+                this._onScrollBatched(this.#pendingScrollTop);
                 this.#pendingScrollTop = null;
               }
             });
@@ -1558,7 +1564,7 @@ export class DataGridElement<T = any> extends HTMLElement implements InternalGri
       // Horizontal scroll listener on scroll area
       // This is needed for plugins like column virtualization that need to respond to horizontal scroll
       const scrollArea = this.#renderRoot.querySelector('.tbw-scroll-area') as HTMLElement;
-      this.#scrollAreaEl = scrollArea; // Store reference for use in #onScrollBatched
+      this.#scrollAreaEl = scrollArea; // Store reference for use in _onScrollBatched
       this._virtualization.scrollAreaEl = scrollArea; // Cache for #calculateTotalSpacerHeight
       if (scrollArea && this.#hasScrollPlugins) {
         scrollArea.addEventListener(
@@ -1798,9 +1804,10 @@ export class DataGridElement<T = any> extends HTMLElement implements InternalGri
   /** Update ARIA selection attributes on rendered rows/cells */
   #updateAriaSelection(): void {
     // Mark active row and cell with aria-selected
-    const rows = this._bodyEl?.querySelectorAll('.data-grid-row');
+    const rows = this._bodyEl?.querySelectorAll(':scope > .data-grid-row');
+    const indices = getRowWindow(this)?.indices;
     rows?.forEach((row, rowIdx) => {
-      const isActiveRow = rowIdx === this._focusRow;
+      const isActiveRow = (indices?.[rowIdx] ?? rowIdx) === this._focusRow;
       row.setAttribute('aria-selected', String(isActiveRow));
       row.querySelectorAll('.cell').forEach((cell, colIdx) => {
         (cell as HTMLElement).setAttribute('aria-selected', String(isActiveRow && colIdx === this._focusCol));
@@ -2560,7 +2567,8 @@ export class DataGridElement<T = any> extends HTMLElement implements InternalGri
     this.#scheduler.requestPhase(RenderPhase.FULL, 'setup');
   }
 
-  #onScrollBatched(scrollTop: number): void {
+  /** @internal Shared dispatch for native internal and explicitly configured external scrolling. */
+  _onScrollBatched(scrollTop: number): void {
     // PERF: Read all geometry values BEFORE DOM writes to avoid forced synchronous layout.
     // refreshVirtualWindow and onScrollRender write to the DOM (transforms, innerHTML, attributes).
     // Reading geometry after those writes forces the browser to synchronously compute layout.
@@ -2569,7 +2577,7 @@ export class DataGridElement<T = any> extends HTMLElement implements InternalGri
     // Reads are unconditional now because the public `tbw-scroll` event always fires
     // (and needs scrollHeight/clientHeight for its detail). The plugin pooled-event
     // path also consumes these values when #hasScrollPlugins is true.
-    const fauxScrollbar = this._virtualization.container;
+    const fauxScrollbar = getRowWindow(this)?.viewport?.()?.container ?? this._virtualization.container;
     const scrollArea = this.#scrollAreaEl;
     const scrollLeft = scrollArea?.scrollLeft ?? 0;
     const scrollHeight = fauxScrollbar?.scrollHeight ?? 0;
@@ -2643,6 +2651,8 @@ export class DataGridElement<T = any> extends HTMLElement implements InternalGri
    * @param rowIndex - The data row index (not the DOM position)
    */
   findRenderedRowElement(rowIndex: number): HTMLElement | null {
+    const window = getRowWindow(this);
+    if (window) return window.elements.get(rowIndex) ?? null;
     const s = this._virtualization;
     const poolIndex = rowIndex - s.start;
     if (poolIndex >= 0 && poolIndex < this._rowPool.length && poolIndex < s.end - s.start) {
@@ -3321,6 +3331,7 @@ export class DataGridElement<T = any> extends HTMLElement implements InternalGri
    * ```
    */
   focusCell(rowIndex: number, column: number | string): void {
+    this.#virtManager.refreshChangedRows();
     this.#focusManager.focusCell(rowIndex, column);
   }
 
@@ -3365,6 +3376,8 @@ export class DataGridElement<T = any> extends HTMLElement implements InternalGri
    * ```
    */
   scrollToRow(rowIndex: number, options?: ScrollToRowOptions): void {
+    this.#virtManager.cancelHeightAnchor();
+    this.#virtManager.refreshChangedRows();
     this.#focusManager.scrollToRow(rowIndex, options);
   }
 
@@ -3386,6 +3399,8 @@ export class DataGridElement<T = any> extends HTMLElement implements InternalGri
    * ```
    */
   scrollToRowById(rowId: string, options?: ScrollToRowOptions): void {
+    this.#virtManager.cancelHeightAnchor();
+    this.#virtManager.refreshChangedRows();
     this.#focusManager.scrollToRowById(rowId, options);
   }
   // #endregion

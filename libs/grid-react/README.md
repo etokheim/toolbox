@@ -174,6 +174,13 @@ and `selection="range"`. The same options work in `gridConfig.features`.
 See [Cell Entry](https://toolboxjs.com/grid/plugins/cell-entry/) for keyboard,
 validation and boundary-focus behaviour.
 
+With `features/pinned-rows` imported, `pinnedRows.slots` updates live on both the
+feature prop and `gridConfig.features.pinnedRows`. Inline panel renderers, aggregation
+formatters and cell callbacks use their latest values without resetting editing,
+selection or Undo history. Slot additions, removals and position changes also apply
+without restarting plugins. Callback-only updates retain the panel's React state;
+changing its slot identity, position or render zone may remount that panel.
+
 ### Import All Features
 
 For prototyping or when bundle size isn't critical, import all features at once:
@@ -194,6 +201,19 @@ import '@toolbox-web/grid-react/features';
   // ... any feature prop
 />;
 ```
+
+### Scoped footer controls
+
+Import `@toolbox-web/grid-react/features/pinned-rows` to use typed
+`PinnedRowsConfig<Row>.scopedFooters` through either the `pinnedRows` prop or
+`gridConfig.features.pinnedRows`. The renderer accepts JSX, DOM, or a persistent
+`ControlView<FooterContext<Row>>`; JSX uses the existing provider-preserving
+portal manager, not a separate React root. Live callback/height updates preserve
+sibling plugins, editor and Undo state. `scope.key` is occurrence identity;
+group scopes also expose `parent` and `path` for application policy.
+
+See the [scoped-footer guide](https://toolboxjs.com/grid/plugins/pinned-rows/#scoped-non-data-footers)
+for empty scopes, explicit heights and replacing only your own global action slot.
 
 ### Full Example
 
@@ -460,6 +480,16 @@ on either `groupingRows` or `gridConfig.features.groupingRows` preserves the exi
 plugins, selection and expansion; an unchanged callback does not invalidate the model.
 Other config changes retain the normal initialization lifecycle. See
 [category ordering](https://toolboxjs.com/grid/plugins/grouping-rows/#category-order).
+
+When Tree is active, immutable `rows` updates that replace, add or remove an
+array-valued field run the full row-processing pipeline, even when parent IDs
+are unchanged. This includes custom `childrenField` names and nested updates
+that replace their ancestor child arrays. Plugin instances and expansion state
+are retained. Because explicit Tree instances do not expose their configuration
+as public API, unrelated array replacements on Tree rows conservatively take
+the same path. Scalar-only updates retain the lightweight `updateRows(..., 'sync')`
+path; non-Tree grids keep their existing diff behavior. Replace row objects and
+ancestor arrays rather than mutating nested children in place.
 
 Create expandable row details using the `GridDetailPanel` component:
 

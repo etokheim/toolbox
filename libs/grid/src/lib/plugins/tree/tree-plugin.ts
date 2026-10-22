@@ -504,7 +504,7 @@ export class TreePlugin<TRow = unknown> extends BaseGridPlugin<TreeConfig<TRow>>
       const meta = this.#describeRow(row, key, depth, parentKey, i, ordered.length);
       const children = row[childrenField];
       node.key = key;
-      if (Array.isArray(children) && children.length > 0 && meta.isExpanded) {
+      if (Array.isArray(children) && meta.hasChildren && meta.isExpanded) {
         node.expanded = true;
         node.children = (children as TreeRow[]).map((child) => ({ row: child }));
       }

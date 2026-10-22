@@ -33,6 +33,7 @@ import {
   buildPreDefinedGroupModel,
   nestGroupRows,
   collectVisibleRowKeys,
+  collectPreDefinedGroupKeys,
   getGroupRevealKey,
   getRenderedGroupRevealKey,
   indexGroupCells,
@@ -921,7 +922,7 @@ export class GroupingRowsPlugin extends BaseGridPlugin<GroupingRowsConfig> imple
 
     // Resolve defaultExpanded on first render only
     if (!this.hasAppliedDefaultExpanded && this.expandedKeys.size === 0 && this.config.defaultExpanded !== false) {
-      const allKeys = this.collectGroupKeys(groups);
+      const allKeys = collectPreDefinedGroupKeys(groups);
       const initialExpanded = resolveDefaultExpanded(this.config.defaultExpanded ?? false, allKeys);
       if (initialExpanded.size > 0) {
         this.expandedKeys = new Set(initialExpanded);
@@ -944,20 +945,6 @@ export class GroupingRowsPlugin extends BaseGridPlugin<GroupingRowsConfig> imple
       (item) => this.findGroupDefinition(groups, item.key)?.rowCount ?? item.rows.length,
       this.#renderItems,
     );
-  }
-
-  /**
-   * Collect all group keys from a pre-defined group tree.
-   */
-  private collectGroupKeys(groups: GroupDefinition[]): string[] {
-    const keys: string[] = [];
-    for (const g of groups) {
-      keys.push(g.key);
-      if (g.children?.length) {
-        keys.push(...this.collectGroupKeys(g.children));
-      }
-    }
-    return keys;
   }
 
   /**
@@ -1481,6 +1468,13 @@ export class GroupingRowsPlugin extends BaseGridPlugin<GroupingRowsConfig> imple
   setGroupOrder(groupOrder: GroupingRowsConfig['groupOrder']): void {
     if (this.config.groupOrder === groupOrder) return;
     this.config.groupOrder = groupOrder;
+    this.requestRender();
+  }
+
+  /** Replace admitted empty group paths without resetting expansion. @since 3.10.0 */
+  setEmptyGroups(emptyGroups: GroupingRowsConfig['emptyGroups']): void {
+    if (this.config.emptyGroups === emptyGroups) return;
+    this.config.emptyGroups = emptyGroups;
     this.requestRender();
   }
 

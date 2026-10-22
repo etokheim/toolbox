@@ -512,6 +512,8 @@ export interface InternalGrid<T = any> extends PublicGrid<T>, GridConfig<T> {
   effectiveConfig?: GridConfig<T>;
   findHeaderRow?: () => HTMLElement;
   refreshVirtualWindow: (full: boolean, skipAfterRender?: boolean) => boolean;
+  /** @internal Dispatch a native scroll batch using the configured vertical owner. */
+  _onScrollBatched(scrollTop: number): void;
   /** @internal Trigger a COLUMNS-phase re-render. */
   refreshColumns?: () => void;
   updateTemplate?: () => void;
@@ -2843,6 +2845,12 @@ export interface GridConfig<TRow = any, TField extends string = ColumnFieldKey<T
    *
    * **Variable Row Heights**: When a function is provided, the grid enables variable height
    * virtualization. Heights are measured on first render and cached by row identity.
+   *
+   * Replacing the configured number or callback preserves the top visible occurrence and
+   * its intra-row offset, clamped to the new row and scroll range. Newer scrolling,
+   * source-data/identity replacement, and removed occurrences cancel that one-shot anchor.
+   * An unchanged callback, ordinary `forceLayout()`, or removing this setting retains
+   * the existing pixel-scroll/measurement behavior.
    *
    * **Numeric form**: the value is written to the `--tbw-row-height` custom property on the host
    * element (overriding the theme) and is never replaced by a measured height, even when a plugin

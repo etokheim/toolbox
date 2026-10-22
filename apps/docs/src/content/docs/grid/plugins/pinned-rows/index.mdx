@@ -20,6 +20,98 @@ import '@toolbox-web/grid/features/pinned-rows';
 
 ## Basic Usage
 
+### Scoped non-data footers
+
+`scopedFooters(scope)` opts into a footer at the natural end of an admitted
+processed scope. Return `{ height, render }` or `null` to omit it. The whole-grid
+scope is offered even when there are no rows. An omitted callback preserves the
+existing global-slot behaviour.
+
+```tsx
+import { DataGrid } from '@toolbox-web/grid-react';
+import type { PinnedRowsConfig } from '@toolbox-web/grid-react/features/pinned-rows';
+import '@toolbox-web/grid-react/features/pinned-rows';
+
+type Item = { id: string; category: string };
+const pinnedRows: PinnedRowsConfig<Item> = {
+  slots: [], // Remove only your own redundant global action slot; keep totals if needed.
+  scopedFooters: (scope) => scope.kind === 'grid' ? {
+    height: 40,
+    render: () => <button type="button" onClick={appendItem}>Add item</button>,
+  } : null,
+};
+// appendItem is an application command, not a grid insertion operation.
+<DataGrid<Item> rows={items} columns={[{ field: 'id' }]} pinnedRows={pinnedRows} />;
+```
+
+Both the React feature prop and `gridConfig.features.pinnedRows` accept this
+typed JSX renderer through the existing provider-preserving portal manager.
+Use the feature prop for local React configuration or canonical `gridConfig`
+for shared configuration. Core renderers return an `HTMLElement`, persistent
+`ControlView<FooterContext<T>>`, or `null`; Angular/Vue use that DOM contract,
+not a new framework-template bridge.
+
+`FooterScope<T>` is discriminated by `kind`: `grid` has a `key`; `row` also
+has the expanded real `row`; `group` has `parent: T | null` and the normalized
+`path: readonly string[]`. **`key` is occurrence identity**, not the parent
+object, domain ID, or view index. Repeated canonical entities need distinct
+rendered occurrences. Use `group.path` and `group.parent` for application policy,
+and `key` for visual ownership; never construct native group keys.
+
+`FooterContext.depth` is the owning occurrence's zero-based presentation depth:
+it matches the owning Tree/group renderer and is zero for a grid scope.
+`FooterContext.collapsible` is true/false for a group owner, with false identifying
+a fixed heading; it is undefined for row/grid scopes. Use `scope.kind` for the
+owner kind. Native refreshes these values after topology changes even when the
+scope key and renderer identity stay the same. Align text using this owner depth
+and your own name-column/disclosure/icon offsets, not `path.length` or the depth
+of a child that might be inserted. No per-scroll DOM lookup is needed.
+
+The innermost eligible intersecting scope may pin its footer at the viewport
+bottom until its natural end arrives. Other footers retain their natural-flow
+extents. Collapse, filtering, removal and scope exit retire owners. Fixed
+noncollapsible groups count as expanded, including explicitly
+[declared empty groups](/grid/plugins/grouping-rows/#declared-empty-groups).
+Return `null` for real parent scopes that already expose an action elsewhere.
+Sticky ancestor scope ends include descendant and own footer space, excluding
+parent/grid footer segments that happen to follow the same last data row.
+Membership changes at each segment boundary; ordinary data navigation continues
+to skip non-data space. Normal push-off/clipping and short-viewport capacity
+release still apply.
+
+The explicit positive height includes borders: for example 40px comfortable or
+24px compact. Global totals/panels retain their space; the scoped footer shares
+the native offset cache and participates in reveal and ancestor capacity.
+The grid never infers which global slot represents an application action.
+Remove your own redundant action slot when enabling whole-grid placement.
+Callback replacement re-evaluates eligibility and height with unchanged rows.
+React updates retain the live portal and sibling plugin/editor/Undo state.
+For native stateful controls, return a `ControlView` with `update` and `dispose`.
+
+If the available viewport cannot fit the footer plus the current data/editor
+surface after releasing sticky ancestors, the footer stays reachable in normal
+flow and emits the standard `CONFIG_RULE_WARN` insufficient-space diagnostic.
+It contributes no sticky bottom occlusion in that state. Restoring capacity
+restores sticking automatically. Controls are not hidden, targets are not
+shrunk, and the container height is not forced.
+
+CSS `position: sticky` cannot enforce subtree bounds here: virtual rows are
+flattened siblings with no subtree containing block, `.rows-viewport` clips,
+and the internal vertical owner is its sibling `.faux-vscroll`. External
+scrolling is also constrained by `.tbw-scroll-area`. Native placement therefore
+positions the same live footer using the authoritative row window and offsets;
+it does not duplicate interactive controls.
+
+## Accessibility
+
+[SC 2.1.1: Keyboard](https://www.w3.org/WAI/WCAG22/Understanding/keyboard.html):
+footer buttons and inputs keep normal browser focus and keyboard behaviour.
+They are not data rows and do not participate in selection, cell editing,
+grid paste, export, or persistence. The consumer supplies accessible labels,
+commands and permissions; structural group-header selection and ARIA are unchanged.
+
+## Global slots
+
 Pinned rows are configured with a unified `slots[]` array. Each slot becomes
 its own DOM row at `position: 'top'` or `position: 'bottom'` (default
 `'bottom'`), in declared order. A slot is either an **aggregation row**
@@ -549,4 +641,3 @@ The v2 top-level fields were removed in v3. Map them to `slots` as follows:
 
 - **[Pinned Columns](/grid/plugins/pinned-columns/)** — Sticky columns
 - **[Core Configuration](/grid/core/)** — Grid configuration overview
-

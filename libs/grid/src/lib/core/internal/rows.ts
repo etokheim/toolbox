@@ -1,6 +1,6 @@
 import { FOCUSABLE_EDITOR_SELECTOR, GridClasses } from '../constants';
 import type { ColumnInternal, ColumnViewRenderer, GridHost, InternalGrid, RowElementInternal } from '../types';
-import { isControlEvent, releaseCell } from './control-lifecycle';
+import { consumeCellContentInvalidation, isControlEvent, releaseCell } from './control-lifecycle';
 import {
   CELL_CLASS_ERROR,
   FORMAT_ERROR,
@@ -13,6 +13,8 @@ import { ensureCellVisible } from './keyboard';
 import { evalTemplateString, finalCellScrub, setSanitizedHTML } from './sanitize';
 import { booleanCellHTML, clearCellFocus, formatDateValue, getRowIndexFromCell } from './utils';
 import { resolveCellValue } from './value-accessor';
+import { getRowWindow } from './row-window';
+import { getRowFlow } from './row-flow';
 
 /** Callback type for plugin row rendering hook */
 export type RenderRowHook = (row: any, rowEl: HTMLElement, rowIndex: number) => boolean;
@@ -346,7 +348,7 @@ function reconcileRow(
     return;
   }
 
-  fastPatchRow(grid, rowEl, rowData, rowIndex);
+  fastPatchRow(grid, rowEl, rowData, rowIndex, !!getRowWindow(grid) && !dataRefChanged);
   if (dataRefChanged) rowEl.__rowDataRef = rowData;
 }
 
@@ -408,12 +410,15 @@ export function renderVisibleRows(
   epoch?: number,
   renderRowHook?: RenderRowHook,
 ): void {
-  const needed = Math.max(0, end - start);
+  const window = getRowWindow(grid);
+  window?.select(start, end);
+  const needed = window ? window.indices.length : Math.max(0, end - start);
   const bodyEl = grid._bodyEl;
   const columns = grid._visibleColumns;
   const colLen = columns.length;
   const headerRowCount = resolveHeaderRowCount(grid);
 
+  if (window) grid._rowPool = window.reconcile(grid._rowPool, createRowFromTemplate);
   syncRowPool(grid, needed, bodyEl);
 
   // Check if any plugin has a renderRow hook (cache this)
@@ -432,7 +437,7 @@ export function renderVisibleRows(
       : null;
 
   for (let i = 0; i < needed; i++) {
-    const rowIndex = start + i;
+    const rowIndex = window ? window.indices[i] : start + i;
     const rowData = grid._rows[rowIndex];
     const rowEl = grid._rowPool[i] as RowElementInternal;
 
@@ -444,6 +449,16 @@ export function renderVisibleRows(
     if (rowEl.__ariaRowIndex !== ariaRowIndex) {
       rowEl.__ariaRowIndex = ariaRowIndex;
       rowEl.setAttribute('aria-rowindex', String(ariaRowIndex));
+    }
+
+    // Structural rows must use the same height as the authoritative position cache.
+    if (varHeightFn) {
+      const h = varHeightFn(rowData, rowIndex);
+      if (h !== undefined && h > 0) {
+        rowEl.style.setProperty('--tbw-row-height', `${h}px`);
+      } else {
+        rowEl.style.removeProperty('--tbw-row-height');
+      }
     }
 
     // Let plugins handle custom row rendering (e.g., group rows)
@@ -477,19 +492,6 @@ export function renderVisibleRows(
     applyChangedClass(grid, rowEl, rowData);
     applyRowClass(grid, rowEl, rowData);
 
-    // Apply per-row variable height via --tbw-row-height CSS custom property.
-    // Cells bind to this variable (min-height: var(--tbw-row-height)), so setting
-    // it on the row element makes both the row and its cells respect the override.
-    // The `measureRowHeight` guard in virtualization-manager.ts prevents this from corrupting s.rowHeight.
-    if (varHeightFn) {
-      const h = varHeightFn(rowData, rowIndex);
-      if (h !== undefined && h > 0) {
-        rowEl.style.setProperty('--tbw-row-height', `${h}px`);
-      } else {
-        rowEl.style.removeProperty('--tbw-row-height');
-      }
-    }
-
     // Call row-level plugin hook if any plugin registered it
     if (hasRowHook) {
       grid._afterRowRender?.({
@@ -501,6 +503,10 @@ export function renderVisibleRows(
 
     if (rowEl.parentNode !== bodyEl) bodyEl.appendChild(rowEl);
   }
+  if (window) {
+    window.layout();
+  }
+  getRowFlow(grid)?.layout();
 }
 // #endregion
 
@@ -592,6 +598,7 @@ function patchPlainCells(
 
     // Skip cells in edit mode - they have editors that must be preserved
     if (cell.classList.contains(GridClasses.EDITING)) continue;
+    consumeCellContentInvalidation(cell);
 
     // Release editor views if cell has element children (indicating prior editor/renderer DOM).
     // Plain text cells (textContent-only) have no element children, so this is a fast O(1) skip.
@@ -763,7 +770,13 @@ function patchCellContent(
  *
  * Optimized for scroll performance - avoids querySelectorAll in favor of children access.
  */
-function fastPatchRow(grid: GridHost, rowEl: HTMLElement, rowData: any, rowIndex: number): void {
+function fastPatchRow(
+  grid: GridHost,
+  rowEl: HTMLElement,
+  rowData: any,
+  rowIndex: number,
+  preserveContent = false,
+): void {
   const children = rowEl.children;
   const columns = grid._visibleColumns;
   const colsLen = columns.length;
@@ -811,7 +824,8 @@ function fastPatchRow(grid: GridHost, rowEl: HTMLElement, rowData: any, rowIndex
     // Skip content update for cells in edit mode — the editor owns the DOM.
     if (isEditing) continue;
 
-    patchCellContent(grid, rowEl, cell, col, i, rowData, rowIndex, hasCellHook);
+    if (consumeCellContentInvalidation(cell) || !preserveContent)
+      patchCellContent(grid, rowEl, cell, col, i, rowData, rowIndex, hasCellHook);
   }
 }
 // #endregion

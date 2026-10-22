@@ -12,6 +12,8 @@ import {
   unregisterControlCleanup,
 } from '../../core/internal/control-lifecycle';
 import { getRowIndexFromCell } from '../../core/internal/utils';
+import { getRowWindow } from '../../core/internal/row-window';
+import { resolveConfiguredRowHeight } from '../../core/internal/virtualization';
 import {
   BaseGridPlugin,
   CellClickEvent,
@@ -328,14 +330,10 @@ export class MasterDetailPlugin<TRow = unknown> extends BaseGridPlugin<MasterDet
 
     const height = detailEl.offsetHeight;
     if (height > 0) {
-      const previousHeight = this.measuredDetailHeights.get(row);
       this.measuredDetailHeights.set(row, height);
-
-      // Only invalidate if height actually changed
-      // This triggers an incremental position cache update, not a full rebuild
-      if (previousHeight !== height) {
-        this.grid.invalidateRowHeight(rowIndex);
-      }
+      // A height query may already have cached this detail measurement without
+      // updating positions. Invalidation compares the combined row extent.
+      this.grid.invalidateRowHeight(rowIndex);
     }
   }
 
@@ -823,6 +821,13 @@ export class MasterDetailPlugin<TRow = unknown> extends BaseGridPlugin<MasterDet
    * falls back to a DOM query when the pool is not accessible.
    */
   #collectVisibleRowMap(body: Element): Map<number, Element> {
+    const window = getRowWindow(this.grid);
+    if (window) {
+      const { start, end } = this.grid._virtualization;
+      return new Map(
+        [...window.elements].filter(([index, row]) => index >= start && index < end && row.parentNode === body),
+      );
+    }
     const gridInternal = this.grid as any;
     const rowPool: HTMLElement[] | undefined = gridInternal._rowPool;
     const visibleStart: number = gridInternal._virtualization?.start ?? 0;
@@ -907,14 +912,14 @@ export class MasterDetailPlugin<TRow = unknown> extends BaseGridPlugin<MasterDet
 
   /**
    * Get the height of a specific row, including any expanded detail content.
-   * Always returns a height to ensure the position cache uses plugin-controlled values
-   * rather than stale DOM measurements.
+   * Expanded rows contribute their configured base height plus detail height.
+   * Collapsed rows defer to the grid's normal height resolution.
    *
    * @param row - The row data
-   * @param _index - The row index (unused, but part of the interface)
-   * @returns The row height in pixels (base height for collapsed, base + detail for expanded)
+   * @param index - The row index in the processed rows array
+   * @returns Base plus detail height when expanded, otherwise undefined
    */
-  override getRowHeight(row: unknown, _index: number): number | undefined {
+  override getRowHeight(row: unknown, index: number): number | undefined {
     const isExpanded = this.#hasDetail(row) && this.expandedRows.has(row);
 
     if (!isExpanded) {
@@ -923,9 +928,8 @@ export class MasterDetailPlugin<TRow = unknown> extends BaseGridPlugin<MasterDet
       return undefined;
     }
 
-    // Row is expanded - return base height plus detail height
-    // Use grid's defaultRowHeight which reflects the actual measured/configured height
-    const baseHeight = this.grid.defaultRowHeight ?? 28;
+    const baseHeight =
+      resolveConfiguredRowHeight(this.grid.effectiveConfig?.rowHeight, row, index) ?? this.grid.defaultRowHeight ?? 28;
     const detailHeight = this.getDetailHeight(row);
 
     return baseHeight + detailHeight;

@@ -186,7 +186,7 @@ function EmployeeGrid() {
 | `features/responsive` | `responsive` | `responsive` (card layout on mobile) |
 | `features/export` | `export` | `export` |
 | `features/print` | `print` | `print` |
-| `features/pinned-rows` | `pinnedRows` | `pinnedRows` or `pinnedRows={{ position: 'bottom' }}` |
+| `features/pinned-rows` | `pinnedRows` | `pinnedRows` (default row count) or custom `slots` |
 | `features/column-virtualization` | `columnVirtualization` | `columnVirtualization` |
 | `features/pivot` | `pivot` | `pivot={{ rowFields: ['category'], valueField: 'sales' }}` |
 | `features/server-side` | `serverSide` | `serverSide={{ pageSize: 50 }}` |
@@ -200,6 +200,13 @@ ordering. Replacing or clearing only the `groupOrder` callback on either the fea
 prop or `gridConfig.features.groupingRows` preserves plugin instances, selection and
 expansion. Other configuration changes retain their existing lifecycle.
 See [Category Order](/grid/plugins/grouping-rows/#category-order).
+
+`pinnedRows.slots` also updates live on either configuration surface. Inline panel
+renderers, nested aggregation formatters and cell callbacks use their latest values
+without resetting editing, selection or Undo history. Adding, removing or moving
+slots preserves plugin lifetimes. Callback-only updates retain a panel's React
+state; changing its slot identity, position or render zone may remount that panel.
+See [Pinned Rows](/grid/plugins/pinned-rows/).
 
 ### Core Config Props (no import needed)
 

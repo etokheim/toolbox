@@ -1,6 +1,7 @@
 /** @vitest-environment happy-dom */
 import type { ColumnConfig, DataGridElement } from '@toolbox-web/grid';
 import { PinnedColumnsPlugin } from '@toolbox-web/grid/plugins/pinned-columns';
+import { StickyRowsPlugin } from '@toolbox-web/grid/plugins/sticky-rows';
 import { act, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -38,26 +39,29 @@ describe('mixed DOM columns and JSX GridColumn', () => {
     expect(invalid).toBeDefined();
   });
 
-  it('needs no Editing plugin and preserves action state and lease on immutable occurrence updates', async () => {
+  it.each([false, true])('preserves action state and lease on immutable updates (ancestors=%s)', async (ancestors) => {
     vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
     const container = document.createElement('div');
     document.body.append(container);
     const root = createRoot(container);
     const pinned = new PinnedColumnsPlugin();
-    const config: GridConfig<Row> = { getRowId: (row) => row.id, plugins: [pinned] };
+    const config: GridConfig<Row> = {
+      getRowId: (row) => row.id,
+      plugins: [pinned, ...(ancestors ? [new StickyRowsPlugin({ mode: 'ancestors', isSticky: () => true })] : [])],
+    };
     const columns = (revision: string): ColumnConfig<Row>[] => [
       {
         field: 'name',
         renderer: ({ row }) => {
           const node = document.createElement('span');
-          node.dataset.nativeCell = '';
-          node.dataset.revision = revision;
+          node.dataset['nativeCell'] = '';
+          node.dataset['revision'] = revision;
           node.textContent = row.name;
           return node;
         },
         headerRenderer: () => {
           const node = document.createElement('span');
-          node.dataset.nativeHeader = '';
+          node.dataset['nativeHeader'] = '';
           node.textContent = `Native header:${revision}`;
           return node;
         },
@@ -89,7 +93,10 @@ describe('mixed DOM columns and JSX GridColumn', () => {
       expect(container.querySelector('[data-native-header]')?.textContent).toBe('Native header:Original');
       await act(async () => button.click());
       const release = pinned.retainCellExpansion('parent/one', '__actions');
-      await act(async () => root.render(render('Updated')));
+      await act(async () => {
+        root.render(render('Updated'));
+        grid.rows = [{ id: 'parent/one', name: 'Updated' }];
+      });
       await vi.waitFor(() => expect(button.textContent).toBe('Updated:1'));
       expect(container.querySelector('.rows button')).toBe(button);
       expect(container.querySelector('[data-native-cell]')?.textContent).toBe('Updated');
@@ -103,13 +110,16 @@ describe('mixed DOM columns and JSX GridColumn', () => {
     }
   });
 
-  it('never transfers views or leases between occurrences of one canonical entity', async () => {
+  it.each([false, true])('keeps duplicate occurrence views and leases separate (ancestors=%s)', async (ancestors) => {
     vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
     const container = document.createElement('div');
     document.body.append(container);
     const root = createRoot(container);
     const pinned = new PinnedColumnsPlugin();
-    const config: GridConfig<Row> = { getRowId: (row) => row.id, plugins: [pinned] };
+    const config: GridConfig<Row> = {
+      getRowId: (row) => row.id,
+      plugins: [pinned, ...(ancestors ? [new StickyRowsPlugin({ mode: 'ancestors', isSticky: () => true })] : [])],
+    };
     function Actions({ row }: { row: Row }) {
       const [count, setCount] = useState(0);
       return (
@@ -136,6 +146,7 @@ describe('mixed DOM columns and JSX GridColumn', () => {
     try {
       await act(async () => root.render(render([first, second])));
       await vi.waitFor(() => expect(container.querySelectorAll('.rows button')).toHaveLength(2));
+      const grid = container.querySelector<DataGridElement<Row>>('tbw-grid')!;
       const [a, b] = Array.from(container.querySelectorAll<HTMLButtonElement>('.rows button'));
       const aCell = a.closest<HTMLElement>('.cell')!;
       const bCell = b.closest<HTMLElement>('.cell')!;
@@ -145,14 +156,14 @@ describe('mixed DOM columns and JSX GridColumn', () => {
       expect(
         Number(aCell.hasAttribute('data-tbw-cell-expanded')) + Number(bCell.hasAttribute('data-tbw-cell-expanded')),
       ).toBe(1);
-      await act(async () =>
-        root.render(
-          render([
-            { ...first, name: 'A2' },
-            { ...second, name: 'B2' },
-          ]),
-        ),
-      );
+      await act(async () => {
+        const next = [
+          { ...first, name: 'A2' },
+          { ...second, name: 'B2' },
+        ];
+        root.render(render(next));
+        grid.rows = next;
+      });
       await vi.waitFor(() => expect(a.textContent).toBe('A2:1'));
       expect(b.textContent).toBe('B2:0');
       expect(Array.from(container.querySelectorAll('.rows button'))).toEqual([a, b]);
@@ -162,7 +173,7 @@ describe('mixed DOM columns and JSX GridColumn', () => {
       await act(async () => root.render(render([{ ...second, name: 'Remaining' }])));
       await vi.waitFor(() => expect(container.querySelector('.rows button')?.textContent).toBe('Remaining:0'));
       expect(a.isConnected).toBe(false);
-      expect(b.isConnected).toBe(false);
+      expect(b.isConnected).toBe(ancestors);
       const successor = container.querySelector('.rows button')!.closest<HTMLElement>('.cell')!;
       const releaseSuccessor = pinned.retainCellExpansion(second.id, '__actions');
       releaseA();
@@ -171,6 +182,11 @@ describe('mixed DOM columns and JSX GridColumn', () => {
       expect(successor.hasAttribute('data-tbw-cell-expanded')).toBe(true);
       releaseSuccessor();
       expect(successor.hasAttribute('data-tbw-cell-expanded')).toBe(false);
+      await act(async () => root.render(render([{ ...second, id: 'group-c/entity-one', name: 'Successor' }])));
+      await vi.waitFor(() => expect(container.querySelector('.rows button')?.textContent).toBe('Successor:0'));
+      expect(b.isConnected).toBe(false);
+      await act(async () => b.click());
+      expect(container.querySelector('.rows button')?.textContent).toBe('Successor:0');
     } finally {
       await act(async () => root.unmount());
     }

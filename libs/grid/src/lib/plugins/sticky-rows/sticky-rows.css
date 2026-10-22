@@ -1,4 +1,27 @@
 @layer tbw-plugins {
+  .tbw-ancestor-live {
+    position: relative;
+    translate: 0 var(--tbw-ancestor-shift, 0px);
+    z-index: calc(var(--tbw-z-layer-sticky-rows, 22) + var(--tbw-ancestor-order, 0));
+    background: var(--tbw-color-bg, var(--tbw-color-panel-bg));
+  }
+
+  /* Selection may position focused rows, but retained owners must stay out of flow. */
+  .data-grid-row.tbw-ancestor-live.tbw-ancestor-retained {
+    position: absolute;
+    top: 0;
+    inset-inline: 0;
+  }
+
+  .tbw-ancestor-header {
+    position: relative;
+    translate: 0 var(--tbw-ancestor-header-shift, 0px);
+  }
+
+  .tbw-ancestor-external-body {
+    height: var(--tbw-ancestor-content-height);
+  }
+
   /* Container for stuck-row clones. OVERLAYS the top of the rows-viewport
    * (not a flex child of rows-body) so it does not push the live rows
    * down. The rows-viewport's `overflow: clip` hides the live row

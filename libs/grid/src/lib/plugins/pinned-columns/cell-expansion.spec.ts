@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, expectTypeOf, it, vi } from 'vitest';
 import { releaseControl } from '../../core/internal/control-lifecycle';
 import { setupRowHover } from '../../core/internal/row-hover';
 import type { AfterCellRenderContext, GridElementRef } from '../../core/plugin/base-plugin';
@@ -129,6 +129,10 @@ const width = (context: AfterCellRenderContext) =>
   context.cellElement.style.getPropertyValue('--tbw-pinned-cell-width');
 
 describe('pinned action cell ownership', () => {
+  it('keeps the content-fit option typed and numeric-compatible', () => {
+    expectTypeOf<ColumnConfig['expandedCellWidth']>().toEqualTypeOf<number | 'content' | undefined>();
+  });
+
   it('transfers unleased expansion with geometric scroll hover, without pointer events or geometry reads', () => {
     const { contexts, hover, scrollHit } = fixture();
     hover(0);
@@ -296,6 +300,28 @@ describe('pinned action cell ownership', () => {
     expect(width(contexts[0])).toBe('300px');
     expect(expanded(contexts[0])).toBe(true);
     release();
+  });
+
+  it('delegates content sizing to CSS with independently updated rail bounds and unchanged ownership', () => {
+    const { contexts, columns, expansion, resize, hover, scrollHit } = fixture();
+    columns[2].expandedCellWidth = 'content';
+    expansion.configure(columns);
+    hover(0);
+    expect(width(contexts[0])).toBe('max-content');
+    expect(contexts[0].cellElement.style.getPropertyValue('--tbw-pinned-cell-min-width')).toBe('88px');
+    expect(contexts[0].cellElement.style.getPropertyValue('--tbw-pinned-cell-max-width')).toBe('524px');
+    resize(300);
+    expect(contexts[0].cellElement.style.getPropertyValue('--tbw-pinned-cell-max-width')).toBe('174px');
+    scrollHit(contexts[1].rowElement);
+    expect(contexts.map(expanded)).toEqual([false, true]);
+    resize(150);
+    expect(contexts[1].cellElement.style.getPropertyValue('--tbw-pinned-cell-max-width')).toBe('88px');
+    columns[2].expandedCellWidth = 240;
+    expansion.configure(columns);
+    expect(width(contexts[1])).toBe('88px');
+    expansion.dispose();
+    expect(contexts[1].cellElement.style.getPropertyValue('--tbw-pinned-cell-min-width')).toBe('');
+    expect(contexts[1].cellElement.style.getPropertyValue('--tbw-pinned-cell-max-width')).toBe('');
   });
 
   it.each([

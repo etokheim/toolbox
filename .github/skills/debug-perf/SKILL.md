@@ -322,13 +322,13 @@ After fixing, verify the improvement:
 
 ## Performance Budget Summary
 
-| Metric                      | Target                                     |
-| --------------------------- | ------------------------------------------ |
-| Scroll handler              | < 1ms per event                            |
-| Initial render (1000 rows)  | < 50ms                                     |
-| Cell render (single)        | < 0.1ms                                    |
-| Bundle size (core)          | ≤ 170 kB raw, ≤ 50 kB gzip (warn at 45 kB) |
-| Row virtualization overscan | 8 rows default                             |
+| Metric                      | Target                                                                                       |
+| --------------------------- | -------------------------------------------------------------------------------------------- |
+| Scroll handler              | < 1ms per event                                                                              |
+| Initial render (1000 rows)  | < 50ms                                                                                       |
+| Cell render (single)        | < 0.1ms                                                                                      |
+| Bundle size (core)          | ≤170 KiB raw / ≤52 KiB Bun gzip; warn at 45 KiB. See `bundle-check` for justified increases. |
+| Row virtualization overscan | 8 rows default                                                                               |
 
 ## Key Files to Investigate
 

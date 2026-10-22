@@ -17,6 +17,16 @@ import type {
 import type { HierarchyNode, HierarchyRowMeta } from '../hierarchy/types';
 import { tryResolveRowId } from '../../core/internal/row-manager';
 
+/** @internal Collect expansion keys without plugin state. */
+export function collectPreDefinedGroupKeys(groups: GroupDefinition[]): string[] {
+  const keys: string[] = [];
+  for (const group of groups) {
+    keys.push(group.key);
+    if (group.children?.length) keys.push(...collectPreDefinedGroupKeys(group.children));
+  }
+  return keys;
+}
+
 /** @internal Keep handled group cells indexed for current projection lookups. */
 export function indexGroupCells(rowEl: HTMLElement, index: number): void {
   const value = String(index);
@@ -209,6 +219,26 @@ export function buildGroupedRowModel({
   }
 
   const root: GroupNode = { key: '__root__', path: [], value: null, depth: -1, rows: [], children: new Map() };
+
+  for (const path of config.emptyGroups?.(context) ?? []) {
+    if (!path.length || path.some((segment) => typeof segment !== 'string' || segment === '__ungrouped__')) {
+      throw new Error('emptyGroups requires nonempty string paths without the reserved __ungrouped__ segment');
+    }
+    let parent = root;
+    for (let depth = 0; depth < path.length; depth++) {
+      const value = path[depth];
+      let node = parent.children.get(value);
+      if (!node) {
+        const segments = [...parent.path, value];
+        const key = scope === undefined ? segments.join('||') : JSON.stringify([scope, segments]);
+        node = { key, path: segments, value, depth, rows: [], children: new Map(), parent };
+        parent.children.set(value, node);
+        keyPaths?.set(JSON.stringify(segments), segments);
+        if (scope !== undefined) nestedParents?.set(key, { scope, parent: parent === root ? null : parent.key });
+      }
+      parent = node;
+    }
+  }
 
   // Build tree structure — push each row into every ancestor along the path
   // so that each group's `rows` array contains ALL data rows in its subtree.

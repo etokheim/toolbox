@@ -8,6 +8,8 @@ import { disclosureNavigationCell, isControlEvent } from './control-lifecycle';
 import { clearCellFocus, getColIndexFromCell, getRowIndexFromCell, isRTL } from './utils';
 import { readCellField } from './value-accessor';
 import { fromVirtualScrollTop, getRowIndexAtOffset, toVirtualScrollTop } from './virtualization';
+import { getRowWindow } from './row-window';
+import { getRowFlow } from './row-flow';
 
 /** Commit active row edit if the editing plugin provides this method. */
 function tryCommitEdit(grid: GridHost): void {
@@ -123,7 +125,8 @@ function navigateVertical(grid: GridHost, e: KeyboardEvent, maxRow: number, down
 function pageTargetRow(grid: GridHost, maxRow: number, down: boolean): number {
   const from = grid._focusRow;
   const virt = grid._virtualization;
-  const viewportH = virt?.viewportEl?.clientHeight ?? virt?.container?.clientHeight ?? 0;
+  const viewportH =
+    getRowWindow(grid)?.pageHeight?.() ?? virt?.viewportEl?.clientHeight ?? virt?.container?.clientHeight ?? 0;
   const offsets = grid._getVerticalScrollOffsets?.(from);
   const usable = viewportH - Math.max(0, offsets?.top ?? 0) - Math.max(0, offsets?.bottom ?? 0);
   const pc = virt?.variableHeights ? virt.positionCache : null;
@@ -263,6 +266,10 @@ interface EnsureCellVisibleOptions {
  * overlay instead of underneath it — WCAG 2.2 SC 2.4.11 Focus Not Obscured.
  */
 function scrollFocusedRowIntoView(grid: GridHost): void {
+  if (getRowWindow(grid)) {
+    grid.scrollToRow?.(grid._focusRow);
+    return;
+  }
   if (!grid._virtualization?.enabled) return;
   const { rowHeight, container, viewportEl, scrollMapping } = grid._virtualization;
   // container is the faux scrollbar element that handles actual scrolling;
@@ -279,13 +286,16 @@ function scrollFocusedRowIntoView(grid: GridHost): void {
   const usableHeight = visibleHeight - top - bottom;
   if (usableHeight <= 0) return;
 
-  const y = grid._focusRow * rowHeight;
+  // Scoped non-data gaps require the same row geometry as public reveal.
+  const position = getRowFlow(grid) ? grid._virtualization.positionCache?.[grid._focusRow] : undefined;
+  const y = position?.offset ?? grid._focusRow * rowHeight;
+  const height = position?.height ?? rowHeight;
   const virtualScrollTop = scrollMapping ? toVirtualScrollTop(scrollEl.scrollTop, scrollMapping) : scrollEl.scrollTop;
   if (y < virtualScrollTop + top) {
     const target = Math.max(0, y - top);
     scrollEl.scrollTop = scrollMapping ? fromVirtualScrollTop(target, scrollMapping) : target;
-  } else if (y + rowHeight > virtualScrollTop + top + usableHeight) {
-    const target = Math.max(0, y - usableHeight + rowHeight - top);
+  } else if (y + height > virtualScrollTop + top + usableHeight) {
+    const target = Math.max(0, y - usableHeight + height - top);
     scrollEl.scrollTop = scrollMapping ? fromVirtualScrollTop(target, scrollMapping) : target;
   }
 }
@@ -296,11 +306,11 @@ function scrollFocusedRowIntoView(grid: GridHost): void {
  */
 function findFocusedCell(grid: GridHost): { rowEl: HTMLElement | null; cell: HTMLElement } | undefined {
   const rowIndex = grid._focusRow;
-  const vStart = grid._virtualization.start ?? 0;
-  const vEnd = grid._virtualization.end ?? grid._rows.length;
-  if (rowIndex < vStart || rowIndex >= vEnd) return undefined;
-
-  const rowEl = grid._bodyEl.querySelectorAll('.data-grid-row')[rowIndex - vStart] as HTMLElement | null;
+  const rowEl = grid.findRenderedRowElement
+    ? grid.findRenderedRowElement(rowIndex)
+    : (grid._bodyEl.querySelectorAll('.data-grid-row')[
+        rowIndex - (grid._virtualization.start ?? 0)
+      ] as HTMLElement | null);
   // Try exact column match first, then query by data-col, then fall back to the
   // first cell (full-width group rows).
   let cell = rowEl?.children[grid._focusCol] as HTMLElement | undefined;

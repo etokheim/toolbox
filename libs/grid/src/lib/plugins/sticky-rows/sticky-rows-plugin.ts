@@ -15,6 +15,8 @@ import type { ScrollEvent } from '../../core/plugin/types';
 import type { ColumnConfig } from '../../core/types';
 import styles from './sticky-rows.css?inline';
 import type { StickyPredicate, StickyRowsConfig } from './types';
+import { ActiveAncestors } from './active-ancestors';
+import type { GridElement } from '../../core/plugin/base-plugin';
 
 /** Internal shape of the virtualization state we read from the grid. */
 interface VirtualStateLike {
@@ -100,11 +102,22 @@ export class StickyRowsPlugin extends BaseGridPlugin<StickyRowsConfig> {
    *  {@link maybeScheduleSettlePass}. */
   private settlePassScheduled = false;
   private captureScheduled: object | null = null;
+  private liveAncestors: ActiveAncestors | null = null;
   // #endregion
 
   // #region Lifecycle
   /** @internal */
+  override attach(grid: GridElement): void {
+    super.attach(grid);
+    if (this.config.mode === 'ancestors') {
+      this.liveAncestors = new ActiveAncestors(grid, this.config, this.disconnectSignal);
+    }
+  }
+
+  /** @internal */
   override detach(): void {
+    this.liveAncestors?.dispose();
+    this.liveAncestors = null;
     super.detach();
     this.captureScheduled = null;
     this.container?.remove();
@@ -123,6 +136,10 @@ export class StickyRowsPlugin extends BaseGridPlugin<StickyRowsConfig> {
 
   /** @internal Recompute the sticky-index list and refresh display. */
   override afterRender(): void {
+    if (this.liveAncestors) {
+      this.liveAncestors.layout();
+      return;
+    }
     // A style pass is now running — possibly the deferred settle pass we
     // requested. Clear the flag so a later scroll tick can queue a fresh one.
     this.settlePassScheduled = false;
@@ -136,6 +153,10 @@ export class StickyRowsPlugin extends BaseGridPlugin<StickyRowsConfig> {
 
   /** @internal Re-render clones after a scroll-driven row pool refresh. */
   override onScrollRender(): void {
+    if (this.liveAncestors) {
+      this.liveAncestors.layout();
+      return;
+    }
     // Pre-cache clones for any sticky row currently in the rendered window so
     // we have one ready when it scrolls past. Do NOT re-capture the DISPLAYED
     // clones synchronously here. WHY: when a sticky row is recycled back into
@@ -156,6 +177,10 @@ export class StickyRowsPlugin extends BaseGridPlugin<StickyRowsConfig> {
 
   /** @internal Update which clones show / how they're positioned. */
   override onScroll(event: ScrollEvent): void {
+    if (this.liveAncestors) {
+      this.liveAncestors.layout();
+      return;
+    }
     this.refreshDisplay(event.scrollTop);
   }
 
@@ -169,6 +194,7 @@ export class StickyRowsPlugin extends BaseGridPlugin<StickyRowsConfig> {
   override getVerticalScrollOffsets(
     focusedRowIndex?: number,
   ): { top: number; bottom: number; skipScroll?: boolean } | undefined {
+    if (this.liveAncestors) return this.liveAncestors.offsets(focusedRowIndex);
     if (!this.container || this.displayedIndices.length === 0) return undefined;
     // The row IS one of the stuck clones — it is already pinned in view, and
     // scrolling to it would only push the row it is stuck above out of reach.
@@ -502,6 +528,8 @@ export class StickyRowsPlugin extends BaseGridPlugin<StickyRowsConfig> {
     clone.querySelectorAll<HTMLElement>('[data-tbw-cell-expanded]').forEach((cell) => {
       cell.removeAttribute('data-tbw-cell-expanded');
       cell.style.removeProperty('--tbw-pinned-cell-width');
+      cell.style.removeProperty('--tbw-pinned-cell-min-width');
+      cell.style.removeProperty('--tbw-pinned-cell-max-width');
     });
     // Strip tabindex on cells so the clone isn't a tab target.
     clone.removeAttribute('tabindex');

@@ -1,11 +1,16 @@
-import { DataGridElement } from '@toolbox-web/grid';
-import { GroupingRowsPlugin, type GroupingRowsDisclosureContext } from '@toolbox-web/grid/plugins/grouping-rows';
-import { SelectionPlugin } from '@toolbox-web/grid/plugins/selection';
+import type { DataGridElement as GridElement } from '@toolbox-web/grid';
+import type { GroupingRowsDisclosureContext } from '@toolbox-web/grid/plugins/grouping-rows';
 import { DataGrid } from '@toolbox-web/grid-react';
 import '@toolbox-web/grid-react/features/grouping-rows';
 import '@toolbox-web/grid-react/features/selection';
 import { createContext, useContext, useLayoutEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
+
+const [{ DataGridElement }, { GroupingRowsPlugin }, { SelectionPlugin }] = await Promise.all([
+  import('@toolbox-web/grid'),
+  import('@toolbox-web/grid/plugins/grouping-rows'),
+  import('@toolbox-web/grid/plugins/selection'),
+]);
 
 const Theme = createContext('missing');
 const rows = Array.from({ length: 12 }, (_, index) => ({
@@ -93,7 +98,7 @@ root.render(
   </Theme.Provider>,
 );
 
-const native = document.createElement(DataGridElement.activeTag) as DataGridElement;
+const native = document.createElement(DataGridElement.activeTag) as GridElement;
 native.id = 'native';
 native.gridConfig = {
   columns: [{ field: 'name' }],
@@ -107,7 +112,7 @@ document.body.append(native);
 Object.assign(window, {
   groupingProof: {
     counts,
-    refresh: async (grid: DataGridElement) => {
+    refresh: async (grid: GridElement) => {
       const plugin = grid.getPluginByName('groupingRows');
       if (!plugin) throw new Error('Missing grouping fixture plugin.');
       plugin.afterRender();

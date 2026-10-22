@@ -439,6 +439,8 @@ describe('StickyRowsPlugin', () => {
       actionCell.setAttribute('data-tbw-hovered', '');
       actionCell.setAttribute('data-tbw-cell-expanded', '');
       actionCell.style.setProperty('--tbw-pinned-cell-width', '240px');
+      actionCell.style.setProperty('--tbw-pinned-cell-min-width', '88px');
+      actionCell.style.setProperty('--tbw-pinned-cell-max-width', '500px');
 
       plugin.attach(grid);
       plugin.afterRender();
@@ -453,6 +455,8 @@ describe('StickyRowsPlugin', () => {
       expect(liveRow.hasAttribute('data-tbw-hovered')).toBe(true);
       expect(clone.querySelector('[data-tbw-cell-expanded]')).toBeNull();
       expect(clone.querySelector<HTMLElement>('.cell')!.style.getPropertyValue('--tbw-pinned-cell-width')).toBe('');
+      expect(clone.querySelector<HTMLElement>('.cell')!.style.getPropertyValue('--tbw-pinned-cell-min-width')).toBe('');
+      expect(clone.querySelector<HTMLElement>('.cell')!.style.getPropertyValue('--tbw-pinned-cell-max-width')).toBe('');
       expect(actionCell.hasAttribute('data-tbw-cell-expanded')).toBe(true);
     });
 

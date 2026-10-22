@@ -130,7 +130,20 @@ OWNS: active tooltip + positioning, shared `#tbw-tooltip-popover`. HOOKS: afterC
 
 ### StickyRows (#279)
 
-OWNS: `.tbw-sticky-rows` overlay container, clone cache by row index, displayed indices, push displacement. HOOKS: afterRender, onScrollRender, onScroll. READS: `grid.rows`, `grid._virtualization.{container,positionCache,rowHeight}`. CONFIG: `isSticky` (field name or `(row,index)=>unknown`), `mode:'push'|'stack'` (default push), `maxStacked`, `className`.
+OWNS: legacy clone overlay/cache or opt-in `ActiveAncestors`, never both. HOOKS: afterRender, onScrollRender, onScroll. CONFIG: `isSticky`, `mode:'push'|'stack'|'ancestors'` (default push), `maxStacked`, `className`; ancestors additionally accept actual `scrollContainer:HTMLElement` + external-header `topOffset`.
+
+#### Live ancestors
+
+- OWNS: `ancestor-index.ts` projects complete HierarchyModel onto final membership; model/rows/epoch invalidate eligible-parent links/subtree ends. Occurrence metadata, not entity IDs/visible levels, preserves promoted/duplicate ancestry.
+- INVARIANT: `ancestor-layout.ts` separates natural surfaces from master+detail extents. DOM = contiguous W + fitting ancestors A; release outermost first. Shared-ending scopes move together; retired surfaces unmount. MD detail DOM belongs only to W.
+- FLOW: symbol-backed `core/internal/row-window.ts` → explicit indices/lookup, measurement, ARIA, keyboard, MD map. Controller reconciles keyed rows/logical DOM order; core allocates/tears down renderers. Unchanged same-epoch live cells retain controls; invalidated content rerenders.
+- DECIDED (native readability review): retain separate upstream `FocusManager.scrollToRow` and legacy keyboard reveal. WHY: measured public alignment differs from estimated-height/mapped legacy focus. Ancestor keyboard delegates public context/intent cancellation; no geometry-mode boolean.
+- DECIDED (2026-10, native stage5): translate original rows in their body; no clones/off-screen lease parking. WHY: delegated input, pin expansion and portals share that owner. `e2e/tests/active-ancestors.spec.ts` proves CSS-only constraints: faux sibling scroll and external auto-height with horizontal containing block.
+- OWNS: external header/owner/grid intersections; body translates +startOffset (not minus scrollTop). App sizes natural host extent; native positions original header/routes real-owner reveal. Before/after-grid context retires. Exhaustion checks header intersection even when body starts below owner.
+- FLOW: height capture → native cache rebuild → occurrence/intra-offset target → natural-extent settlement → owner write. Public navigation/data replacement/user input cancel; no owner inference/pixel replay/source mutation. Horizontal offset unchanged.
+- INVARIANT: external owner/grid/header observers/listeners retire on reconfiguration/detach. React option JSON uses SSR-safe Node identity tokens; ordinary equivalent options deduplicate.
+
+#### Legacy snapshots
 
 - INVARIANT: decorative clones: `aria-hidden="true"`, no `tabindex`/focus classes; live rows retain keyboard/AT access. Overlay: absolute/top0 inside `.rows-viewport`, not `.rows-body` flex child; `overflow:clip`.
 - INVARIANT: `getCurrentScrollTop()` reads live `_virtualization.container.scrollTop`: writes/clamps can precede scroll events; no cross-callback snapshot. `findRenderedRow` is null outside window.

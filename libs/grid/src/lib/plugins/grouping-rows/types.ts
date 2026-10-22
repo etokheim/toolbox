@@ -139,6 +139,15 @@ export interface GroupOnContext {
  */
 export interface GroupingRowsConfig {
   /**
+   * Declare structural group paths even without members, within this admitted
+   * natural sibling list. Omission preserves member-driven grouping.
+   * The consumer must omit categories excluded by its filtering/eligibility policy.
+   * For empty Tree parents, provide `children: []` and Tree `hasChildren`.
+   * Collapsed/filtered-out parents do not emit their declared groups.
+   * @since 3.10.0
+   */
+  emptyGroups?: (context: GroupOnContext) => readonly (readonly string[])[];
+  /**
    * Replace only the disclosure, retaining generated labels, counts and aggregates.
    * HTMLElement outputs are replaceable; ControlView mounts once and receives updates;
    * null deliberately leaves the slot empty. Ignored when groupRowRenderer handles the row.

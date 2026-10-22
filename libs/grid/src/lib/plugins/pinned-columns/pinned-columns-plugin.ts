@@ -61,6 +61,7 @@ const QUERY_CAN_MOVE_COLUMN = 'canMoveColumn';
  * |----------|---------|-------------|
  * | `--tbw-pinned-shadow` | `4px 0 8px rgba(0,0,0,0.1)` | Shadow on pinned column edge |
  * | `--tbw-pinned-border` | `var(--tbw-color-border)` | Border between pinned and scrollable |
+ * | `--tbw-pinned-cell-shadow` | `-1px 0 0 var(--tbw-color-border)` | Active action-cell inner-edge shadow (since 3.10.0) |
  *
  * @example Pin ID Left and Actions Right
  * ```ts
@@ -210,8 +211,14 @@ export class PinnedColumnsPlugin extends BaseGridPlugin<PinnedColumnsConfig> {
     const cols = [...columns];
     for (const column of cols) {
       const width = column.expandedCellWidth;
-      if (width !== undefined && (typeof width !== 'number' || !Number.isFinite(width) || width <= 0)) {
-        this.#warnExpansion(`columns.${column.field}.expandedCellWidth must be a finite positive number; ignoring it.`);
+      if (
+        width !== undefined &&
+        width !== 'content' &&
+        (typeof width !== 'number' || !Number.isFinite(width) || width <= 0)
+      ) {
+        this.#warnExpansion(
+          `columns.${column.field}.expandedCellWidth must be a finite positive number or 'content'; ignoring it.`,
+        );
         delete column.expandedCellWidth;
       }
       if (column.expandedCellWidth !== undefined && column.utility !== true) {

@@ -10,19 +10,19 @@ Every change must consider these three pillars.
 
 When the constraints below conflict, resolve them in this order. A higher-priority concern wins over a lower-priority one.
 
-| Rank  | Concern                      | Why it sits here                                                                                 |
-| ----- | ---------------------------- | ------------------------------------------------------------------------------------------------ |
-| **1** | Correctness                  | A wrong answer faster, smaller, or cleaner is still wrong. Never trade correctness for anything. |
-| **2** | Bundle size (hard budgets)   | Hard budgets in `tools/vite-bundle-budget.ts` fail the build. Non-negotiable.                    |
-| **3** | Hot-path runtime performance | Scroll, cell rendering, and virtualization paths gate the library's value proposition.           |
-| **4** | Maintainability              | Default tiebreaker for everything not on a hot path or near a budget ceiling.                    |
-| **5** | Developer convenience        | Last. Never justification for shortcuts that hurt 1–4.                                           |
+| Rank  | Concern                        | Why it sits here                                                                                        |
+| ----- | ------------------------------ | ------------------------------------------------------------------------------------------------------- |
+| **1** | Correctness                    | A wrong answer faster, smaller, or cleaner is still wrong. Never trade correctness for anything.        |
+| **2** | Bundle size (measured budgets) | Enforce configured limits; justified increases follow the standing budget policy, not code contortions. |
+| **3** | Hot-path runtime performance   | Scroll, cell rendering, and virtualization paths gate the library's value proposition.                  |
+| **4** | Maintainability                | Default tiebreaker for everything not on a hot path or near a budget ceiling.                           |
+| **5** | Developer convenience          | Last. Never justification for shortcuts that hurt 1–4.                                                  |
 
 **Trade-off rules:**
 
 - **Performance vs. maintainability** — prefer maintainability **unless** the code is on a documented hot path (scroll, cell render, virtualization, render scheduler tick) **or** the perf gap is measurable and material in a benchmark.
-- **Bundle size vs. maintainability** — if a change pushes `index.js` over the 45 kB gzipped soft warning, prefer the smaller implementation; if it would breach 50 kB gzipped, the smaller implementation is mandatory.
-- **Bundle size vs. performance** — ship the perf optimisation only if it fits the budget. If it doesn't, find a smaller form (lazy-load, plugin entry point, simpler algorithm).
+- **Bundle size vs. maintainability** — investigate above the 45 KiB gzip soft warning, but do not sacrifice readable ownership or clear behavior for byte savings. Current core hard cap is 52 KiB gzip / 170 KiB raw. The user permits future increases after evaluating need, code quality, plugin placement and measured impact; record rationale and update enforcement together (see `copilot-instructions.md` → standing budget permission).
+- **Bundle size vs. performance** — consider a smaller form (lazy-load, plugin entry point, simpler algorithm), then a justified budget increase rather than a harmful runtime or readability trade-off. No per-increase approval is required; commit/remote consent rules are unchanged.
 - **Speed of delivery vs. anything above** — never. "It was faster to write" is not a valid justification.
 
 The sections below detail the constraints feeding into each rank.
@@ -49,8 +49,8 @@ Avoid shortcuts and quick hacks. Prefer correct, maintainable solutions even whe
 
 ## Bundle Size
 
-- **Core budget**: `index.js` must stay ≤170 kB raw and ≤50 kB gzipped (build fails); a warning fires at 45 kB gzipped — treat that as the design target, not the limit
-- **Plugin budget**: Each plugin ≤50 kB
+- **Core budget**: `tools/core-bundle-budget.ts`: ≤174080 raw / ≤53248 gzip bytes, soft warning at 46080 gzip bytes. Bun's default gzip is authoritative even when Nx/Vite runs under Node.
+- **Plugin budget**: Each plugin ≤55 KiB raw except Selection ≤60 KiB; unchanged by the core increase.
 - **Adapter budgets**: `grid-react/index.js` ≤50 kB, `grid-vue/index.js` ≤50 kB
 - **Enforced automatically**: Vite `bundleBudget` plugin fails the build on violations (see `tools/vite-bundle-budget.ts`)
 - **Tree-shakeable**: Features and plugins are separate entry points, not bundled in core

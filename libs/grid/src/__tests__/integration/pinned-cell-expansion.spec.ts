@@ -50,17 +50,20 @@ async function fixture(width: unknown = 240) {
 }
 
 describe('native action-cell lifecycle', () => {
-  it('preserves the same renderer and its lease across stable data updates', async () => {
-    const { grid, plugin, cell } = await fixture();
-    const original = cell().firstElementChild;
-    const release = plugin.retainCellExpansion('a/one', '__actions');
-    grid.updateRow('a/one', { name: 'Updated' });
-    await grid.forceLayout();
-    expect(cell().firstElementChild).toBe(original);
-    expect(cell().hasAttribute('data-tbw-cell-expanded')).toBe(true);
-    release();
-    expect(cell().hasAttribute('data-tbw-cell-expanded')).toBe(false);
-  });
+  it.each([240, 'content'])(
+    'preserves the same renderer and its lease across stable data updates (%s)',
+    async (width) => {
+      const { grid, plugin, cell } = await fixture(width);
+      const original = cell().firstElementChild;
+      const release = plugin.retainCellExpansion('a/one', '__actions');
+      grid.updateRow('a/one', { name: 'Updated' });
+      await grid.forceLayout();
+      expect(cell().firstElementChild).toBe(original);
+      expect(cell().hasAttribute('data-tbw-cell-expanded')).toBe(true);
+      release();
+      expect(cell().hasAttribute('data-tbw-cell-expanded')).toBe(false);
+    },
+  );
 
   it('revokes a lease on row removal and stale release does not close a successor', async () => {
     const { grid, plugin, cell } = await fixture();

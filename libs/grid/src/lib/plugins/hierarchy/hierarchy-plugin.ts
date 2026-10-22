@@ -62,7 +62,7 @@ export class HierarchyPlugin extends BaseGridPlugin {
   /** @internal */
   readonly name = 'hierarchy';
 
-  #meta: HierarchyModel['positions'] = new WeakMap();
+  #model: HierarchyModel = { rows: [], positions: new WeakMap() };
   #metadata = new RowMetadata();
   #generation = 0;
 
@@ -70,7 +70,7 @@ export class HierarchyPlugin extends BaseGridPlugin {
   override detach(): void {
     this.#generation++;
     for (const element of this.#metadata.elements) this.#metadata.release(element);
-    this.#meta = new WeakMap();
+    this.#model = { rows: [], positions: new WeakMap() };
     super.detach();
   }
 
@@ -95,10 +95,10 @@ export class HierarchyPlugin extends BaseGridPlugin {
     const attached = contributors.includes(caller as HierarchyContributor & BaseGridPlugin);
     if (attached && contributors[contributors.length - 1] !== caller) return rows as unknown[];
     const generation = ++this.#generation;
-    this.#meta = new WeakMap();
+    this.#model = { rows: [], positions: new WeakMap() };
     const model = buildHierarchyModel(rows, attached ? contributors : [caller]);
     if (generation !== this.#generation) throw new Error('Hierarchy generation changed during row processing');
-    this.#meta = model.positions;
+    this.#model = model;
     return model.rows;
   }
 
@@ -115,7 +115,12 @@ export class HierarchyPlugin extends BaseGridPlugin {
    * @since 3.9.0
    */
   getRowMeta(row: unknown): HierarchyRowMeta | undefined {
-    return typeof row === 'object' && row !== null ? this.#meta.get(row) : undefined;
+    return typeof row === 'object' && row !== null ? this.#model.positions.get(row) : undefined;
+  }
+
+  /** @internal Complete source generation before downstream visibility projection. */
+  getRowModel(): HierarchyModel {
+    return this.#model;
   }
 
   /** @internal */

@@ -18,7 +18,12 @@ import { applyColumnDefaults, normalizeColumns, type ColumnShorthand } from './c
 import { EVENT_PROP_MAP, type EventProps } from './event-props';
 import { getFeaturePropKeys } from './feature-prop-keys';
 import { type AllFeatureProps, type FeatureProps } from './feature-props';
-import { sameNonRendererConfig, updateFeatureRenderers } from './feature-renderers';
+import {
+  getLiveFeatureConfigKeys,
+  sameNonRendererConfig,
+  sameNonRendererFeatures,
+  updateFeatureRenderers,
+} from './feature-renderers';
 import { type GridDetailPanelProps } from './grid-detail-panel';
 import { GridIconContextInternal } from './grid-icon-registry';
 import { GridTypeContextInternal } from './grid-type-registry';
@@ -59,10 +64,8 @@ function ensureAdapterRegistered(): GridAdapter {
 // This ensures the adapter is available when grids parse their light DOM columns
 ensureAdapterRegistered();
 
-// Stable ref-id assignment for objects that can't be JSON.stringify'd
-// (e.g. third-party feature props containing cycles or BigInt). Used by
-// `featurePropsKey` below as a non-throwing fallback so a malformed feature
-// value can't crash <DataGrid>.
+// Opaque DOM nodes retain reference identity without traversing framework
+// metadata. Also used for non-serializable third-party option fallbacks.
 const refTokens = new WeakMap<object, number>();
 let nextRefToken = 0;
 function getRefToken(value: object): number {
@@ -460,9 +463,20 @@ export const DataGrid = forwardRef<DataGridRef, DataGridProps>(function DataGrid
       .map((key) => {
         const value = (rest as Record<string, unknown>)[key];
         if (value === undefined) return '';
+        const liveKeys = getLiveFeatureConfigKeys(key);
+        const comparable =
+          value && typeof value === 'object' && liveKeys.length
+            ? Object.fromEntries(Object.entries(value).filter(([key]) => !liveKeys.includes(key)))
+            : value;
         let serialized: string;
         try {
-          serialized = JSON.stringify(value) ?? 'undefined';
+          // Only registered live setters bypass reconfiguration. Other callbacks
+          // and opaque DOM owners retain identity without traversing framework metadata.
+          serialized =
+            JSON.stringify(comparable, (_key: string, nested: unknown) => {
+              if (typeof nested === 'function') return `callback#${getRefToken(nested)}`;
+              return typeof Node !== 'undefined' && nested instanceof Node ? `node#${getRefToken(nested)}` : nested;
+            }) ?? 'undefined';
         } catch {
           // Non-serializable (cycle / BigInt / etc.) — use a per-reference
           // token. Primitive fallback via String() handles BigInt; objects
@@ -505,11 +519,14 @@ export const DataGrid = forwardRef<DataGridRef, DataGridProps>(function DataGrid
   const stableGridConfig = useRef(gridConfig);
   if (!sameNonRendererConfig(stableGridConfig.current, gridConfig)) stableGridConfig.current = gridConfig;
   const rendererStableConfig = stableGridConfig.current;
+  const stableFeatures = useRef(gridConfig?.features);
+  if (!sameNonRendererFeatures(stableFeatures.current, gridConfig?.features))
+    stableFeatures.current = gridConfig?.features;
+  const configFeatures: Record<string, unknown> | undefined = stableFeatures.current;
   const latestGridConfig = useRef(gridConfig);
   latestGridConfig.current = gridConfig;
   const getGridOwner = useCallback(() => gridRef.current, []);
   const mergedFeatureProps = useMemo(() => {
-    const configFeatures = rendererStableConfig?.features as Record<string, unknown> | undefined;
     const filteredChildFeatures: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(childFeatures)) {
       if (configFeatures && key in configFeatures && configFeatures[key] !== undefined && configFeatures[key] !== false)
@@ -517,7 +534,7 @@ export const DataGrid = forwardRef<DataGridRef, DataGridProps>(function DataGrid
       filteredChildFeatures[key] = value;
     }
     return { ...filteredChildFeatures, ...featureProps } as FeatureProps<TRow>;
-  }, [featureProps, childFeatures, rendererStableConfig]);
+  }, [featureProps, childFeatures, configFeatures]);
 
   // ═══════════════════════════════════════════════════════════════════
   // PLUGIN INSTANTIATION (sync via feature registry)
@@ -652,7 +669,8 @@ export const DataGrid = forwardRef<DataGridRef, DataGridProps>(function DataGrid
     if (!el) return;
 
     const getId = getRowIdRef.current;
-    const diff = getId ? computeRowDiff(rows, prevRowsRef.current, getId) : null;
+    // Tree child collections need full processing; explicit plugins may use any array field.
+    const diff = getId ? computeRowDiff(rows, prevRowsRef.current, getId, !!el.getPluginByName('tree')) : null;
     prevRowsRef.current = rows;
 
     if (diff !== null) {
@@ -677,20 +695,40 @@ export const DataGrid = forwardRef<DataGridRef, DataGridProps>(function DataGrid
     el.rows = rows;
   }, [rows]);
 
-  // Sync gridConfig (using processed version with React wrappers)
+  // Initial attachment and later effects share the same adapter-owned config lease.
+  const syncGridConfig = useCallback(
+    (grid: ExtendedGridElement) => {
+      if (processedGridConfig) {
+        let config = processedGridConfig;
+        const features = config.features;
+        if (features) {
+          const previous = appliedConfig.current;
+          const previousFeatures =
+            previous?.grid === grid && grid._sourceConfig === previous.source ? previous.source?.features : undefined;
+          // Commit fresh bridge callbacks into our owned map without treating an
+          // unrelated config update as a native feature detach/reattach transaction.
+          const stable =
+            previousFeatures && sameNonRendererFeatures(previousFeatures, features)
+              ? Object.assign(previousFeatures, features)
+              : { ...features };
+          config = { ...config, features: stable };
+        }
+        grid.gridConfig = config as ExtendedGridElement['gridConfig'];
+        appliedConfig.current = { grid, source: grid._sourceConfig };
+      } else {
+        const previous = appliedConfig.current;
+        // Clear only this element's adapter-owned source, never a later imperative replacement.
+        if (previous?.grid === grid && grid._sourceConfig === previous.source) grid.gridConfig = undefined;
+        appliedConfig.current = null;
+      }
+    },
+    [processedGridConfig],
+  );
+
   useEffect(() => {
     const grid = gridRef.current;
-    if (!grid) return;
-    if (processedGridConfig) {
-      grid.gridConfig = processedGridConfig as ExtendedGridElement['gridConfig'];
-      appliedConfig.current = { grid, source: grid._sourceConfig };
-    } else {
-      const previous = appliedConfig.current;
-      // Clear only this element's adapter-owned source, never a later imperative replacement.
-      if (previous?.grid === grid && grid._sourceConfig === previous.source) grid.gridConfig = undefined;
-      appliedConfig.current = null;
-    }
-  }, [processedGridConfig]);
+    if (grid) syncGridConfig(grid);
+  }, [syncGridConfig]);
 
   // Sync columns (with defaults applied)
   useEffect(() => {
@@ -935,10 +973,8 @@ export const DataGrid = forwardRef<DataGridRef, DataGridProps>(function DataGrid
             if (el && !initialSyncDoneRef.current) {
               initialSyncDoneRef.current = true;
               const grid = el as ExtendedGridElement;
-              // Use processedGridConfig which has React renderers/editors wrapped as DOM functions
-              // Cast through any because React renderers are not assignable to base DOM types
               if (processedGridConfig) {
-                grid.gridConfig = processedGridConfig as any;
+                syncGridConfig(grid);
               }
               if (rows) {
                 grid.rows = rows;

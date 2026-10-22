@@ -1721,6 +1721,14 @@ If your function returns `undefined` for a row, the grid **auto-measures** that 
 
 A **numeric** `rowHeight` is authoritative: the grid writes it to the `--tbw-row-height` custom property on the host element (overriding the theme value) and never replaces it with a measured height — including when a plugin such as **MasterDetailPlugin** enables variable-height virtualization.
 
+### Changing configured heights
+
+Replacing `gridConfig.rowHeight` with a new positive number or callback preserves the top visible occurrence and its pixel offset within that row. The grid rebuilds authoritative row positions before restoring the anchor, in both virtualized and small-dataset paths. Offsets are clamped inside a shrinking row and to the new scroll range; horizontal scrolling is unchanged.
+
+Keep a callback's identity stable between density changes. Synchronous replacements coalesce into one restoration. A newer scroll position or explicit `scrollToRow()` / `scrollToRowById()` call takes precedence, even if that navigation leaves the current pixel position unchanged. Source-data or identity-function replacement cancels preservation; a removed occurrence is never restored.
+
+This is not general scroll anchoring: an unchanged callback, ordinary `forceLayout()`, and removing `rowHeight` retain their existing pixel-scroll and measurement behavior. Await layout before issuing navigation that must use the newly configured geometry.
+
 ### How Auto-Measurement Works
 
 1. The grid renders rows with an estimated height.

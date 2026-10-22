@@ -66,6 +66,16 @@ for focus-preserving state updates. The grid owns cell navigation.
 | `showExpandColumn` | `boolean`                                                                   | `true`    | Show expand/collapse column |
 | `animation`        | `false \| 'slide' \| 'fade'`                                                | `'slide'` | Expand/collapse animation   |
 
+## Row heights
+
+`gridConfig.rowHeight` describes the base row, excluding its detail panel. Expanded
+rows contribute that positive numeric or per-row callback height plus the detail
+height to virtualization. Do not add detail height in the callback yourself.
+Without a positive configured base, MasterDetail retains the grid's default
+(configured or CSS-measured) height fallback. Collapsed rows use normal grid height
+resolution. After changing detail content size asynchronously, call
+`grid.invalidateRowHeight(rowIndex)` once layout has settled.
+
 ## Events
 
 ### `detail-expand`

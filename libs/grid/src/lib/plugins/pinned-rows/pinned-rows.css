@@ -1,4 +1,15 @@
 @layer tbw-plugins {
+  .tbw-scoped-footer {
+    position: absolute;
+    inset-inline: 0;
+    box-sizing: border-box;
+    display: flex;
+    align-items: center;
+    z-index: var(--tbw-z-layer-pinned-rows, 20);
+    background: var(--tbw-pinned-rows-bg, var(--tbw-color-panel-bg));
+    border-top: 1px solid var(--tbw-pinned-rows-border, var(--tbw-color-border));
+  }
+
   /* Enable container query units (cqi) so .tbw-pinned-rows can size itself
    * to the scroll area's visible width even when the footer is wider. */
   .tbw-scroll-area {

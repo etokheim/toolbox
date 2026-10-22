@@ -18,6 +18,7 @@
 import { GridDataAttrs } from '../../core/constants';
 import { announce, getA11yMessage } from '../../core/internal/aria';
 import { ensureCellVisible } from '../../core/internal/keyboard';
+import { invalidateCellContent } from '../../core/internal/control-lifecycle';
 import { compileTemplate } from '../../core/internal/sanitize';
 import { invalidateAccessorCache, readCellField, writeCellField } from '../../core/internal/value-accessor';
 import type {
@@ -2550,6 +2551,8 @@ export class EditingPlugin<T = unknown> extends BaseGridPlugin<EditingConfig> {
     // Remove editing class and re-render cells
     editingCells.forEach((cell) => {
       cell.classList.remove('editing');
+      cell.removeAttribute('data-editor-managed');
+      invalidateCellContent(cell as HTMLElement);
       clearEditingState(cell.parentElement as RowElementInternal);
     });
 

@@ -17,7 +17,7 @@
  * 4. **Row Measurement**: Measures rendered row heights from DOM
  */
 
-import type { RowElementInternal } from '../types';
+import type { GridConfig, RowElementInternal } from '../types';
 
 // #region Types
 
@@ -32,6 +32,8 @@ export interface RowPosition {
   height: number;
   /** Whether this is a measured value (true) or estimate (false) */
   measured: boolean;
+  /** @internal Non-data flow extent following this row; not part of its surface. */
+  after?: number;
 }
 
 /**
@@ -57,6 +59,16 @@ export interface PositionCacheConfig<T = unknown> {
 // #endregion
 
 // #region Height Cache Operations
+
+/** @internal Resolve only the configured base height, never a plugin's combined extent. */
+export function resolveConfiguredRowHeight<T>(
+  configured: GridConfig<T>['rowHeight'],
+  row: T,
+  index: number,
+): number | undefined {
+  const height = typeof configured === 'function' ? configured(row, index) : configured;
+  return height !== undefined && height > 0 ? height : undefined;
+}
 
 /**
  * Create a new empty height cache.
@@ -274,7 +286,7 @@ export function updateRowHeights(cache: RowPosition[], changes: RowHeightChange[
 export function getTotalHeight(cache: RowPosition[]): number {
   if (cache.length === 0) return 0;
   const last = cache[cache.length - 1];
-  return last.offset + last.height;
+  return last.offset + last.height + (last.after ?? 0);
 }
 
 // #endregion
@@ -374,6 +386,8 @@ export interface RowMeasurementResult {
  * Context for measuring rendered rows.
  */
 export interface RowMeasurementContext<T> {
+  /** Explicit opt-in row order; absent for the contiguous legacy window. */
+  rowIndices?: readonly number[];
   /** Position cache to update */
   positionCache: RowPosition[];
   /** Height cache for persistence */
@@ -404,7 +418,7 @@ export function measureRenderedRowHeights<T>(
   context: RowMeasurementContext<T>,
   rowElements: NodeListOf<Element>,
 ): RowMeasurementResult {
-  const { positionCache, heightCache, rows, start, end, getPluginHeight, getRowId } = context;
+  const { positionCache, heightCache, rows, start, end, getPluginHeight, getRowId, rowIndices } = context;
 
   let hasChanges = false;
   const heightChanges: RowHeightChange[] = [];
@@ -417,9 +431,9 @@ export function measureRenderedRowHeights<T>(
     if (
       !Number.isInteger(rowIndex) ||
       String(rowIndex) !== rowIndexStr ||
-      rowIndex !== start + slot ||
-      rowIndex < start ||
-      rowIndex >= end ||
+      rowIndex !== (rowIndices ? rowIndices[slot] : start + slot) ||
+      rowIndex < 0 ||
+      (!rowIndices && (rowIndex < start || rowIndex >= end)) ||
       rowIndex >= rows.length ||
       !positionCache[rowIndex]
     )

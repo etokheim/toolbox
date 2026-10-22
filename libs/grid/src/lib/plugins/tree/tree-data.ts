@@ -100,7 +100,7 @@ export function expandAll(
     const key = keyFor(row, i, parentKey);
     const children = row[childrenField];
 
-    if (Array.isArray(children) && children.length > 0) {
+    if (Array.isArray(children) && (children.length > 0 || config.hasChildren?.(row))) {
       keys.add(key);
       const childKeys = expandAll(children as TreeRow[], config, key, depth + 1, keyFor);
       for (const k of childKeys) keys.add(k);

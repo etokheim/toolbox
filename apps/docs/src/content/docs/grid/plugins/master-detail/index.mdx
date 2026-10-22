@@ -252,6 +252,16 @@ features: { masterDetail: { animation: false, ... } }
 Animation respects the grid-level `animation.mode` setting. If the grid has `animation: { mode: 'off' }`, plugin animations are disabled.
 :::
 
+## Row heights
+
+`gridConfig.rowHeight` describes the base row, excluding its detail panel. Expanded
+rows contribute that positive numeric or per-row callback height plus the detail
+height to virtualization. Do not add detail height in the callback yourself.
+Without a positive configured base, MasterDetail retains the grid's default
+(configured or CSS-measured) height fallback. Collapsed rows use normal grid height
+resolution. After changing detail content size asynchronously, call
+`grid.invalidateRowHeight(rowIndex)` once layout has settled.
+
 ## Server-Side Data
 
 > **Requires:** `ServerSidePlugin` — [see Server-Side Plugin](/grid/plugins/server-side/)

@@ -214,6 +214,12 @@ The grid supports configuration via HTML attributes with JSON-serialized values:
 | `scrollToRow(rowIndex, options?)`  | `void`  | Scroll row into view                |
 | `scrollToRowById(rowId, options?)` | `void`  | Scroll to row by ID                 |
 
+Navigation uses the current processed row array, not an unprocessed replacement
+passed to the `rows` setter. Property updates remain batched; `ready()` covers
+initial setup, while the `render` event reports a completed update. When rows
+have changed before a scheduled frame, navigation reconciles their measured or
+configured positions and scroll extent before revealing them.
+
 #### Column Methods
 
 | Method                             | Returns             | Description                            |
