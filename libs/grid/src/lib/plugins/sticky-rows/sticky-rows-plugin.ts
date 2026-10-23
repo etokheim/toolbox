@@ -132,6 +132,26 @@ export class StickyRowsPlugin extends BaseGridPlugin<StickyRowsConfig> {
   }
   // #endregion
 
+  // #region Public API
+  /**
+   * Update the ancestor viewport without detaching plugins or their live views.
+   * Omit `scrollContainer` to return to the grid's internal scroll owner.
+   * These options affect ancestors mode only; changing mode or the sticky
+   * predicate still requires normal plugin reconfiguration.
+   *
+   * @since 3.9.1
+   */
+  setViewport(viewport: Pick<StickyRowsConfig, 'scrollContainer' | 'topOffset'>): void {
+    const { scrollContainer, topOffset } = viewport;
+    const current = this.resolvedConfig;
+    if (current.scrollContainer === scrollContainer && (current.topOffset ?? 0) === (topOffset ?? 0)) return;
+    Object.assign(this.userConfig, { scrollContainer, topOffset });
+    if (this.liveAncestors) this.liveAncestors.setViewport(viewport);
+    else if (this.config) Object.assign(this.config, { scrollContainer, topOffset });
+    this.requestAfterRender();
+  }
+  // #endregion
+
   // #region Hooks
 
   /** @internal Recompute the sticky-index list and refresh display. */

@@ -14,6 +14,7 @@ import {
   renderToContainer,
   resetBridge,
   setPortalManager,
+  suspendPortalManager,
 } from './portal-bridge';
 import type { PortalManagerHandle } from './portal-manager';
 
@@ -46,6 +47,75 @@ describe('portal-bridge', () => {
   });
 
   // #region setPortalManager / getPortalManager
+
+  it('blocks suspended owner work immediately and cancels retirement only for same-manager replay', async () => {
+    const grid = createMockGrid();
+    const manager = createMockManager();
+    const host = document.createElement('div');
+    setPortalManager(grid, manager);
+    const key = renderToContainer(host, 'first', undefined, grid);
+    suspendPortalManager(grid, manager);
+    expect(getPortalManager(grid)).toBeNull();
+    renderToContainer(host, 'late', key, grid);
+    renderToContainer(document.createElement('div'), 'late fresh host', undefined, grid);
+    expect(manager.renderPortal).toHaveBeenCalledOnce();
+    setPortalManager(grid, manager);
+    await Promise.resolve();
+    expect(renderToContainer(host, 'replayed', key, grid)).toBe(key);
+    expect(manager.renderPortal).toHaveBeenCalledTimes(2);
+    suspendPortalManager(grid, manager);
+    await Promise.resolve();
+    setPortalManager(grid, manager);
+    renderToContainer(host, 'retired', key, grid);
+    expect(manager.renderPortal).toHaveBeenCalledTimes(2);
+  });
+
+  it('never revives explicitly released hosts during effect replay', async () => {
+    const grid = createMockGrid();
+    const manager = createMockManager();
+    const host = document.createElement('div');
+    setPortalManager(grid, manager);
+    const key = renderToContainer(host, 'first', undefined, grid);
+    suspendPortalManager(grid, manager);
+    removeFromContainer(key);
+    setPortalManager(grid, manager);
+    await Promise.resolve();
+    renderToContainer(host, 'released', key, grid);
+    expect(manager.renderPortal).toHaveBeenCalledOnce();
+    expect(manager.removePortal).toHaveBeenCalledOnce();
+    setPortalManager(grid, null);
+    setPortalManager(grid, manager);
+    renderToContainer(host, 'released again', key, grid);
+    expect(manager.renderPortal).toHaveBeenCalledOnce();
+  });
+
+  it('retires only the old manager without reviving its hosts or disturbing another grid', async () => {
+    const grid = createMockGrid();
+    const otherGrid = createMockGrid();
+    const old = createMockManager();
+    const replacement = createMockManager();
+    const other = createMockManager();
+    const oldHost = document.createElement('div');
+    const newHost = document.createElement('div');
+    const otherHost = document.createElement('div');
+    setPortalManager(grid, old);
+    setPortalManager(otherGrid, other);
+    renderToContainer(oldHost, 'old', undefined, grid);
+    renderToContainer(otherHost, 'other', undefined, otherGrid);
+    suspendPortalManager(grid, old);
+    setPortalManager(grid, replacement);
+    renderToContainer(oldHost, 'not a new owner', undefined, grid);
+    renderToContainer(newHost, 'new', undefined, grid);
+    await Promise.resolve();
+    expect(getPortalManager(grid)).toBe(replacement);
+    expect(getPortalManager(otherGrid)).toBe(other);
+    renderToContainer(oldHost, 'retired', undefined, grid);
+    renderToContainer(newHost, 'updated', undefined, grid);
+    renderToContainer(otherHost, 'updated', undefined, otherGrid);
+    expect(old.renderPortal).toHaveBeenCalledOnce();
+    expect(replacement.renderPortal).toHaveBeenCalledTimes(2);
+    expect(other.renderPortal).toHaveBeenCalledTimes(2);
+  });
 
   describe('setPortalManager / getPortalManager', () => {
     it('should return null when no manager is set', () => {

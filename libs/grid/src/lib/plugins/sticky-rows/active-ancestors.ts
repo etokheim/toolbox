@@ -35,6 +35,7 @@ export class ActiveAncestors implements RowWindow {
   #pending = 0;
   #exhausted = false;
   #resizeObserver: ResizeObserver | undefined;
+  #viewportAbort: AbortController | undefined;
   #disposed = false;
   #heightAnchor:
     | {
@@ -53,13 +54,24 @@ export class ActiveAncestors implements RowWindow {
     this.#grid = grid;
     this.#config = config;
     setRowWindow(grid, this);
+    signal.addEventListener('abort', () => this.dispose(), { once: true });
+    this.#bindViewport();
+  }
+
+  #bindViewport(): void {
+    const grid = this.#grid;
+    const config = this.#config;
     if (config.scrollContainer) {
-      config.scrollContainer.addEventListener('scroll', () => this.#schedule(), { passive: true, signal });
+      const { signal } = (this.#viewportAbort = new AbortController());
+      const schedule = () => {
+        if (!signal.aborted) this.#schedule();
+      };
+      config.scrollContainer.addEventListener('scroll', schedule, { passive: true, signal });
       for (const event of ['wheel', 'touchmove', 'pointerdown', 'keydown']) {
         config.scrollContainer.addEventListener(event, () => this.cancelHeightAnchor(), { passive: true, signal });
       }
-      grid.ownerDocument.defaultView?.addEventListener('resize', () => this.#schedule(), { passive: true, signal });
-      this.#resizeObserver = new ResizeObserver(() => this.#schedule());
+      grid.ownerDocument.defaultView?.addEventListener('resize', schedule, { passive: true, signal });
+      this.#resizeObserver = new ResizeObserver(schedule);
       this.#resizeObserver.observe(config.scrollContainer);
       this.#resizeObserver.observe(grid);
       this.reveal = (index, options) => this.#reveal(index, options);
@@ -70,17 +82,40 @@ export class ActiveAncestors implements RowWindow {
   reveal?: (index: number, options?: ScrollToRowOptions) => void;
   pageHeight?: () => number;
 
-  dispose(): void {
-    this.#disposed = true;
+  setViewport(viewport: Pick<StickyRowsConfig, 'scrollContainer' | 'topOffset'>): void {
+    const changedOwner = this.#config.scrollContainer !== viewport.scrollContainer;
     this.cancelHeightAnchor();
+    if (changedOwner) this.#clearViewport();
+    this.#config.scrollContainer = viewport.scrollContainer;
+    this.#config.topOffset = viewport.topOffset;
+    if (changedOwner) this.#bindViewport();
+    this.#schedule();
+  }
+
+  #clearViewport(): void {
+    this.#viewportAbort?.abort();
+    this.#viewportAbort = undefined;
     this.#resizeObserver?.disconnect();
+    this.#resizeObserver = undefined;
     if (this.#pending) this.#grid.ownerDocument.defaultView?.cancelAnimationFrame(this.#pending);
     this.#pending = 0;
-    for (const row of this.elements.values()) this.#clearRow(row);
     this.#header?.style.removeProperty('--tbw-ancestor-header-shift');
     this.#header?.classList.remove('tbw-ancestor-header');
+    this.#header = null;
+    this.#headerShift = 0;
     this.#grid._bodyEl?.style.removeProperty('--tbw-ancestor-content-height');
     this.#grid._bodyEl?.classList.remove('tbw-ancestor-external-body');
+    this.#exhausted = false;
+    this.reveal = undefined;
+    this.pageHeight = undefined;
+  }
+
+  dispose(): void {
+    if (this.#disposed) return;
+    this.#disposed = true;
+    this.cancelHeightAnchor();
+    this.#clearViewport();
+    for (const row of this.elements.values()) this.#clearRow(row);
     if (getRowWindow(this.#grid) === this) setRowWindow(this.#grid, undefined);
     this.elements.clear();
   }
@@ -441,7 +476,7 @@ export class ActiveAncestors implements RowWindow {
   #schedule(): void {
     if (this.#disposed || this.#pending) return;
     const win = this.#grid.ownerDocument.defaultView;
-    const owner = this.#config.scrollContainer;
+    const owner = this.#config.scrollContainer ?? this.#grid._virtualization.container;
     if (!win || !owner) return;
     this.#pending = win.requestAnimationFrame(() => {
       this.#pending = 0;

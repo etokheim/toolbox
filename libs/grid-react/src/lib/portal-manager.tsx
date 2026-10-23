@@ -162,6 +162,7 @@ export const PortalManager = forwardRef<PortalManagerHandle>(function PortalMana
    * `useContext(...)`) then throws an uncaught exception. Issue #332.
    */
   const unmountedRef = useRef(false);
+  const handleRef = useRef<PortalManagerHandle | null>(null);
 
   /**
    * Schedule a single `flushSync` to commit all pending portal changes.
@@ -230,77 +231,78 @@ export const PortalManager = forwardRef<PortalManagerHandle>(function PortalMana
 
   useImperativeHandle(
     ref,
-    () => ({
-      renderPortal(key: string, container: HTMLElement, element: ReactNode) {
-        if (unmountedRef.current) return;
-        portalsRef.current.set(key, { container, element });
-        scheduleFlush();
-      },
+    () =>
+      (handleRef.current ??= {
+        renderPortal(key: string, container: HTMLElement, element: ReactNode) {
+          if (unmountedRef.current) return;
+          portalsRef.current.set(key, { container, element });
+          scheduleFlush();
+        },
 
-      removePortal(key: string, sync?: boolean) {
-        if (unmountedRef.current) {
-          // Manager already torn down — entries were cleared in cleanup.
-          // Just drop any stragglers without triggering a commit.
-          portalsRef.current.delete(key);
-          return;
-        }
-        if (portalsRef.current.delete(key)) {
-          if (batchDepthRef.current > 0) {
-            // Inside a teardown batch — defer the framework commit. The
-            // caller has promised to detach the affected container before
-            // `endBatch()` runs, so the next render's `isConnected` filter
-            // will silently drop the entry without committing an unmount.
-            // This is what eliminates the per-cell `flushSync` warnings
-            // during bulk operations like grouping changes (#330).
-            batchDirtyRef.current = true;
-          } else if (sync) {
-            // Synchronous removal — caller is about to clear the container
-            // DOM immediately (e.g., accordion collapse via innerHTML = '').
-            // React must fully unmount portal content before that happens.
-            flushSync(forceRender);
-          } else {
+        removePortal(key: string, sync?: boolean) {
+          if (unmountedRef.current) {
+            // Manager already torn down — entries were cleared in cleanup.
+            // Just drop any stragglers without triggering a commit.
+            portalsRef.current.delete(key);
+            return;
+          }
+          if (portalsRef.current.delete(key)) {
+            if (batchDepthRef.current > 0) {
+              // Inside a teardown batch — defer the framework commit. The
+              // caller has promised to detach the affected container before
+              // `endBatch()` runs, so the next render's `isConnected` filter
+              // will silently drop the entry without committing an unmount.
+              // This is what eliminates the per-cell `flushSync` warnings
+              // during bulk operations like grouping changes (#330).
+              batchDirtyRef.current = true;
+            } else if (sync) {
+              // Synchronous removal — caller is about to clear the container
+              // DOM immediately (e.g., accordion collapse via innerHTML = '').
+              // React must fully unmount portal content before that happens.
+              flushSync(forceRender);
+            } else {
+              scheduleFlush();
+            }
+          }
+        },
+
+        beginBatch() {
+          batchDepthRef.current++;
+        },
+
+        endBatch() {
+          if (batchDepthRef.current === 0) return;
+          batchDepthRef.current--;
+          if (batchDepthRef.current === 0 && batchDirtyRef.current) {
+            batchDirtyRef.current = false;
+            // Plain forceRender (NOT flushSync). React batches with the
+            // surrounding event/lifecycle, the next render runs the
+            // `isConnected` filter against now-detached containers, and no
+            // commit deletion is needed for them. No rAF prune chaser
+            // needed — the caller has already detached every affected
+            // container before invoking `endBatch`, so this single render
+            // is sufficient (unlike `scheduleFlush`, which fires after
+            // arbitrary mutations and pairs with a frame-later prune to
+            // catch containers detached between flush and frame).
+            forceRender();
+          }
+        },
+
+        clear() {
+          if (unmountedRef.current) {
+            portalsRef.current.clear();
+            return;
+          }
+          if (portalsRef.current.size > 0) {
+            portalsRef.current.clear();
+            if (pruneTimerRef.current) {
+              cancelAnimationFrame(pruneTimerRef.current);
+              pruneTimerRef.current = 0;
+            }
             scheduleFlush();
           }
-        }
-      },
-
-      beginBatch() {
-        batchDepthRef.current++;
-      },
-
-      endBatch() {
-        if (batchDepthRef.current === 0) return;
-        batchDepthRef.current--;
-        if (batchDepthRef.current === 0 && batchDirtyRef.current) {
-          batchDirtyRef.current = false;
-          // Plain forceRender (NOT flushSync). React batches with the
-          // surrounding event/lifecycle, the next render runs the
-          // `isConnected` filter against now-detached containers, and no
-          // commit deletion is needed for them. No rAF prune chaser
-          // needed — the caller has already detached every affected
-          // container before invoking `endBatch`, so this single render
-          // is sufficient (unlike `scheduleFlush`, which fires after
-          // arbitrary mutations and pairs with a frame-later prune to
-          // catch containers detached between flush and frame).
-          forceRender();
-        }
-      },
-
-      clear() {
-        if (unmountedRef.current) {
-          portalsRef.current.clear();
-          return;
-        }
-        if (portalsRef.current.size > 0) {
-          portalsRef.current.clear();
-          if (pruneTimerRef.current) {
-            cancelAnimationFrame(pruneTimerRef.current);
-            pruneTimerRef.current = 0;
-          }
-          scheduleFlush();
-        }
-      },
-    }),
+        },
+      }),
     // forceRender is stable (useReducer dispatch), refs are stable
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [],
@@ -329,8 +331,8 @@ export const PortalManager = forwardRef<PortalManagerHandle>(function PortalMana
    *   1. Sets `unmountedRef` so any pending or future imperative call
    *      becomes a no-op.
    *   2. Cancels the pending rAF prune to avoid a stray late render.
-   *   3. Clears `portalsRef` so the portal subtrees are dropped from
-   *      React's tree alongside the manager itself — no orphan commits.
+   *   3. Clears `portalsRef` after the commit unless the same manager was
+   *      re-armed by StrictMode effect replay.
    *
    * No `forceRender` is needed: React is already in the middle of
    * unmounting this component, and the children (the portals we just
@@ -354,7 +356,9 @@ export const PortalManager = forwardRef<PortalManagerHandle>(function PortalMana
         cancelAnimationFrame(pruneTimerRef.current);
         pruneTimerRef.current = 0;
       }
-      portals.clear();
+      queueMicrotask(() => {
+        if (unmountedRef.current) portals.clear();
+      });
     };
   }, []);
 

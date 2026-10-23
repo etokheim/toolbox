@@ -268,6 +268,22 @@ The element is compared by reference, including through React feature props and
 `gridConfig.features`; replace the option when the scrolling owner changes.
 No selector lookup or implicit owner discovery is used.
 
+Use the native `setViewport` method for a viewport-only update:
+
+```ts
+const sticky = grid.getPluginByName('stickyRows');
+sticky?.setViewport({ scrollContainer: scrollOwner, topOffset: 12 });
+sticky?.setViewport({}); // Internal scrolling, with no external inset.
+```
+
+This preserves the plugin instances, Undo history and retained live controls.
+React applies the same update automatically for both the `stickyRows` prop and
+`gridConfig.features.stickyRows`. Keep the feature present and `mode`/`isSticky`
+stable; changing those or other structural options still reconfigures plugins.
+Angular and Vue can call the native method through the grid instance, but their
+declarative bindings do not apply viewport-only updates automatically. Rows that
+leave the normal visible window and ancestor stack still retire.
+
 Omit `topOffset` (or use `0`) for internal scrolling: the native header is
 measured separately. In external mode, changing `rowHeight` preserves the visible
 occurrence and intra-row offset after the application's natural-height layout

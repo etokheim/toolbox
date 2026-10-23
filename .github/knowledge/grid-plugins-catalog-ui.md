@@ -141,7 +141,8 @@ OWNS: legacy clone overlay/cache or opt-in `ActiveAncestors`, never both. HOOKS:
 - DECIDED (2026-10, native stage5): translate original rows in their body; no clones/off-screen lease parking. WHY: delegated input, pin expansion and portals share that owner. `e2e/tests/active-ancestors.spec.ts` proves CSS-only constraints: faux sibling scroll and external auto-height with horizontal containing block.
 - OWNS: external header/owner/grid intersections; body translates +startOffset (not minus scrollTop). App sizes natural host extent; native positions original header/routes real-owner reveal. Before/after-grid context retires. Exhaustion checks header intersection even when body starts below owner.
 - FLOW: height capture → native cache rebuild → occurrence/intra-offset target → natural-extent settlement → owner write. Public navigation/data replacement/user input cancel; no owner inference/pixel replay/source mutation. Horizontal offset unchanged.
-- INVARIANT: external owner/grid/header observers/listeners retire on reconfiguration/detach. React option JSON uses SSR-safe Node identity tokens; ordinary equivalent options deduplicate.
+- OWNS: `ActiveAncestors` holds an independent abortable viewport lease. `StickyRowsPlugin.setViewport` updates only `scrollContainer`/`topOffset`, persists pre-attach config, and retains controller/RowWindow/unchanged live owners. Owner changes abort old listeners, disconnect observers, cancel pending frames and clear external styles/reveal hooks before binding the new owner; offset-only changes keep resources.
+- INVARIANT: viewport rebind is not plugin detach; omitted owner returns to the internal faux scroller. Final disconnect/dispose remains idempotent and retires resources normally. React live-key bridge → `adapters-react.md`; tests: `active-ancestors.spec.ts`, `sticky-scroll-owner.spec.tsx`. Other semantic options retain structural behavior.
 
 #### Legacy snapshots
 
