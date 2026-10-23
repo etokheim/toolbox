@@ -15,31 +15,14 @@ import { MISSING_ROW_ID, ROW_NOT_FOUND, throwDiagnostic, warnDiagnostic } from '
 import { invalidateCellContent } from './control-lifecycle';
 import { RenderPhase } from './render-scheduler';
 import { animateRow } from './row-animation';
+import { tryResolveRowId } from './row-identity';
 import { getRowWindow } from './row-window';
 import { invalidateCellCache } from './rows';
 import { invalidateAccessorCache, readCellField, writeCellField } from './value-accessor';
 
 // #region Standalone Row ID Helpers
 
-/**
- * Try to resolve the ID for a row using a configured getRowId or fallback.
- * Returns undefined if no ID can be determined (non-throwing).
- *
- * Exported so grid.ts can use it in `#rebuildRowIdMap` without going
- * through the RowManager instance.
- */
-export function tryResolveRowId<T>(row: T, getRowId?: (row: T) => string): string | undefined {
-  if (getRowId) {
-    return getRowId(row);
-  }
-
-  // Fallback: common ID fields
-  const r = row as Record<string, unknown>;
-  if ('id' in r && r.id != null) return String(r.id);
-  if ('_id' in r && r._id != null) return String(r._id);
-
-  return undefined;
-}
+export { tryResolveRowId } from './row-identity';
 
 /**
  * Resolve the ID for a row, throwing if not found.

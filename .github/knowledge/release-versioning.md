@@ -37,6 +37,7 @@ Config: [release-please-config.json](release-please-config.json) + `.release-ple
 
 ## publishing & docs deploy
 
+- DECIDED (2026-10, fork safety): `ci.yml` excludes exactly `etokheim/toolbox` at BOTH `release-please` and `release-gate`, for every event including dispatch. WHY: recovery uses `always()` and can create ordinary tags/releases even when npm already has the version and validation failed. Skipped gate outputs cannot equal the `'true'` required by all four `publish-*` jobs. Upstream predicates, validation jobs, Pages gates, and authorized manual source-pinned preview distribution remain unchanged; existing `fork-preview-` event guards remain in place.
 - DECIDED (Jun 2026, npm dist-tag is VERSION-driven not branch-driven): the 4 `publish-*` jobs read `dist/libs/<pkg>/package.json` — version contains `-` → `--tag next`, else `--tag latest`. WHY: under the maintenance-branch model the beta lives on `main`, so the old branch-name rule would have pushed betas to `latest`. The project keeps NO LTS on previous majors, so no manual dist-tag move is ever needed.
 - DECIDED (Jun 2026): `build-docs`/`deploy-pages` run only for non-prerelease releases on the CURRENT STABLE branch — the gate is hard-coded to that branch name and must be flipped at each GA.
 - INVARIANT (external setting): the GitHub `github-pages` environment's deployment-branch policies MUST include the branch allowed by the docs deploy gate, or `deploy-pages` fails before runner startup with `Branch "…" is not allowed to deploy to github-pages due to environment protection rules.`

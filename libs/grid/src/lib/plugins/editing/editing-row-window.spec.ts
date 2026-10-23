@@ -2,15 +2,99 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { DataGridElement } from '../../core/grid';
 import { setRowWindow } from '../../core/internal/row-window';
 import type { ColumnEditorContext } from '../../core/types';
+import { StickyRowsPlugin } from '../sticky-rows';
+import { UndoRedoPlugin } from '../undo-redo';
 import { EditingPlugin } from './editing-plugin';
 
 type Row = { id: string; value: string };
 
 afterEach(() => {
   document.body.replaceChildren();
+  vi.restoreAllMocks();
 });
 
 describe('editor exit in a retained row window', () => {
+  it('closes an offscreen edit only on an allowed outside click and preserves committed history', async () => {
+    let offscreen = false;
+    vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(160);
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+      const offset = this.closest(DataGridElement.activeTag) && offscreen ? 400 : 0;
+      return new DOMRect(
+        0,
+        offset + (this.classList.contains('rows-viewport') ? 32 : 0),
+        400,
+        this.classList.contains('header') ? 32 : 160,
+      );
+    });
+    const owner = document.createElement('div');
+    const overlay = document.createElement('button');
+    const heading = document.createElement('h2');
+    document.body.append(owner, overlay, heading);
+    const beforeClose = vi.fn(() => true);
+    const editing = new EditingPlugin<Row>({ onBeforeEditClose: beforeClose });
+    const undo = new UndoRedoPlugin();
+    const grid = document.createElement(DataGridElement.activeTag) as DataGridElement<Row>;
+    let context: ColumnEditorContext<Row> | undefined;
+    grid.gridConfig = {
+      getRowId: (row) => row.id,
+      rowHeight: 24,
+      plugins: [
+        editing,
+        undo,
+        new StickyRowsPlugin({ mode: 'ancestors', isSticky: () => false, scrollContainer: owner }),
+      ],
+      columns: [
+        {
+          field: 'value',
+          editable: true,
+          editor: (ctx) => {
+            context = ctx;
+            const input = document.createElement('input');
+            input.value = String(ctx.value);
+            return input;
+          },
+        },
+      ],
+    };
+    const row = { id: 'first', value: 'Original' };
+    grid.rows = [row];
+    owner.append(grid);
+    await customElements.whenDefined(DataGridElement.activeTag);
+    await grid.ready();
+    editing.beginCellEdit(0, 'value');
+    if (!context) throw new Error('Missing editor context');
+    context.commit('Changed');
+    expect(undo.getUndoStack()).toHaveLength(1);
+    const closed = vi.fn();
+    grid.addEventListener('edit-close', closed);
+    grid.registerExternalFocusContainer(overlay);
+    offscreen = true;
+    owner.dispatchEvent(new Event('scroll'));
+    await vi.waitFor(() => expect(grid.querySelectorAll('.rows > .data-grid-row')).toHaveLength(0));
+    expect(grid.findRenderedRowElement(0)).toBeNull();
+    expect(closed).not.toHaveBeenCalled();
+    overlay.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+    await Promise.resolve();
+    expect(closed).not.toHaveBeenCalled();
+    beforeClose.mockReturnValue(false);
+    heading.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+    await Promise.resolve();
+    expect(closed).not.toHaveBeenCalled();
+    beforeClose.mockReturnValue(true);
+    heading.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+    await vi.waitFor(() => expect(closed).toHaveBeenCalledOnce());
+    expect(row.value).toBe('Changed');
+    expect(undo.getUndoStack()).toHaveLength(1);
+    offscreen = false;
+    owner.dispatchEvent(new Event('scroll'));
+    await vi.waitFor(() => expect(grid.querySelectorAll('.rows > .data-grid-row')).toHaveLength(1));
+    expect(grid.querySelector('.cell.editing')).toBeNull();
+    undo.undo();
+    expect(row.value).toBe('Original');
+    undo.redo();
+    expect(row.value).toBe('Changed');
+  });
+
   it.each(['cancel', 'commit'] as const)('restores only edited cell content on %s', async (exit) => {
     const editing = new EditingPlugin({ editOn: 'dblclick' });
     const grid = document.createElement(DataGridElement.activeTag) as DataGridElement<Row>;

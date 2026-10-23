@@ -9,6 +9,9 @@ import { DataGrid } from '../lib/data-grid';
 import type { GridConfig } from '../lib/react-column-config';
 import './selection';
 import './sticky-rows';
+import './editing';
+import './undo-redo';
+import './pinned-rows';
 
 type Row = { id: string };
 const rows: Row[] = [{ id: 'one' }, { id: 'two' }];
@@ -37,6 +40,107 @@ it('compares serializable feature options during SSR without a global Node const
 });
 
 describe.each([false, true])('StickyRows external owner (canonical: %s)', (canonical) => {
+  it('changes only viewport ownership while preserving edits, Undo and scoped controls', async () => {
+    vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(160);
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+      return new DOMRect(
+        0,
+        this.classList.contains('rows-viewport') ? 32 : 0,
+        400,
+        this.classList.contains('header') ? 32 : 160,
+      );
+    });
+    const first = document.createElement('div');
+    const second = document.createElement('div');
+    const host = document.createElement('div');
+    document.body.append(first);
+    first.append(second);
+    second.append(host);
+    const root = createRoot(host);
+    roots.push(root);
+    const data = [{ id: 'one', quantity: 2 }];
+    const config: GridConfig<(typeof data)[number]> = {
+      getRowId: (row) => row.id,
+      rowHeight: 24,
+      columns: [{ field: 'quantity', type: 'number', editable: true }],
+    };
+    const isSticky = () => false;
+    const pinnedRows = {
+      scopedFooters: () => ({ height: 40, render: () => <button data-viewport-footer>Action</button> }),
+    };
+    const render = (scrollContainer?: HTMLElement, topOffset = 0) => {
+      const features = {
+        stickyRows: { mode: 'ancestors' as const, isSticky, scrollContainer, topOffset },
+        pinnedRows,
+        editing: true,
+        undoRedo: true,
+      };
+      root.render(
+        canonical ? (
+          <DataGrid rows={data} gridConfig={{ ...config, features }} />
+        ) : (
+          <DataGrid rows={data} gridConfig={config} {...features} />
+        ),
+      );
+    };
+    render();
+    await vi.waitFor(() => expect(host.querySelector('[data-viewport-footer]')).not.toBeNull());
+    const grid = host.querySelector<DataGridElement<(typeof data)[number]>>(DataGridElement.activeTag)!;
+    await grid.ready();
+    const sticky = grid.getPluginByName('stickyRows')!;
+    const pinned = grid.getPluginByName('pinnedRows')!;
+    const editing = grid.getPluginByName('editing')!;
+    const undo = grid.getPluginByName('undoRedo')!;
+    const plugins = [sticky, pinned, editing, undo];
+    const detaches = plugins.map((plugin) => vi.spyOn(plugin, 'detach'));
+    const footer = grid.querySelector('[data-viewport-footer]');
+    editing.beginCellEdit(0, 'quantity');
+    await vi.waitFor(() => expect(grid.querySelector('.cell.editing input')).not.toBeNull());
+    const input = grid.querySelector<HTMLInputElement>('.cell.editing input')!;
+    input.value = '3';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    editing.commitActiveRowEdit();
+    await vi.waitFor(() => expect(undo.getUndoStack()).toHaveLength(1));
+    expect(data[0].quantity).toBe(3);
+    editing.beginCellEdit(0, 'quantity');
+    await vi.waitFor(() => expect(grid.querySelector('.cell.editing input')).not.toBeNull());
+    const editor = grid.querySelector('.cell.editing input');
+
+    for (const [owner, offset] of [
+      [first, 0],
+      [first, 8],
+      [second, 8],
+      [undefined, 0],
+    ] as const) {
+      render(owner, offset);
+      await vi.waitFor(() => {
+        expect(sticky.resolvedConfig.scrollContainer).toBe(owner);
+        expect(sticky.resolvedConfig.topOffset).toBe(offset);
+      });
+      await frame();
+      await frame();
+      expect(host.querySelector(DataGridElement.activeTag)).toBe(grid);
+      expect(grid.getPluginByName('stickyRows')).toBe(sticky);
+      expect(grid.getPluginByName('pinnedRows')).toBe(pinned);
+      expect(grid.getPluginByName('undoRedo')).toBe(undo);
+      expect(grid.querySelector('.cell.editing input')).toBe(editor);
+      expect(grid.querySelector('[data-viewport-footer]')).toBe(footer);
+      expect(undo.getUndoStack()).toHaveLength(1);
+      expect(data[0].quantity).toBe(3);
+      for (const detach of detaches) expect(detach).not.toHaveBeenCalled();
+    }
+    editing.cancelActiveRowEdit();
+    undo.undo();
+    await vi.waitFor(() => expect(data[0].quantity).toBe(2));
+    undo.redo();
+    await vi.waitFor(() => expect(data[0].quantity).toBe(3));
+    roots.splice(roots.indexOf(root), 1);
+    root.unmount();
+    await frame();
+    for (const detach of detaches) expect(detach).toHaveBeenCalledOnce();
+    expect(undo.getUndoStack()).toHaveLength(0);
+  });
+
   it.each(canonical ? ['config'] : ['props', 'plugins'])(
     'retains unchanged %s lifetimes and state on a rowHeight-only config replacement',
     async (surface) => {

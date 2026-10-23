@@ -94,3 +94,10 @@ export interface StickyRowsConfig {
    */
   className?: string;
 }
+
+declare module '../../core/types' {
+  interface PluginNameMap {
+    /** @since 3.9.1 */
+    stickyRows: import('./sticky-rows-plugin').StickyRowsPlugin;
+  }
+}

@@ -27,7 +27,7 @@ import {
 import { type GridDetailPanelProps } from './grid-detail-panel';
 import { GridIconContextInternal } from './grid-icon-registry';
 import { GridTypeContextInternal } from './grid-type-registry';
-import { setPortalManager } from './portal-bridge';
+import { setPortalManager, suspendPortalManager } from './portal-bridge';
 import { PortalManager, type PortalManagerHandle } from './portal-manager';
 import { notifyPostMount } from './post-mount-refresh-hooks';
 import { processGridConfig, type ColumnConfig, type GridConfig } from './react-column-config';
@@ -428,9 +428,11 @@ export const DataGrid = forwardRef<DataGridRef, DataGridProps>(function DataGrid
   // (visibility, width, sort) on the next merge. Ongoing prop changes are
   // synced by the dedicated useEffects below.
   const initialSyncDoneRef = useRef(false);
-  const appliedConfig = useRef<{ grid: ExtendedGridElement; source: ExtendedGridElement['_sourceConfig'] } | null>(
-    null,
-  );
+  const appliedConfig = useRef<{
+    grid: ExtendedGridElement;
+    input: object;
+    source: ExtendedGridElement['_sourceConfig'];
+  } | null>(null);
   /** Rows from the previous render — used for in-place diffing in the rows sync effect. */
   const prevRowsRef = useRef<TRow[]>([]);
   /**
@@ -699,10 +701,12 @@ export const DataGrid = forwardRef<DataGridRef, DataGridProps>(function DataGrid
   const syncGridConfig = useCallback(
     (grid: ExtendedGridElement) => {
       if (processedGridConfig) {
+        const previous = appliedConfig.current;
+        if (previous?.grid === grid && previous.input === processedGridConfig && grid._sourceConfig === previous.source)
+          return;
         let config = processedGridConfig;
         const features = config.features;
         if (features) {
-          const previous = appliedConfig.current;
           const previousFeatures =
             previous?.grid === grid && grid._sourceConfig === previous.source ? previous.source?.features : undefined;
           // Commit fresh bridge callbacks into our owned map without treating an
@@ -714,7 +718,7 @@ export const DataGrid = forwardRef<DataGridRef, DataGridProps>(function DataGrid
           config = { ...config, features: stable };
         }
         grid.gridConfig = config as ExtendedGridElement['gridConfig'];
-        appliedConfig.current = { grid, source: grid._sourceConfig };
+        appliedConfig.current = { grid, input: processedGridConfig, source: grid._sourceConfig };
       } else {
         const previous = appliedConfig.current;
         // Clear only this element's adapter-owned source, never a later imperative replacement.
@@ -944,11 +948,12 @@ export const DataGrid = forwardRef<DataGridRef, DataGridProps>(function DataGrid
   // before passive effects run.
   useLayoutEffect(() => {
     const gridEl = gridRef.current;
-    if (gridEl && portalManagerRef.current) {
-      setPortalManager(gridEl, portalManagerRef.current);
+    const manager = portalManagerRef.current;
+    if (gridEl && manager) {
+      setPortalManager(gridEl, manager);
     }
     return () => {
-      if (gridEl) setPortalManager(gridEl, null);
+      if (gridEl && manager) suspendPortalManager(gridEl, manager);
     };
   }, []);
 

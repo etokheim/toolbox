@@ -701,8 +701,10 @@ jobs:
   # ============================================
   release-please:
     needs: [setup, test, build, e2e]
+    # This fork distributes authorized source-pinned previews, not ordinary releases.
     # Source-pinned fork previews distribute existing bytes, never registry releases.
     if: |
+      github.repository != 'etokheim/toolbox' &&
       !(github.event_name == 'release' && startsWith(github.event.release.tag_name, 'fork-preview-')) && (
         always() && !cancelled() &&
         (github.event_name == 'release' || github.event_name == 'workflow_dispatch') ||
@@ -761,8 +763,10 @@ jobs:
   # and the manual workflow_dispatch publish inputs.
   # ============================================
   release-gate:
+    # Guard independently: always() allows recovery even when release-please is skipped.
     # A skipped gate has no publish outputs, so all publish-* jobs stay skipped.
     if: |
+      github.repository != 'etokheim/toolbox' &&
       always() && !cancelled() &&
       !(github.event_name == 'release' && startsWith(github.event.release.tag_name, 'fork-preview-')) && (
         github.event_name == 'release' ||

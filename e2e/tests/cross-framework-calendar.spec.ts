@@ -52,6 +52,8 @@ test.describe('Cross-Framework Calendar Parity', () => {
       // A month spans 4-6 calendar weeks; allow the full range.
       expect(weekCount).toBeGreaterThanOrEqual(4);
       expect(weekCount).toBeLessThanOrEqual(6);
+      await expect(grid.locator('.cal-cell__date')).toHaveCount(weekCount * 7);
+      await expect(grid.locator('.cal-legend')).toBeVisible();
 
       // Visual parity — skipped if no baseline committed for this platform
       await expectScreenshotIfBaselineExists(grid, 'calendar-baseline.png', testInfo, {

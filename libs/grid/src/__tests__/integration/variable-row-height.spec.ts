@@ -402,7 +402,7 @@ describe('variable row height with plugins', () => {
 
     function connectWithPlugin() {
       const plugin = new MasterDetailPlugin({
-        detailRenderer: (row: TestRow) => {
+        detailRenderer: (row) => {
           const div = document.createElement('div');
           div.textContent = `Detail for ${row.name}`;
           return div;
@@ -457,10 +457,84 @@ describe('variable row height with plugins', () => {
       expect(cache![9].offset).toBe(9 * 36);
     });
 
+    it('reconciles the rendered window after deferred base-height measurement without user input', async () => {
+      stubRowHeight(36);
+      connectWithPlugin();
+      await waitUpgrade(grid);
+      await frames(3);
+
+      for (const element of [
+        grid._virtualization.viewportEl,
+        grid._virtualization.container,
+        grid.querySelector('.tbw-scroll-area'),
+      ]) {
+        if (!element) throw new Error('Missing viewport geometry element');
+        Object.defineProperty(element, 'clientHeight', { configurable: true, value: 280 });
+      }
+      const render = vi.fn();
+      grid.addEventListener('render', render);
+      grid.rows = createRows(60);
+      await frames(6);
+
+      expect(grid._virtualization.rowHeight).toBe(36);
+      expect(grid._virtualization.positionCache?.[1].offset).toBe(36);
+      // 280px / 36px rounded up, plus three overscan rows; the old 28px estimate renders thirteen.
+      expect(grid._virtualization.start).toBe(0);
+      expect(grid._virtualization.end).toBe(11);
+      expect(grid.querySelectorAll('.rows > .data-grid-row')).toHaveLength(11);
+      const settledRenders = render.mock.calls.length;
+      await frames(3);
+      expect(render).toHaveBeenCalledTimes(settledRenders);
+    });
+
+    it('reconciles a window selected from cached heights measured before renderer content commits', async () => {
+      let renderedHeight = 28;
+      const originalRect = Element.prototype.getBoundingClientRect;
+      vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function (this: Element) {
+        return this.classList.contains('data-grid-row')
+          ? new DOMRect(0, 0, 800, renderedHeight)
+          : originalRect.call(this);
+      });
+      vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockImplementation(function (this: HTMLElement) {
+        return this.classList.contains('data-grid-row') ? renderedHeight : 0;
+      });
+      connectWithPlugin();
+      await waitUpgrade(grid);
+      await frames(3);
+      for (const element of [
+        grid._virtualization.viewportEl,
+        grid._virtualization.container,
+        grid.querySelector('.tbw-scroll-area'),
+      ]) {
+        if (!element) throw new Error('Missing viewport geometry element');
+        Object.defineProperty(element, 'clientHeight', { configurable: true, value: 280 });
+      }
+      const render = vi.fn();
+      grid.addEventListener('render', render);
+      grid.addEventListener(
+        'render',
+        () => {
+          renderedHeight = 36;
+        },
+        { once: true },
+      );
+      grid.rows = createRows(60);
+      await frames(6);
+
+      expect(grid._virtualization.rowHeight).toBe(36);
+      expect(grid._virtualization.positionCache?.[1].offset).toBe(36);
+      expect(grid._virtualization.start).toBe(0);
+      expect(grid._virtualization.end).toBe(11);
+      expect(grid.querySelectorAll('.rows > .data-grid-row')).toHaveLength(11);
+      const settledRenders = render.mock.calls.length;
+      await frames(3);
+      expect(render).toHaveBeenCalledTimes(settledRenders);
+    });
+
     it('still measures when rows are present on the very first render', async () => {
       stubRowHeight(36);
       const plugin = new MasterDetailPlugin({
-        detailRenderer: (row: TestRow) => {
+        detailRenderer: (row) => {
           const div = document.createElement('div');
           div.textContent = `Detail for ${row.name}`;
           return div;
@@ -485,7 +559,7 @@ describe('variable row height with plugins', () => {
   describe('numeric rowHeight combined with a getRowHeight plugin (#479)', () => {
     function makePlugin() {
       return new MasterDetailPlugin({
-        detailRenderer: (row: TestRow) => {
+        detailRenderer: (row) => {
           const div = document.createElement('div');
           div.textContent = `Detail for ${row.name}`;
           return div;

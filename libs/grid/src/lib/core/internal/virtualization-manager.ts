@@ -272,6 +272,7 @@ export class VirtualizationManager<T = any> {
       const newTotalHeight = this.calculateTotalSpacerHeight(this.#grid._rows.length);
       s.totalHeightEl.style.height = `${newTotalHeight}px`;
     }
+    this.#grid._requestSchedulerPhase(RenderPhase.VIRTUALIZATION, 'measure');
   }
 
   #measureRenderedRowHeights(start: number, end: number): boolean {
@@ -918,6 +919,7 @@ export class VirtualizationManager<T = any> {
     const s = this.state;
     if (Math.abs(measuredHeight - s.rowHeight) > 1) {
       s.rowHeight = measuredHeight;
+      this.#grid._requestSchedulerPhase(RenderPhase.VIRTUALIZATION, 'measurePluginRowHeight');
     }
     this.initializePositionCache();
     if (s.totalHeightEl) {

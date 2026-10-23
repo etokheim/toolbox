@@ -161,17 +161,28 @@ test('TreeDisclosureControlsDemo — 100 expansion/recycle cycles keep independe
     await document.fonts.ready;
     await (element as DataGridElement).forceLayout();
   });
-  // React controls can finish sizing after the grid's initial ready/render pass.
+  // React commits and cache reconciliation can follow forceLayout's render pass.
   await expect
     .poll(() =>
       host.evaluate((element) => {
         const grid = element as DataGridElement;
-        const row = element.querySelector<HTMLElement>('.rows > .data-grid-row');
-        return row !== null && grid._virtualization.rowHeight === row.offsetHeight;
+        const state = grid._virtualization;
+        const rows = [...element.querySelectorAll<HTMLElement>('.rows > .data-grid-row')];
+        const expectedEnd = Math.min(grid._rows.length, Math.ceil(state.cachedViewportHeight / state.rowHeight) + 3);
+        return (
+          rows.length > 0 &&
+          state.start === 0 &&
+          state.end === expectedEnd &&
+          rows.length === expectedEnd &&
+          rows.every(
+            (row, index) =>
+              row.offsetHeight === state.rowHeight && state.positionCache?.[index]?.height === row.offsetHeight,
+          ) &&
+          element.querySelectorAll('[data-disclosure]').length === rows.length * 2
+        );
       }),
     )
     .toBe(true);
-  await host.evaluate((element) => (element as DataGridElement).forceLayout());
   const baseline = await counts();
   for (let i = 0; i < 100; i++) {
     await tree.click();

@@ -58,13 +58,27 @@ export function setPortalManager(gridEl: HTMLElement, pm: PortalManagerHandle | 
     portalManagers.set(gridEl, pm);
   } else {
     retiredGrids.add(gridEl);
-    for (const [key, owner] of portalOwners) {
-      if (owner.grid !== gridEl) continue;
-      owner.retired = true;
-      portalOwners.delete(key);
-    }
+    retirePortalOwners(gridEl);
     portalManagers.delete(gridEl);
   }
+}
+
+function retirePortalOwners(gridEl: HTMLElement, manager?: PortalManagerHandle): void {
+  for (const [key, owner] of portalOwners) {
+    if (owner.grid !== gridEl || (manager && owner.manager !== manager)) continue;
+    owner.retired = true;
+    portalOwners.delete(key);
+  }
+}
+
+/** Block teardown work immediately; only same-manager effect replay cancels final retirement. @internal */
+export function suspendPortalManager(gridEl: HTMLElement, manager: PortalManagerHandle): void {
+  if (portalManagers.get(gridEl) !== manager) return;
+  retiredGrids.add(gridEl);
+  portalManagers.delete(gridEl);
+  queueMicrotask(() => {
+    if (portalManagers.get(gridEl) !== manager) retirePortalOwners(gridEl, manager);
+  });
 }
 
 /**

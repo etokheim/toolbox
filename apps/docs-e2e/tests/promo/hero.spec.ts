@@ -55,7 +55,9 @@ test.describe('Promo — hero scenario', () => {
 
     const rows = page.locator('tbw-grid .data-grid-row');
     await expect(rows.first()).toBeVisible();
-    const totalRows = await rowCount(page);
+    const rowBody = grid(page).locator('.rows-body');
+    await expect(rowBody).toHaveAttribute('aria-rowcount', /^\d+$/);
+    const totalRows = Number(await rowBody.getAttribute('aria-rowcount'));
     expect(totalRows).toBeGreaterThan(10);
 
     // Chained: the integration card follows immediately, so this one fades to
@@ -150,7 +152,16 @@ test.describe('Promo — hero scenario', () => {
           message: 'only the chosen department survives the filter',
         })
         .toEqual([targetDept]);
-      expect(await rowCount(page)).toBeLessThan(totalRows);
+      // The processed dataset shrinks; its DOM pool may grow when filtering enters bypass mode.
+      await expect
+        .poll(
+          async () => {
+            const count = await rowBody.getAttribute('aria-rowcount');
+            return count !== null && /^[1-9]\d*$/.test(count) && Number(count) < totalRows;
+          },
+          { message: 'the nonempty processed dataset shrinks after filtering' },
+        )
+        .toBe(true);
       // Sort survives the filter: the rows left are still salary-descending.
       const remaining = await numericColumn(page, 'salary');
       expect(remaining).toEqual([...remaining].sort((a, b) => b - a));
