@@ -2,6 +2,8 @@
 
 Responsive card layout for `<tbw-grid>` that automatically switches from table to card view on narrow viewports.
 
+The first positive measured width establishes the layout synchronously, without a native View Transition. Hidden, zero-width mounts wait for a positive width. Later breakpoint crossings and manual layout changes retain the configured animation.
+
 ## Installation
 
 ```typescript
