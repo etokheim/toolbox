@@ -187,6 +187,7 @@ export class ResponsivePlugin<T = unknown> extends BaseGridPlugin<ResponsivePlug
   #debounceTimer?: ReturnType<typeof setTimeout>;
   #warnedAboutMissingBreakpoint = false;
   #currentWidth = 0;
+  #hasMeasuredWidth = false;
   /** Width the last `#checkBreakpoint()` ran against — guards height-only resizes. */
   #lastCheckedWidth?: number;
   /** Timestamp of the last applied layout switch, for the post-switch cooldown. */
@@ -342,6 +343,19 @@ export class ResponsivePlugin<T = unknown> extends BaseGridPlugin<ResponsivePlug
    */
   #onResize(width: number): void {
     this.#currentWidth = width;
+    if (width <= 0) {
+      clearTimeout(this.#debounceTimer);
+      return;
+    }
+
+    // The first visible size establishes a layout, not a resize animation.
+    // Snapshotting here delays the initial card DOM behind native capture.
+    if (!this.#hasMeasuredWidth) {
+      this.#hasMeasuredWidth = true;
+      this.#lastCheckedWidth = width;
+      this.#checkBreakpoint(width, false);
+      return;
+    }
 
     // Height-only resize — nothing the breakpoint logic reads has changed.
     if (width === this.#lastCheckedWidth) return;
@@ -607,6 +621,7 @@ export class ResponsivePlugin<T = unknown> extends BaseGridPlugin<ResponsivePlug
     clearTimeout(this.#debounceTimer);
     this.#debounceTimer = undefined;
     this.#lastCheckedWidth = undefined;
+    this.#hasMeasuredWidth = false;
     this.#lastSwitchAt = Number.NEGATIVE_INFINITY;
 
     // Every attribute `#syncLayoutAttributes()` writes styles the grid on its own
@@ -715,10 +730,10 @@ export class ResponsivePlugin<T = unknown> extends BaseGridPlugin<ResponsivePlug
    * Check if width has crossed any breakpoint threshold.
    * Handles both single breakpoint (legacy) and multi-breakpoint modes.
    */
-  #checkBreakpoint(width: number): void {
+  #checkBreakpoint(width: number, allowTransition = true): void {
     // Multi-breakpoint mode
     if (this.#sortedBreakpoints.length > 0) {
-      this.#checkMultiBreakpoint(width);
+      this.#checkMultiBreakpoint(width, allowTransition);
       return;
     }
 
@@ -739,7 +754,7 @@ export class ResponsivePlugin<T = unknown> extends BaseGridPlugin<ResponsivePlug
     if (shouldBeResponsive !== this.#isResponsive) {
       this.#isResponsive = shouldBeResponsive;
       this.#lastSwitchAt = performance.now();
-      this.#commitLayoutSwitch();
+      this.#commitLayoutSwitch(true, allowTransition);
       this.emit('responsive-change', {
         isResponsive: shouldBeResponsive,
         width,
@@ -752,7 +767,7 @@ export class ResponsivePlugin<T = unknown> extends BaseGridPlugin<ResponsivePlug
    * Check breakpoints in multi-breakpoint mode.
    * Evaluates breakpoints from largest to smallest, applying the first match.
    */
-  #checkMultiBreakpoint(width: number): void {
+  #checkMultiBreakpoint(width: number, allowTransition = true): void {
     // Find the active breakpoint (first one where width <= maxWidth)
     // Since sorted largest to smallest, we find the largest matching breakpoint
     let newActiveBreakpoint: BreakpointConfig | null = null;
@@ -789,7 +804,7 @@ export class ResponsivePlugin<T = unknown> extends BaseGridPlugin<ResponsivePlug
 
       // A hidden-column change still needs a re-render even when the card
       // layout itself did not flip, so always commit through the same path.
-      this.#commitLayoutSwitch(layoutChanged);
+      this.#commitLayoutSwitch(layoutChanged, allowTransition);
 
       // Emit event for any breakpoint change
       this.emit('responsive-change', {
@@ -817,15 +832,16 @@ export class ResponsivePlugin<T = unknown> extends BaseGridPlugin<ResponsivePlug
    * against a container that is still being dragged.
    * @param layoutChanged - Whether the table/card layout itself flipped. `false`
    *   when only the hidden-column set changed.
+   * @param allowTransition - Initial measured layout must apply synchronously.
    */
-  #commitLayoutSwitch(layoutChanged = true): void {
+  #commitLayoutSwitch(layoutChanged = true, allowTransition = true): void {
     this.#syncMotionDuration();
 
     // The view transition already cross-fades everything, so per-column fades
     // would only fight it.
     if (layoutChanged) this.#endFadeWindow();
 
-    const startViewTransition = layoutChanged ? this.#viewTransitionStarter() : null;
+    const startViewTransition = layoutChanged && allowTransition ? this.#viewTransitionStarter() : null;
     if (!startViewTransition) {
       if (layoutChanged) this.#applyResponsiveState();
       this.requestRender();
