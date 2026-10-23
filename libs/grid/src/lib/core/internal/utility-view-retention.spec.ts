@@ -63,6 +63,31 @@ function fixture(owned = true) {
 afterEach(() => document.body.replaceChildren());
 
 describe('bounded utility view retention', () => {
+  it('rebuilds valid unkeyed rows without calling the throwing public identity API', () => {
+    const f = fixture();
+    const unkeyed = { name: 'Unkeyed', action: 'More' };
+    f.rowEl.__rowDataRef = unkeyed;
+    const publicId = vi.spyOn(f.grid, 'getRowId');
+    expect(() => renderInlineRow(f.grid, f.rowEl, unkeyed, 0, true)).not.toThrow();
+    expect(publicId).not.toHaveBeenCalled();
+    expect(f.rowEl.children[0].textContent).toBe('Unkeyed');
+    expect(f.rowEl.children[1].textContent).toBe('More');
+    expect(f.cell.isConnected).toBe(false);
+    expect(f.cleanup).toHaveBeenCalledOnce();
+  });
+
+  it('retains explicit identities without hiding resolver errors', () => {
+    const f = fixture();
+    const resolver = vi.fn((row: { name: string }) => row.name);
+    f.grid.effectiveConfig = { ...f.grid.effectiveConfig, getRowId: resolver };
+    renderInlineRow(f.grid, f.rowEl, { name: f.row.name, action: 'Updated' }, 0, true);
+    expect(f.rowEl.children[1]).toBe(f.cell);
+    resolver.mockImplementation(() => {
+      throw new Error('Invalid configured identity');
+    });
+    expect(() => renderInlineRow(f.grid, f.rowEl, f.row, 0, true)).toThrow('Invalid configured identity');
+  });
+
   it('keeps the owned cell physically attached, runs changed siblings and delivers fresh context', () => {
     const f = fixture();
     f.button.focus();

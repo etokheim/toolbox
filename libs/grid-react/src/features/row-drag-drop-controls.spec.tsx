@@ -62,6 +62,39 @@ afterEach(async () => {
 
 describe('React row drag controls', () => {
   it.each(['props', 'config'] as const)(
+    'shares one native source config between attachment and passive initialization (%s)',
+    async (surface) => {
+      const descriptor = Object.getOwnPropertyDescriptor(DataGridElement.prototype, 'gridConfig');
+      const setter = descriptor?.set;
+      if (!setter) throw new Error('Missing gridConfig setter');
+      const sources: DataGridElement<Row>['_sourceConfig'][] = [];
+      vi.spyOn(DataGridElement.prototype, 'gridConfig', 'set').mockImplementation(function (
+        this: DataGridElement<Row>,
+        value,
+      ) {
+        setter.call(this, value);
+        sources.push(this._sourceConfig);
+      });
+      const container = document.createElement('div');
+      document.body.append(container);
+      const root = createRoot(container);
+      roots.push(root);
+      const drag = config('initial');
+      root.render(
+        <DataGrid<Row>
+          rows={rows}
+          {...(surface === 'props'
+            ? { rowDragDrop: drag, gridConfig: baseConfig }
+            : { gridConfig: { columns, features: { rowDragDrop: drag } } })}
+        />,
+      );
+      await vi.waitFor(() => expect(live.size).toBe(2));
+      expect(sources.length).toBeGreaterThan(0);
+      expect(new Set(sources).size).toBe(1);
+    },
+  );
+
+  it.each(['props', 'config'] as const)(
     'releases and reacquires a same-node binding when the renderer factory removes its ref (%s)',
     async (surface) => {
       const container = document.createElement('div');

@@ -918,6 +918,7 @@ export class VirtualizationManager<T = any> {
     const s = this.state;
     if (Math.abs(measuredHeight - s.rowHeight) > 1) {
       s.rowHeight = measuredHeight;
+      this.#grid._requestSchedulerPhase(RenderPhase.VIRTUALIZATION, 'measurePluginRowHeight');
     }
     this.initializePositionCache();
     if (s.totalHeightEl) {

@@ -124,6 +124,63 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+describe('live ancestor viewport updates', () => {
+  it('stores viewport updates before attachment without changing legacy mode', () => {
+    const owner = document.createElement('div');
+    const sticky = new StickyRowsPlugin({ isSticky: 'id' });
+    sticky.setViewport({ scrollContainer: owner, topOffset: 12 });
+    expect(sticky.resolvedConfig).toMatchObject({ mode: 'push', scrollContainer: owner, topOffset: 12 });
+    sticky.setViewport({});
+    expect(sticky.resolvedConfig.scrollContainer).toBeUndefined();
+    expect(sticky.resolvedConfig.topOffset).toBeUndefined();
+  });
+
+  it('rebinds owner resources without replacing the row window or detaching sibling state', async () => {
+    const first = document.createElement('div');
+    const second = document.createElement('div');
+    document.body.append(first);
+    first.append(second);
+    const { grid, sticky, selection } = await fixture(4);
+    second.append(grid);
+    await grid.ready();
+    const window = getRowWindow(grid);
+    const detached = vi.spyOn(sticky, 'detach');
+    const selectionDetached = vi.spyOn(selection, 'detach');
+    const firstEvents = vi.spyOn(first, 'addEventListener');
+    const secondEvents = vi.spyOn(second, 'addEventListener');
+    const observe = vi.spyOn(ResizeObserver.prototype, 'observe');
+    const signals = (events: typeof firstEvents) =>
+      events.mock.calls
+        .filter(([type]) => type === 'scroll')
+        .map(([, , options]) => (typeof options === 'object' ? options.signal : undefined));
+    sticky.setViewport({ scrollContainer: first, topOffset: 0 });
+    expect(getRowWindow(grid)).toBe(window);
+    expect(signals(firstEvents)).toHaveLength(1);
+    const observerIndex = observe.mock.calls.findIndex(([target]) => target === first);
+    const observer = observe.mock.instances[observerIndex];
+    if (!(observer instanceof ResizeObserver)) throw new Error('Missing viewport observer');
+    const disconnect = vi.spyOn(observer, 'disconnect');
+    sticky.setViewport({ scrollContainer: first, topOffset: 12 });
+    expect(signals(firstEvents)).toHaveLength(1);
+    expect(disconnect).not.toHaveBeenCalled();
+    sticky.setViewport({ scrollContainer: second, topOffset: 12 });
+    expect(signals(firstEvents)[0]?.aborted).toBe(true);
+    expect(disconnect).toHaveBeenCalledOnce();
+    expect(signals(secondEvents)).toHaveLength(1);
+    expect(window?.reveal).toBeTypeOf('function');
+    sticky.setViewport({});
+    expect(signals(secondEvents)[0]?.aborted).toBe(true);
+    expect(window?.reveal).toBeUndefined();
+    expect(window?.pageHeight).toBeUndefined();
+    expect(getRowWindow(grid)).toBe(window);
+    expect(detached).not.toHaveBeenCalled();
+    expect(selectionDetached).not.toHaveBeenCalled();
+    grid.remove();
+    expect(getRowWindow(grid)).toBeUndefined();
+    expect(detached).toHaveBeenCalledOnce();
+  });
+});
+
 async function externalHeightFixture(inside = 0) {
   if (!customElements.get('tbw-grid')) customElements.define('tbw-grid', DataGridElement);
   const owner = document.createElement('div');

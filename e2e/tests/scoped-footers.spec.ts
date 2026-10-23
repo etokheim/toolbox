@@ -51,6 +51,87 @@ test.beforeAll(async () => {
   fixture = chunk.code;
 });
 
+for (const canonical of [false, true]) {
+  test(`live viewport ownership preserves editing and Undo canonical=${canonical}`, async ({ page }) => {
+    const errors: string[] = [];
+    page.on('pageerror', (error) => errors.push(error.message));
+    await mount(page, { external: false, compact: false, canonical, flat: true, customEditor: true, rowCount: 80 });
+    const value = page.locator('.cell[data-row="0"][data-field="value"]');
+    await value.dblclick();
+    const input = page.locator('[data-custom-editor]');
+    await input.fill('9');
+    await input.press('Enter');
+    await expect(value.locator('[data-value-display]')).toHaveText('9');
+    const footer = page.locator('[data-footer="grid"]');
+    await footer.click();
+    await page.locator('[data-footer-input="grid"]').fill('same footer');
+    const footerOwner = await footer.elementHandle();
+    await page.evaluate(() =>
+      document.querySelector('tbw-grid')!.getPluginByName('editing')!.beginCellEdit(0, 'value'),
+    );
+    await expect(input).toHaveCount(1);
+    const editorOwner = await input.elementHandle();
+    const gridOwner = await page.locator('tbw-grid').elementHandle();
+    for (const external of [true, false, true, false]) {
+      await page.evaluate((external) => window.scopedFixture.viewport(external), external);
+      await expect
+        .poll(() =>
+          page.evaluate(() => {
+            const grid = document.querySelector('tbw-grid')!;
+            return !!grid.getPluginByName('stickyRows')?.resolvedConfig.scrollContainer;
+          }),
+        )
+        .toBe(external);
+      await page.evaluate(
+        () => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))),
+      );
+      expect(await gridOwner!.evaluate((element) => element === document.querySelector('tbw-grid'))).toBe(true);
+      expect(await editorOwner!.evaluate((element) => element === document.querySelector('[data-custom-editor]'))).toBe(
+        true,
+      );
+      expect(await footerOwner!.evaluate((element) => element === document.querySelector('[data-footer="grid"]'))).toBe(
+        true,
+      );
+      await expect(page.locator('[data-footer-input="grid"]')).toHaveValue('same footer');
+      const state = await page.evaluate(() => {
+        const grid = document.querySelector('tbw-grid')!;
+        return {
+          undo: grid.getPluginByName('undoRedo')!.getUndoStack().length,
+          value: (grid.sourceRows[0] as { value: number }).value,
+          ...window.scopedFixture.measure(),
+        };
+      });
+      expect(state.undo).toBe(1);
+      expect(state.value).toBe(9);
+      expect(state.samePlugins).toBe(true);
+      expect(state.detaches).toBe(0);
+      expect(state.flowErrors).toEqual([]);
+    }
+    await input.press('Escape');
+    await page.evaluate(() => window.scopedFixture.undo());
+    await expect(value.locator('[data-value-display]')).toHaveText('0');
+    await page.evaluate(() => window.scopedFixture.redo());
+    await expect(value.locator('[data-value-display]')).toHaveText('9');
+    await page.evaluate(() => window.scopedFixture.viewport(true));
+    await page.evaluate(() => window.scopedFixture.reveal(60));
+    await expect.poll(() => page.evaluate(() => window.scopedFixture.measure().owner.scrollTop)).toBeGreaterThan(0);
+    const revealed = page.locator('.cell[data-row="60"][data-field="value"]');
+    await expect(revealed).toBeVisible();
+    const geometry = await revealed.evaluate((element) => {
+      const grid = document.querySelector('tbw-grid')!;
+      return {
+        row: element.getBoundingClientRect().toJSON(),
+        header: grid.querySelector('.header')!.getBoundingClientRect().toJSON(),
+        footer: grid.querySelector('.tbw-scoped-footer')!.getBoundingClientRect().toJSON(),
+      };
+    });
+    expect(geometry.row.top).toBeGreaterThanOrEqual(geometry.header.bottom - 1);
+    expect(geometry.row.bottom).toBeLessThanOrEqual(geometry.footer.top + 1);
+    expect(errors).toEqual([]);
+    await page.evaluate(() => window.scopedFixture.dispose());
+  });
+}
+
 for (const external of [false, true]) {
   for (const compact of [false, true]) {
     test(`continuous scoped boundaries external=${external} compact=${compact}`, async ({ page }, info) => {

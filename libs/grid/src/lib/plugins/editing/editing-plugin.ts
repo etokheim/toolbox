@@ -466,9 +466,8 @@ export class EditingPlugin<T = unknown> extends BaseGridPlugin<EditingConfig> {
         if (this.#isGridMode) return;
         if (this.#activeEditRow === -1) return;
         const rowEl = internalGrid.findRenderedRowElement?.(this.#activeEditRow);
-        if (!rowEl) return;
         const path = (e.composedPath && e.composedPath()) || [];
-        if (path.includes(rowEl)) return;
+        if (rowEl && path.includes(rowEl)) return;
 
         // Check if click is inside a registered external focus container
         // (e.g., overlays, datepickers, dropdowns at <body> level).
@@ -485,7 +484,6 @@ export class EditingPlugin<T = unknown> extends BaseGridPlugin<EditingConfig> {
         // of the editor. Covers Downshift / Headless UI / MUI Autocomplete
         // panels that opt out of registerExternalFocusContainer.
         if (target && !this.gridElement.contains(target)) {
-          const rowEl = internalGrid.findRenderedRowElement?.(this.#activeEditRow);
           if (rowEl && isInsideOpenAriaOverlay(target, rowEl)) return;
         }
 

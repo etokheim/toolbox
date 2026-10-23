@@ -109,6 +109,8 @@ export async function mount(options: Options) {
   let update: (revision: number) => void = () => undefined;
   let density: () => void = () => undefined;
   let replace: (rows: Row[]) => void = () => undefined;
+  let setViewport: (external: boolean, topOffset?: number) => void = () => undefined;
+  let external = options.external;
   let clicks = 0;
   let mounts = 0;
   let unmounts = 0;
@@ -224,6 +226,9 @@ export async function mount(options: Options) {
     scrollContainer: options.external ? owner : undefined,
   };
   function App() {
+    const [viewport, updateViewport] = useState({ external: options.external, topOffset: 0 });
+    external = viewport.external;
+    setViewport = (external, topOffset = 0) => flushSync(() => updateViewport({ external, topOffset }));
     const [revision, setRevision] = useState(0);
     const [compact, setCompact] = useState(options.compact);
     const [rows, setRows] = useState(initial);
@@ -261,7 +266,7 @@ export async function mount(options: Options) {
           : null,
       [compact, revision],
     );
-    const features: NonNullable<GridConfig<Row>['features']> = {
+    const features = {
       tree: options.flat || options.empty ? false : tree,
       groupingRows:
         options.flat || options.empty
@@ -277,19 +282,21 @@ export async function mount(options: Options) {
                   ? undefined
                   : (context) => (revision === 3 ? [] : emptyGroups(context)),
             },
-      stickyRows: options.boundedReveal ? undefined : sticky,
+      stickyRows: options.boundedReveal
+        ? undefined
+        : { ...sticky, scrollContainer: viewport.external ? owner : undefined, topOffset: viewport.topOffset },
       pinnedRows: { slots: [{ id: 'status', render: () => <span data-status>Summary</span> }], scopedFooters },
       editing: true,
       undoRedo: true,
       selection: 'row' as const,
       clipboard: true,
-    };
+    } satisfies NonNullable<GridConfig<Row>['features']>;
     const config: GridConfig<Row> = { columns, getRowId, rowHeight };
     return (
       <Provider.Provider value="provider">
         <DataGrid<Row>
           rows={rows}
-          style={{ height: options.external ? 'auto' : options.boundedReveal ? '300px' : '320px' }}
+          style={{ height: viewport.external ? 'auto' : options.boundedReveal ? '300px' : '320px' }}
           gridConfig={options.canonical ? { ...config, features } : config}
           {...(options.canonical ? {} : features)}
         />
@@ -303,15 +310,24 @@ export async function mount(options: Options) {
   await grid.ready();
   for (let i = 0; i < 5; i++) await frame();
   const scrollOwner = () => {
-    const element = options.external ? owner : grid.querySelector<HTMLElement>('.faux-vscroll');
+    const element = external ? owner : grid.querySelector<HTMLElement>('.faux-vscroll');
     if (!element) throw new Error('Missing native scroll owner');
     return element;
   };
-  const plugins = ['pinnedRows', 'editing', 'undoRedo', 'tree', 'groupingRows'].map((name) =>
-    grid.getPluginByName(name),
-  );
+  const pluginNames = ['pinnedRows', 'editing', 'undoRedo', 'tree', 'groupingRows', 'stickyRows'] as const;
+  const plugins = pluginNames.map((name) => grid.getPluginByName(name));
+  let detaches = 0;
+  for (const plugin of plugins) {
+    if (!plugin) continue;
+    const detach = plugin.detach.bind(plugin);
+    plugin.detach = () => {
+      detaches++;
+      detach();
+    };
+  }
   return {
     update,
+    viewport: (external: boolean, topOffset = 0) => setViewport(external, topOffset),
     append: () => replace([...initial, ...Array.from({ length: 5 }, (_, i) => ({ id: `added-${i}`, value: i }))]),
     revealLast: () => grid.scrollToRowById('added-4', { align: 'end' }),
     addAndEdit: () => {
@@ -368,7 +384,7 @@ export async function mount(options: Options) {
     focusLast: () => grid.focusCell(grid._rows.length - 1, 'value'),
     resize: async (height: number) => {
       owner.style.height = `${height}px`;
-      if (!options.external) grid.style.height = `${height}px`;
+      if (!external) grid.style.height = `${height}px`;
       await grid.forceLayout();
     },
     measure() {
@@ -415,10 +431,8 @@ export async function mount(options: Options) {
         clicks,
         mounts,
         unmounts,
-        samePlugins: plugins.every(
-          (plugin, i) =>
-            plugin === grid.getPluginByName(['pinnedRows', 'editing', 'undoRedo', 'tree', 'groupingRows'][i]),
-        ),
+        detaches,
+        samePlugins: plugins.every((plugin, i) => plugin === grid.getPluginByName(pluginNames[i])),
       };
     },
     async dispose() {

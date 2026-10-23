@@ -15,6 +15,7 @@ import { booleanCellHTML, clearCellFocus, formatDateValue, getRowIndexFromCell }
 import { resolveCellValue } from './value-accessor';
 import { getRowWindow } from './row-window';
 import { getRowFlow } from './row-flow';
+import { tryResolveRowId } from './row-identity';
 
 /** Callback type for plugin row rendering hook */
 export type RenderRowHook = (row: any, rowEl: HTMLElement, rowIndex: number) => boolean;
@@ -911,8 +912,9 @@ function retainedUtilityViews(
     isSyntheticRow(rowEl.__rowDataRef)
   )
     return undefined;
-  const oldId = rowEl.__rowDataRef !== undefined ? grid.getRowId?.(rowEl.__rowDataRef) : undefined;
-  if (oldId === undefined || oldId !== grid.getRowId?.(rowData)) return undefined;
+  const getRowId = grid.effectiveConfig?.getRowId;
+  const oldId = rowEl.__rowDataRef !== undefined ? tryResolveRowId(rowEl.__rowDataRef, getRowId) : undefined;
+  if (oldId === undefined || oldId !== tryResolveRowId(rowData, getRowId)) return undefined;
   const columns = grid._visibleColumns;
   const cells = Array.from(rowEl.children);
   if (cells.length !== columns.length || cells.some((cell, i) => cell.getAttribute('data-field') !== columns[i].field))

@@ -486,6 +486,12 @@ if (selection) {
 }
 ```
 
+For viewport-only changes in ancestor mode,
+`grid.getPluginByName('stickyRows')?.setViewport({ scrollContainer, topOffset })`
+updates the scroll owner without detaching plugins or clearing Undo history.
+Pass `{}` to return to internal scrolling. See
+[Sticky Rows: external scroll owner](/grid/plugins/sticky-rows/#external-scroll-owner).
+
 ### Embedded Selection Controls
 
 Selection exposes `bindRowCheckbox(context, host, onContext)` for a checkbox nested
