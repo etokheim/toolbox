@@ -487,6 +487,50 @@ describe('variable row height with plugins', () => {
       expect(render).toHaveBeenCalledTimes(settledRenders);
     });
 
+    it('reconciles a window selected from cached heights measured before renderer content commits', async () => {
+      let renderedHeight = 28;
+      const originalRect = Element.prototype.getBoundingClientRect;
+      vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function (this: Element) {
+        return this.classList.contains('data-grid-row')
+          ? new DOMRect(0, 0, 800, renderedHeight)
+          : originalRect.call(this);
+      });
+      vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockImplementation(function (this: HTMLElement) {
+        return this.classList.contains('data-grid-row') ? renderedHeight : 0;
+      });
+      connectWithPlugin();
+      await waitUpgrade(grid);
+      await frames(3);
+      for (const element of [
+        grid._virtualization.viewportEl,
+        grid._virtualization.container,
+        grid.querySelector('.tbw-scroll-area'),
+      ]) {
+        if (!element) throw new Error('Missing viewport geometry element');
+        Object.defineProperty(element, 'clientHeight', { configurable: true, value: 280 });
+      }
+      const render = vi.fn();
+      grid.addEventListener('render', render);
+      grid.addEventListener(
+        'render',
+        () => {
+          renderedHeight = 36;
+        },
+        { once: true },
+      );
+      grid.rows = createRows(60);
+      await frames(6);
+
+      expect(grid._virtualization.rowHeight).toBe(36);
+      expect(grid._virtualization.positionCache?.[1].offset).toBe(36);
+      expect(grid._virtualization.start).toBe(0);
+      expect(grid._virtualization.end).toBe(11);
+      expect(grid.querySelectorAll('.rows > .data-grid-row')).toHaveLength(11);
+      const settledRenders = render.mock.calls.length;
+      await frames(3);
+      expect(render).toHaveBeenCalledTimes(settledRenders);
+    });
+
     it('still measures when rows are present on the very first render', async () => {
       stubRowHeight(36);
       const plugin = new MasterDetailPlugin({

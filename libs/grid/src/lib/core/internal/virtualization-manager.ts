@@ -272,6 +272,7 @@ export class VirtualizationManager<T = any> {
       const newTotalHeight = this.calculateTotalSpacerHeight(this.#grid._rows.length);
       s.totalHeightEl.style.height = `${newTotalHeight}px`;
     }
+    this.#grid._requestSchedulerPhase(RenderPhase.VIRTUALIZATION, 'measure');
   }
 
   #measureRenderedRowHeights(start: number, end: number): boolean {
