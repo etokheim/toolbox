@@ -1331,6 +1331,7 @@ describe('ResponsivePlugin', () => {
       plugin.attach(mockGrid as never);
       const transition = stubViewTransition(mockGrid);
 
+      resizeObserverInstance?.callback([{ contentRect: { width: 800 } }]);
       resizeObserverInstance?.callback([{ contentRect: { width: 400 } }]);
 
       expect(transition.calls).toBe(1);
@@ -1348,12 +1349,144 @@ describe('ResponsivePlugin', () => {
       expect(mockGrid.hasAttribute('data-responsive-transition')).toBe(false);
     });
 
+    it.each([{ rows: [] }, { rows: [{ name: 'Cached row' }] }])(
+      'should establish the first narrow layout synchronously with rows %j',
+      ({ rows }) => {
+        const plugin = new ResponsivePlugin({ breakpoint: 500 });
+        const mockGrid = createMockGrid(rows);
+        const transition = stubViewTransition(mockGrid);
+        plugin.attach(mockGrid as never);
+        mockGrid.requestRender.mockClear();
+
+        resizeObserverInstance?.callback([{ contentRect: { width: 400 } }]);
+
+        expect(transition.calls).toBe(0);
+        expect(mockGrid.hasAttribute('data-responsive')).toBe(true);
+        expect(mockGrid.hasAttribute('data-responsive-transition')).toBe(false);
+        expect(mockGrid.requestRender).toHaveBeenCalledOnce();
+        expect(mockGrid.dispatchEvent).toHaveBeenCalledWith(
+          expect.objectContaining({ detail: { isResponsive: true, width: 400, breakpoint: 500 } }),
+        );
+      },
+    );
+
+    it('should wait for a positive width before establishing the initial layout', () => {
+      const plugin = new ResponsivePlugin({ breakpoint: 500, debounceMs: 0 });
+      const mockGrid = createMockGrid();
+      const transition = stubViewTransition(mockGrid);
+      plugin.attach(mockGrid as never);
+      mockGrid.requestRender.mockClear();
+
+      resizeObserverInstance?.callback([{ contentRect: { width: 0 } }]);
+      expect(plugin.isResponsive()).toBe(false);
+      expect(mockGrid.requestRender).not.toHaveBeenCalled();
+
+      resizeObserverInstance?.callback([{ contentRect: { width: 400 } }]);
+      expect(mockGrid.hasAttribute('data-responsive')).toBe(true);
+      expect(transition.calls).toBe(0);
+
+      resizeObserverInstance?.callback([{ contentRect: { width: 800 } }]);
+      expect(transition.calls).toBe(1);
+    });
+
+    it('should establish a multi-breakpoint card layout without a snapshot', () => {
+      const plugin = new ResponsivePlugin({
+        debounceMs: 0,
+        breakpoints: [
+          { maxWidth: 900, hiddenColumns: ['email'] },
+          { maxWidth: 500, cardLayout: true },
+        ],
+      });
+      const mockGrid = createMockGrid();
+      const transition = stubViewTransition(mockGrid);
+      plugin.attach(mockGrid as never);
+
+      resizeObserverInstance?.callback([{ contentRect: { width: 400 } }]);
+      expect(mockGrid.hasAttribute('data-responsive')).toBe(true);
+      expect(plugin.getActiveBreakpoint()?.maxWidth).toBe(500);
+      expect(transition.calls).toBe(0);
+
+      resizeObserverInstance?.callback([{ contentRect: { width: 800 } }]);
+      expect(transition.calls).toBe(1);
+    });
+
+    it('should re-establish layout synchronously after detach and reattach', () => {
+      const plugin = new ResponsivePlugin({ breakpoint: 500, debounceMs: 0 });
+      const mockGrid = createMockGrid();
+      const transition = stubViewTransition(mockGrid);
+      plugin.attach(mockGrid as never);
+      resizeObserverInstance?.callback([{ contentRect: { width: 400 } }]);
+
+      plugin.detach();
+      plugin.attach(mockGrid as never);
+      expect(mockGrid.hasAttribute('data-responsive')).toBe(true);
+      resizeObserverInstance?.callback([{ contentRect: { width: 800 } }]);
+      expect(mockGrid.hasAttribute('data-responsive')).toBe(false);
+      expect(transition.calls).toBe(0);
+
+      resizeObserverInstance?.callback([{ contentRect: { width: 400 } }]);
+      expect(transition.calls).toBe(1);
+    });
+
+    it('should preserve manual transitions before the first observed width', () => {
+      const plugin = new ResponsivePlugin({ breakpoint: 500 });
+      const mockGrid = createMockGrid();
+      const transition = stubViewTransition(mockGrid);
+      plugin.attach(mockGrid as never);
+
+      plugin.setResponsive(true);
+      expect(transition.calls).toBe(1);
+    });
+
+    it('should animate a dynamic breakpoint change after initial measurement', () => {
+      const plugin = new ResponsivePlugin({ breakpoint: 500 });
+      const mockGrid = createMockGrid();
+      const transition = stubViewTransition(mockGrid);
+      plugin.attach(mockGrid as never);
+      resizeObserverInstance?.callback([{ contentRect: { width: 800 } }]);
+
+      plugin.setBreakpoint(900);
+      expect(transition.calls).toBe(1);
+    });
+
+    it('should cancel a pending width evaluation while hidden', () => {
+      const plugin = new ResponsivePlugin({ breakpoint: 500 });
+      const mockGrid = createMockGrid();
+      const transition = stubViewTransition(mockGrid);
+      plugin.attach(mockGrid as never);
+      resizeObserverInstance?.callback([{ contentRect: { width: 400 } }]);
+      resizeObserverInstance?.callback([{ contentRect: { width: 800 } }]);
+      resizeObserverInstance?.callback([{ contentRect: { width: 0 } }]);
+      vi.advanceTimersByTime(100);
+      expect(transition.calls).toBe(0);
+      expect(mockGrid.hasAttribute('data-responsive')).toBe(true);
+
+      resizeObserverInstance?.callback([{ contentRect: { width: 800 } }]);
+      expect(transition.calls).toBe(1);
+    });
+
+    it('should respect reduced motion for later layout switches', () => {
+      const plugin = new ResponsivePlugin({ breakpoint: 500 });
+      const mockGrid = createMockGrid();
+      mockGrid.style.setProperty('--tbw-animation-enabled', '0');
+      const transition = stubViewTransition(mockGrid);
+      plugin.attach(mockGrid as never);
+
+      resizeObserverInstance?.callback([{ contentRect: { width: 800 } }]);
+      resizeObserverInstance?.callback([{ contentRect: { width: 400 } }]);
+
+      expect(transition.calls).toBe(0);
+      expect(mockGrid.hasAttribute('data-responsive')).toBe(true);
+      expect(mockGrid.style.getPropertyValue('--tbw-responsive-duration')).toBe('0ms');
+    });
+
     it('should not use a view transition when animate is false', () => {
       const plugin = new ResponsivePlugin({ breakpoint: 500, animate: false });
       const mockGrid = createMockGrid();
       plugin.attach(mockGrid as never);
       const transition = stubViewTransition(mockGrid);
 
+      resizeObserverInstance?.callback([{ contentRect: { width: 800 } }]);
       resizeObserverInstance?.callback([{ contentRect: { width: 400 } }]);
 
       expect(transition.calls).toBe(0);
@@ -1366,6 +1499,7 @@ describe('ResponsivePlugin', () => {
       plugin.attach(mockGrid as never);
       const transition = stubViewTransition(mockGrid);
 
+      resizeObserverInstance?.callback([{ contentRect: { width: 800 } }]);
       resizeObserverInstance?.callback([{ contentRect: { width: 400 } }]);
       await transition.update?.();
 
@@ -1382,6 +1516,7 @@ describe('ResponsivePlugin', () => {
       plugin.attach(mockGrid as never);
       const transition = stubViewTransition(mockGrid);
 
+      resizeObserverInstance?.callback([{ contentRect: { width: 800 } }]);
       resizeObserverInstance?.callback([{ contentRect: { width: 400 } }]);
 
       expect(row?.style.getPropertyValue('view-transition-name')).toMatch(/^tbw-responsive-row-\d+-2$/);
@@ -1415,6 +1550,7 @@ describe('ResponsivePlugin', () => {
       plugin.attach(mockGrid as never);
       const transition = stubViewTransition(mockGrid);
 
+      resizeObserverInstance?.callback([{ contentRect: { width: 800 } }]);
       resizeObserverInstance?.callback([{ contentRect: { width: 400 } }]);
 
       expect(cell?.style.getPropertyValue('view-transition-name')).toMatch(/^tbw-responsive-cell-\d+-2-3$/);
@@ -1441,6 +1577,7 @@ describe('ResponsivePlugin', () => {
       plugin.attach(mockGrid as never);
       stubViewTransition(mockGrid);
 
+      resizeObserverInstance?.callback([{ contentRect: { width: 800 } }]);
       resizeObserverInstance?.callback([{ contentRect: { width: 400 } }]);
 
       expect(row?.style.getPropertyValue('view-transition-name')).toMatch(/^tbw-responsive-row-\d+-2$/);
@@ -1461,6 +1598,7 @@ describe('ResponsivePlugin', () => {
 
       // Dragging across the breakpoint starts a second switch before the first
       // one has settled.
+      resizeObserverInstance?.callback([{ contentRect: { width: 800 } }]);
       resizeObserverInstance?.callback([{ contentRect: { width: 400 } }]);
       resizeObserverInstance?.callback([{ contentRect: { width: 800 } }]);
       expect(transition.calls).toBe(2);
