@@ -28,6 +28,7 @@ export class ActiveAncestors implements RowWindow {
   #getRowId: GridConfig['getRowId'];
   #rowKeys = new Map<unknown, unknown>();
   #renderedKeys = new WeakMap<RowElementInternal, unknown>();
+  #entering = new Set<RowElementInternal>();
   #sticky: boolean[] = [];
   #frames: AncestorFrame[] = [];
   #header: HTMLElement | null = null;
@@ -118,6 +119,7 @@ export class ActiveAncestors implements RowWindow {
     for (const row of this.elements.values()) this.#clearRow(row);
     if (getRowWindow(this.#grid) === this) setRowWindow(this.#grid, undefined);
     this.elements.clear();
+    this.#entering.clear();
   }
   // #endregion
 
@@ -126,10 +128,15 @@ export class ActiveAncestors implements RowWindow {
     const available = new Map(pool.map((row) => [this.#renderedKeys.get(row) ?? row, row]));
     const next: RowElementInternal[] = [];
     this.elements.clear();
+    this.#entering.clear();
     for (const index of this.indices) {
       const data = this.#grid._rows[index];
       const key = this.#rowKeys.get(data) ?? data;
-      const row = available.get(key) ?? create();
+      let row = available.get(key);
+      if (!row) {
+        row = create();
+        this.#entering.add(row);
+      }
       available.delete(key);
       this.#renderedKeys.set(row, key);
       next.push(row);
@@ -209,18 +216,34 @@ export class ActiveAncestors implements RowWindow {
   #orderRows(): void {
     const body = this.#grid._bodyEl;
     const active = body.ownerDocument.activeElement;
+    // New rows were appended during rendering. Place them first so reverse
+    // scrolling does not move the entire retained suffix around the entrants.
+    if (this.#entering.size) {
+      let anchor: Element | null = null;
+      for (let i = this.#grid._rowPool.length - 1; i >= 0; i--) {
+        const row = this.#grid._rowPool[i];
+        if (this.#entering.has(row)) this.#placeRow(row, anchor, active);
+        anchor = row;
+      }
+      this.#entering.clear();
+    }
+    // Retain the general ordering pass for actual data reorders.
     let anchor: Element | null = null;
     for (let i = this.#grid._rowPool.length - 1; i >= 0; i--) {
       const row = this.#grid._rowPool[i];
-      let next = row.nextElementSibling;
-      while (next && !next.classList.contains('data-grid-row')) next = next.nextElementSibling;
-      if (next !== anchor) {
-        if (typeof body.moveBefore === 'function') body.moveBefore(row, anchor);
-        // Reorder other rows around focus when state-preserving movement is unavailable.
-        else if (!row.contains(active)) body.insertBefore(row, anchor);
-      }
+      this.#placeRow(row, anchor, active);
       anchor = row;
     }
+  }
+
+  #placeRow(row: RowElementInternal, anchor: Element | null, active: Element | null): void {
+    let next = row.nextElementSibling;
+    while (next && !next.classList.contains('data-grid-row')) next = next.nextElementSibling;
+    if (next === anchor) return;
+    const body = this.#grid._bodyEl;
+    if (typeof body.moveBefore === 'function') body.moveBefore(row, anchor);
+    // Reorder other rows around focus when state-preserving movement is unavailable.
+    else if (!row.contains(active)) body.insertBefore(row, anchor);
   }
 
   offsets(focusedRowIndex?: number): { top: number; bottom: number; skipScroll?: boolean } {
