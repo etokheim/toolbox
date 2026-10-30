@@ -9,6 +9,7 @@
  * inlineEnterEdit) is responsible for focusing the correct editor after insertion.
  */
 
+import { readCellField } from '../../core/internal/value-accessor';
 import type { ColumnConfig, ColumnEditorContext } from '../../core/types';
 import type { DateEditorParams, NumberEditorParams, SelectEditorParams, TextEditorParams } from './types';
 
@@ -148,6 +149,38 @@ function createDateEditor(column: AnyColumn): (ctx: ColumnEditorContext) => HTML
 /** Sentinel value used internally to identify the nullable "(Blank)" option */
 const NULLABLE_BLANK_VALUE = '__tbw_null__';
 
+/** Configured value behind each built-in select `<option>` — string matching would conflate `1` and `'1'`. */
+const optionValues = new WeakMap<HTMLOptionElement, unknown>();
+
+/**
+ * Read a `multiple` select as an array of the configured option values, preserving
+ * their original type (DOM option values are always strings). For nullable columns the
+ * blank sentinel maps to `null` when it is the only selection and is dropped otherwise.
+ */
+function readMultiSelectValue(select: HTMLSelectElement, column?: AnyColumn): unknown {
+  let options: ReturnType<typeof resolveOptions> | undefined;
+  const values: unknown[] = [];
+  let blankSelected = false;
+  // Filter `options` rather than read `selectedOptions`: happy-dom caches that collection
+  // and misses programmatic `option.selected` writes (e.g. setInputValue's external push).
+  for (const o of Array.from(select.options)) {
+    if (!o.selected) continue;
+    if (optionValues.has(o)) {
+      values.push(optionValues.get(o));
+      continue;
+    }
+    if (column?.nullable && o.value === NULLABLE_BLANK_VALUE) {
+      blankSelected = true;
+      continue;
+    }
+    // Fallback for selects not built by createSelectEditor (custom editors).
+    options ??= column ? resolveOptions(column) : [];
+    const match = options.find((opt) => String(opt.value) === o.value);
+    values.push(match ? match.value : o.value);
+  }
+  return blankSelected && values.length === 0 ? null : values;
+}
+
 /** Creates a select dropdown editor */
 function createSelectEditor(column: AnyColumn): (ctx: ColumnEditorContext) => HTMLElement {
   return (ctx) => {
@@ -171,6 +204,7 @@ function createSelectEditor(column: AnyColumn): (ctx: ColumnEditorContext) => HT
       const o = document.createElement('option');
       o.value = String(opt.value);
       o.textContent = opt.label;
+      optionValues.set(o, opt.value);
       if (column.multi && Array.isArray(ctx.value) && ctx.value.includes(opt.value)) {
         o.selected = true;
       } else if (!column.multi && ctx.value === opt.value) {
@@ -181,8 +215,10 @@ function createSelectEditor(column: AnyColumn): (ctx: ColumnEditorContext) => HT
 
     const commit = () => {
       if (column.multi) {
-        const values = Array.from(select.selectedOptions).map((o) => o.value);
-        ctx.commit(values);
+        const next = readMultiSelectValue(select, column);
+        // Compare with the row, not a local cache: a vetoed commit leaves it unchanged, so blur retries.
+        if (isSameEditorValue(readCellField(ctx.row, ctx.field), next)) return;
+        ctx.commit(next);
       } else if (column.nullable && select.value === NULLABLE_BLANK_VALUE) {
         ctx.commit(null);
       } else {
@@ -338,6 +374,13 @@ function readTextControlValue(
   column?: AnyColumn,
   originalValue?: unknown,
 ): unknown {
+  // `input.value` on a multi-select is only the FIRST selected option — read the full set.
+  if (input instanceof HTMLSelectElement && input.multiple) return readMultiSelectValue(input, column);
+  // Nullable select's "(Blank)" option carries an internal sentinel — map it back to null
+  // (before the numeric branch, which would turn it into NaN). Mirrors createSelectEditor's commit.
+  if (input instanceof HTMLSelectElement && column?.nullable && input.value === NULLABLE_BLANK_VALUE) {
+    return null;
+  }
   // Check column type OR original value type — preserves numeric type for
   // custom column types (e.g., currency).
   if (input.value !== '' && (column?.type === 'number' || typeof originalValue === 'number')) {
@@ -371,4 +414,81 @@ export function getInputValue(
     default:
       return readTextInputValue(input, column, originalValue);
   }
+}
+
+/**
+ * Write a value into a native editor — the inverse of {@link getInputValue}. Used to push
+ * external row updates (`updateRow`, cascades, reverts) into an open editor, where a blind
+ * `input.value = String(value)` would corrupt it: a multi-select matches no option for
+ * `'a,c'` and drops its whole selection, a date input rejects `Date.toString()`, and a
+ * nullable select has no `''` option for `null`. Pass the column so the nullable blank
+ * sentinel is only honoured where {@link getInputValue} decodes it.
+ */
+export function setInputValue(
+  input: HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement,
+  value: unknown,
+  column?: AnyColumn,
+): void {
+  if (input instanceof HTMLSelectElement) {
+    writeSelectValue(input, value, !!column?.nullable);
+  } else if (input instanceof HTMLInputElement && input.type === 'checkbox') {
+    input.checked = !!value;
+  } else if (input instanceof HTMLInputElement && input.type === 'date' && value instanceof Date) {
+    input.valueAsDate = value;
+  } else if (input instanceof HTMLInputElement && input.type === 'date' && typeof value === 'string') {
+    input.value = value.split('T')[0];
+  } else {
+    input.value = String(value ?? '');
+  }
+}
+
+/**
+ * Whether `o` is the nullable "(Blank)" option built by `createSelectEditor`. Like the readers,
+ * only on nullable columns: elsewhere a `'__tbw_null__'` option is an ordinary value.
+ */
+function isBlankSentinel(o: HTMLOptionElement, nullable: boolean): boolean {
+  return nullable && o.value === NULLABLE_BLANK_VALUE && !optionValues.has(o);
+}
+
+function writeSelectValue(select: HTMLSelectElement, value: unknown, nullable: boolean): void {
+  if (select.multiple) {
+    writeMultiSelectValue(select, value, nullable);
+  } else if (value == null && Array.from(select.options).some((o) => isBlankSentinel(o, nullable))) {
+    select.value = NULLABLE_BLANK_VALUE;
+  } else {
+    select.value = String(value ?? '');
+  }
+}
+
+/**
+ * Select the options of a `multiple` select that match `value` (an array, a lone value, or
+ * `null` → the blank sentinel on nullable columns). Mirrors {@link readMultiSelectValue}: configured options
+ * match their original value strictly, others fall back to string matching.
+ */
+function writeMultiSelectValue(select: HTMLSelectElement, value: unknown, nullable: boolean): void {
+  const values = Array.isArray(value) ? value : value == null ? [] : [value];
+  for (const o of Array.from(select.options)) {
+    if (optionValues.has(o)) {
+      const configured = optionValues.get(o);
+      o.selected = values.some((v) => v === configured);
+    } else if (isBlankSentinel(o, nullable)) {
+      o.selected = value == null;
+    } else {
+      o.selected = values.some((v) => String(v) === o.value);
+    }
+  }
+}
+
+/**
+ * Whether a value re-read from an editor equals the cell's original value. Arrays
+ * (multi-select) compare as sets, since the DOM reports selections in option order
+ * and every read yields a new array instance.
+ */
+export function isSameEditorValue(originalValue: unknown, value: unknown): boolean {
+  if (Array.isArray(originalValue) && Array.isArray(value)) {
+    const original = new Set(originalValue);
+    const next = new Set(value);
+    return original.size === next.size && [...next].every((v) => original.has(v));
+  }
+  return originalValue === value;
 }

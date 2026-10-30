@@ -57,8 +57,9 @@ const canRedo = history.canRedo();
 // Clear history
 history.clearHistory();
 
-// Record an edit manually
-history.recordEdit(rowIndex, field, oldValue, newValue);
+// Record an edit manually. rowIndex = current display index; the row's ID is captured from it
+// unless you pass rowId (needed when the row may not be in view)
+history.recordEdit(rowIndex, field, oldValue, newValue, rowId);
 
 // Get stacks
 const undoStack = history.getUndoStack();
@@ -72,12 +73,13 @@ into one undo step using `beginTransaction()` / `endTransaction()`:
 
 ```typescript
 grid.addEventListener('cell-commit', (e) => {
+  const { row, rowId, rowIndex } = e.detail;
   const undoRedo = grid.getPluginByName('undoRedo');
   undoRedo.beginTransaction();
 
-  // Manually record cascaded side-effects
+  // Manually record cascaded side-effects (rowId keeps off-screen rows targeted correctly)
   const oldTotal = row.total;
-  undoRedo.recordEdit(rowIndex, 'total', oldTotal, newTotal);
+  undoRedo.recordEdit(rowIndex, 'total', oldTotal, newTotal, rowId);
   grid.updateRow(rowId, { total: newTotal });
 
   // End after the auto-recorded original edit is captured
@@ -85,14 +87,38 @@ grid.addEventListener('cell-commit', (e) => {
 });
 ```
 
-Undoing a compound action reverts **all** grouped edits in reverse order;
+Undoing a compound action reverts available grouped edits in reverse order;
 redoing replays them in forward order.
+
+### Row identity
+
+History captures the edited row's existing ID (`getRowId`, or conventional `id`/`_id`)
+and field name when the edit is recorded. Sorting, filtering and column reordering
+do not redirect the edit to the row or column now occupying its old position.
+A unique ID follows immutable row replacements, including source rows filtered
+out of the current view. A row without an ID can only be replayed while its
+original object remains in the source or processed rows.
+
+Unavailable or ambiguous targets produce a `TBW041` warning and are skipped.
+Other edits in a compound action still apply, and the action moves between the
+undo and redo stacks normally. Replacing the `getRowId` function also makes
+previously recorded targets unavailable; old IDs are never reinterpreted with
+the new resolver. Transactions group history, not atomic data changes.
+Queued row replacements temporarily make targets unavailable until
+the view is processed; replay never writes through the superseded view.
+
+`recordEdit(rowIndex, ...)` takes the **current processed-view index** at recording
+time. The returned action's `rowIndex` remains that original coordinate for
+compatibility; replay and focus resolve the recorded owner, not that coordinate.
+History only restores values, not removed rows.
 
 ## Events
 
+`undo()` / `redo()` behave exactly like the keyboard shortcuts: both paths emit the same events.
+
 ### `undo`
 
-Fired when an undo operation is performed.
+Fired when an undo operation is performed (Ctrl+Z or `undo()`).
 
 ```typescript
 grid.addEventListener('undo', (e) => {
@@ -102,10 +128,23 @@ grid.addEventListener('undo', (e) => {
 
 ### `redo`
 
-Fired when a redo operation is performed.
+Fired when a redo operation is performed (Ctrl+Y or `redo()`).
 
 ```typescript
 grid.addEventListener('redo', (e) => {
   console.log('Action redone:', e.detail.action);
+});
+```
+
+### `history-change`
+
+Fired whenever the history changes: an edit is recorded outside a transaction, a non-empty
+transaction ends, an undo or redo runs, or `clearHistory()` empties a non-empty history. Use it
+to enable/disable toolbar buttons.
+
+```typescript
+grid.addEventListener('history-change', (e) => {
+  undoButton.disabled = !e.detail.canUndo;
+  redoButton.disabled = !e.detail.canRedo;
 });
 ```

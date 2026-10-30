@@ -292,7 +292,7 @@ export interface PublicGrid<T = any> {
 
   /**
    * Set loading state for a specific row.
-   * Displays a small spinner indicator on the row.
+   * Displays a small spinner or custom loadingRenderer on the row.
    *
    * Use when persisting row data or performing row-level async operations.
    *
@@ -311,7 +311,7 @@ export interface PublicGrid<T = any> {
 
   /**
    * Set loading state for a specific cell.
-   * Displays a small spinner indicator on the cell.
+   * Displays a small spinner or custom loadingRenderer on the cell.
    *
    * Use when performing cell-level async operations (e.g., validation, lookup).
    *
@@ -466,6 +466,10 @@ export interface InternalGrid<T = any> extends PublicGrid<T>, GridConfig<T> {
   _sortState: { field: string; direction: 1 | -1 } | null;
   /** Original unfiltered/unprocessed rows. @internal */
   sourceRows: T[];
+  /** Queued replacements used to guard history ownership and clear callbacks. @internal */
+  readonly _pendingSourceUpdate: 'rows' | 'config' | undefined;
+  /** Invalidate core-owned derived values and retained cell contents. @internal */
+  _invalidateRowContent(row: T): void;
   /** Framework adapter instance (set by Grid directives). @internal */
   __frameworkAdapter?: FrameworkAdapter;
   __originalOrder: T[];
@@ -1021,6 +1025,9 @@ export interface BaseColumnConfig<TRow = any, TValue = any, TField extends strin
    * Note: a `valueAccessor` without a paired `valueSetter` (planned API)
    * implies the column is read-only — editors will not commit through it.
    *
+   * Never called for plugin loading placeholders (ServerSide rows whose block
+   * has not loaded, grouped rows being fetched): they resolve to `undefined`.
+   *
    * @example
    * ```typescript
    * // Computed value from nested data
@@ -1049,9 +1056,12 @@ export interface BaseColumnConfig<TRow = any, TValue = any, TField extends strin
    * - In the filter panel (set filter), checkbox labels show the formatted value
    *   instead of the raw value, and search matches against the formatted text.
    *
-   * The `row` parameter is available during cell rendering but is `undefined`
-   * when called from the filter panel (standalone value formatting). Avoid
-   * accessing `row` properties in format functions intended for filter display.
+   * `row` is the row the value belongs to. The filter panel lists each distinct
+   * value once and passes the first row containing it. Where a value has no
+   * source row — values returned by the filtering `valuesHandler`, and Pivot
+   * aggregates — `row` is `undefined`; if `format` then throws, the raw value is
+   * shown and a TBW062 warning is logged. For server-fetched filter values, return
+   * `{ value, label }` options from `valuesHandler` to supply the label instead.
    *
    * @example
    * ```typescript
@@ -2028,6 +2038,12 @@ export interface RowElementInternal extends HTMLElement {
   __editingCellCount?: number;
   /** Flag indicating this is a custom-rendered row (group row, etc.) */
   __isCustomRow?: boolean;
+  /**
+   * Set when any of the row's cells entered `setCellLoading()` state. A conservative
+   * hint (never cleared by the cell itself) that lets the render hot path skip the
+   * per-cell loader scan for rows that have never shown a loading overlay.
+   */
+  __hasCellLoading?: boolean;
   /** Last `aria-rowindex` value written, so unchanged rows skip the attribute mutation */
   __ariaRowIndex?: number;
 }
@@ -2594,6 +2610,10 @@ export interface A11yMessages {
    * @since 3.9.0
    */
   rangeSpanSelected?: (axis: 'row' | 'column', count: number) => string;
+  /** Selected-cell clear summary; omitted keys use English defaults. @since 3.10.0 */
+  cellsCleared?: (cleared: number, notCleared: number) => string;
+  /** Whole-action rejection for an oversized selected-cell clear. @since 3.10.0 */
+  cellClearLimitExceeded?: () => string;
   /** Announced when row editing starts. */
   editingStarted: (rowIndex: number) => string;
   /** Announced when row editing is committed. */
@@ -2754,9 +2774,10 @@ export interface GridConfig<TRow = any, TField extends string = ColumnFieldKey<T
    * Called for each row during rendering. Return class names to add to the row element.
    *
    * Applies to custom-rendered rows too (e.g. a Responsive `cardRenderer` card), but not to rows
-   * a plugin both synthesizes and renders itself — group headers, pivot rows and grouped loading
-   * placeholders are skipped because they are not `TRow` values. ServerSide's
-   * `{ __loading: true }` placeholders take the default render path and are NOT skipped.
+   * a plugin both synthesizes and renders itself — group headers, pivot rows and loading
+   * placeholders (grouped or ServerSide) are skipped because they are not `TRow` values.
+   * ServerSide placeholders only reach `rowClass` under its opt-in
+   * `placeholderRendering: 'columns'`.
    *
    * @example
    * ```typescript
@@ -2845,6 +2866,8 @@ export interface GridConfig<TRow = any, TField extends string = ColumnFieldKey<T
    *
    * **Variable Row Heights**: When a function is provided, the grid enables variable height
    * virtualization. Heights are measured on first render and cached by row identity.
+   * The function is never called for plugin loading placeholders (ServerSide rows whose
+   * block has not loaded); they use the default row height.
    *
    * Replacing the configured number or callback preserves the top visible occurrence and
    * its intra-row offset, clamped to the new row and scroll range. Newer scrolling,
@@ -3017,6 +3040,10 @@ export interface GridConfig<TRow = any, TField extends string = ColumnFieldKey<T
    * If not provided, falls back to `row.id` or `row._id` if present.
    * Rows without IDs are silently skipped during map building.
    * Only throws when explicitly calling `getRowId()` or `updateRow()` on a row without an ID.
+   *
+   * Never called for plugin loading placeholders (ServerSide blocks or grouped rows in
+   * flight). The grid gives those an internal id: `__loading:<index>` for ServerSide
+   * blocks, `__loading:group:<groupKey>` for GroupingRows groups.
    *
    * @example
    * ```ts
@@ -3400,7 +3427,8 @@ export type SortHandler<TRow = any> = (
  * Loading indicator size variant.
  *
  * - `'large'`: 48x48px max - used for grid-level loading overlay (`grid.loading = true`)
- * - `'small'`: Follows row height - used for row/cell loading states
+ * - `'small'`: Follows row height - used for row loading states (`grid.setRowLoading()`,
+ *   ServerSide loading placeholders) and cell loading (`grid.setCellLoading()`).
  *
  * @example
  * ```typescript
@@ -3445,7 +3473,7 @@ export type LoadingSize = 'large' | 'small';
  * @since 1.7.0
  */
 export interface LoadingContext {
-  /** The size variant being rendered: 'large' for grid-level, 'small' for row/cell */
+  /** The size variant: 'large' for grid-level, 'small' for row and cell loading */
   size: LoadingSize;
 }
 
@@ -3586,6 +3614,8 @@ export interface TbwScrollDetail {
  * - `'history'`: Re-application of a value by the undo/redo plugin. Data
  *   plugins (e.g. editing) apply the value but MUST NOT record a fresh
  *   history entry or mark the row changed — the undo stack owns this change.
+ *   An ID that no longer resolves (row deleted since the edit) is skipped
+ *   without the `TBW041` warning.
  *
  * @example
  * ```typescript

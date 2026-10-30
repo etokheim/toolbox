@@ -18,15 +18,15 @@ for this monorepo. It is run on demand via `bunx` and is not a project dependenc
 
 ## Quick reference
 
-| Goal                                     | Command                                                         |
-| ---------------------------------------- | --------------------------------------------------------------- |
-| Full-project maintainability report      | `bunx fallow health --score --hotspots --targets --format json` |
-| PR-scoped risk gate (changed files only) | `bunx fallow audit --changed-since origin/main --format json`   |
-| Dead code + unused exports               | `bunx fallow dead-code --format json`                           |
-| Duplication across the codebase          | `bunx fallow dupes --format json`                               |
-| Everything at once                       | `bunx fallow --format json`                                     |
-| Single-file deep dive                    | `bunx fallow health <path> --format json`                       |
-| Per-package scores (monorepo)            | `bunx fallow health --group-by package --score --format json`   |
+| Goal                                     | Command                                                                                  |
+| ---------------------------------------- | ---------------------------------------------------------------------------------------- |
+| Full-project maintainability report      | `bunx fallow health --score --hotspots --targets --format json`                          |
+| PR-scoped risk gate (changed files only) | `bunx fallow audit --changed-since origin/main --format json`                            |
+| Dead code + unused exports               | `bunx fallow dead-code --format json`                                                    |
+| Duplication across the codebase          | `bunx fallow dupes --format json`                                                        |
+| Everything at once                       | `bunx fallow --format json`                                                              |
+| Single-file deep dive                    | `bunx fallow health --format json` then filter `findings[]` by `path` (no `--file` flag) |
+| Per-package scores (monorepo)            | `bunx fallow health --group-by package --score --format json`                            |
 
 ### Scoped summary (monorepo triage)
 
@@ -45,12 +45,27 @@ It prints per-function findings sorted by CRAP, refactor targets, hotspots, in-s
 dead-code hits, and non-test clone groups. Caveats the script cannot resolve for you:
 
 - Without `--coverage <istanbul.json>` the `coverage_model` is `static_estimated` and every
-  function reads `cov=none`, so CRAP is inflated (`CC² + CC`). Generate real coverage first
-  (`bun nx test grid -- --coverage`, add `'json'` to the reporter list if only `json-summary`
-  is configured) before treating CRAP as a refactor trigger.
+  function reads `cov=none`, so CRAP is inflated (`CC² + CC`) — `fallow audit` then FAILS on
+  well-tested functions with CC ≥ 5. Fallow takes only Istanbul JSON / raw V8, and the Nx executor
+  cannot switch the reporter from the CLI (dotted `--coverage.*` flags are rejected; `--` passthrough
+  overrides are ignored). Instead run `bun nx test <project> --coverage`, then re-score once per
+  affected project:
+  `bun .github/skills/fallow/scripts/crap-from-lcov.ts --lcov coverage/libs/<project>/lcov.info --root libs/<project>`
+  (plus `--audit tmp/fallow-audit.json` if elsewhere). Only `grid` writes lcov today (the default
+  paths); the adapters' vitest configs emit no lcov. It prints `REAL`, `ok (coverage artifact)`, or
+  `UNVERIFIED (no lcov)` per finding. `REAL` findings are refactor triggers; `UNVERIFIED` ones (file
+  absent from every lcov you passed) are NOT cleared — keep them at their fallow tier, marked
+  unverified pending coverage.
 - `unused_class_members` / `unused_exports` are syntactic. In this repo they are almost
   always documented plugin/adapter public API or members reached via `this.#manager.x()`.
   Verify against `apps/docs/src/content/docs/grid/**` and a `grep -rn '\bname\b'` before deleting.
+  But DO check what a genuinely dead export was supposed to do before removing it: `copy.ts`'s
+  dead `buildClipboardText` (Oct 2026) was the only implementation of the documented
+  `quoteStrings` / `escapeFormulas` options and of the clipboard CWE-1236 guard — the live
+  path had silently stopped calling it, so the fix was to re-wire, not just delete.
+  A plugin's `static manifest`/`dependencies` (read via `p.constructor` in `plugin-manager.ts`) is
+  always a false positive; a NEW one shows as `introduced` — clear it by referencing it directly in a
+  spec (`FooPlugin.manifest?.hookPriority…`), not through a loop variable (#565).
 - Cross-adapter clone groups (`grid-react` ↔ `grid-vue` feature files) are intentional
   parity code; consolidating them would create a shared runtime dependency between adapters.
 

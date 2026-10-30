@@ -15,7 +15,7 @@ import '@toolbox-web/grid/features/selection';
 import '@toolbox-web/grid/features/cell-entry';
 ```
 
-CellEntry owns activation only. [Editing](/grid/plugins/editing/) owns the editor
+CellEntry owns activation and optional selected-cell clearing. [Editing](/grid/plugins/editing/) owns the editor
 lifecycle; [Selection](/grid/plugins/selection/) owns cell/range state.
 
 ## Basic Usage
@@ -71,7 +71,8 @@ opening an editor.
 | Tab / Shift+Tab, `tabToEdit: true` | Commit, close the previous editor, open the next/previous editable cell |
 | Tab at the last eligible cell / Shift+Tab at the first | Commit and leave the grid; no wrapping |
 | Escape | Retain Editing's cancel/rollback behaviour |
-| Printable keys / Delete / Backspace | No new activation, seeding or clearing |
+| Delete / Backspace, `clearOnDelete: true` | Clear the selected cell/range through Editing; requires UndoRedo |
+| Printable keys | No new activation or seeding |
 
 Traversal uses displayed rows and visible columns, skipping read-only rows/cells,
 utility columns and loading placeholders. Ordinary client-side rows are the
@@ -79,6 +80,63 @@ supported scope; this is not a new mixed-row-model editing contract.
 
 `tabToEdit` also works with F2 or `editing.beginCellEdit()` without CellEntry.
 Existing row-wide and grid-wide editing keep their current Tab behaviour.
+
+## Selected-cell clearing
+
+Clearing is off by default. Import `@toolbox-web/grid/features/undo-redo` and
+enable `undoRedo` alongside the existing Editing/Selection/CellEntry imports:
+
+```ts
+grid.gridConfig = {
+  columns: [
+    { field: 'name', type: 'string', editable: true },
+    { field: 'estimate', type: 'number', nullable: true, editable: true },
+    { field: 'status', type: 'select', editable: true,
+      clearValue: () => ({ value: 'unassigned' }) },
+  ],
+  features: {
+    selection: 'range',
+    editing: { editOn: 'manual' },
+    undoRedo: true,
+    cellEntry: { clearOnDelete: true },
+  },
+};
+grid.on('cell-clear', (detail) => {
+  if (detail.limitExceeded) showMessage('Select at most 10,000 cells');
+  else showClearResults(detail.cells);
+});
+```
+
+For manual construction, add `UndoRedoPlugin` before `CellEntryPlugin`.
+Per-column `clearValue(context)` overrides defaults and returns `{ value }` or
+`{ reject: 'reason' }`. Without an override, explicit `nullable: true` gives
+`null`, non-nullable string/text gives `''`, and all other types are skipped.
+Numbers/dates never infer zero or today.
+
+Ranges are deduplicated before writes. **More than 10,000 unique selected
+cells rejects the whole action**, including read-only cells in that count; the
+selection is never truncated. Only current processed rows and visible fields
+participate. Read-only/ineligible cells are skipped, and each eligible value runs
+through Editing's synchronous `cell-commit` with `source: 'clear'`.
+`preventDefault()` or `setInvalid()` rejects that cell. Editor-only validation
+does not run without an editor: use `cell-commit` for programmatic validation.
+Accepted edits and normal cascades share one nested-safe Undo step; grouping is
+not atomic rollback of consumer side effects.
+
+Callbacks cannot redirect clearing to replacements at stale coordinates.
+Missing/ambiguous owners warn and skip. Unique IDs follow settled immutable
+updates; ID-less history requires the original live object. Queued row/config
+replacements make remaining targets temporarily unavailable until processing
+settles. A rule/validation callback that replaces the current owner or column
+causes that cell to be skipped/rejected, not silently retargeted.
+See [UndoRedo](/grid/plugins/undo-redo/) for replay and stack behavior.
+
+| Type | Purpose |
+| --- | --- |
+| `CellClearContext` | Typed current row, row index, field, column and value passed to `clearValue` |
+| `CellClearValue` | `{ value }` replacement or `{ reject: string }` |
+| `CellClearResult` | Original selection coordinate, row/field, outcome and optional reason/message |
+| `CellClearDetail` | `{ cells, limitExceeded }`; empty cells on whole-action oversize rejection |
 
 ## Framework Configuration
 
@@ -104,12 +162,25 @@ Bind `[cellEntry]="{ singleClick: true }"`, `[editing]="{ editOn: 'manual', tabT
 and `[selection]="'range'"`. All three adapters can instead pass the shared
 `gridConfig.features` object above. No framework-specific editor API is added.
 
+For clearing, import the framework's `features/undo-redo` entry and enable
+`undoRedo` plus `cellEntry.clearOnDelete` through either configuration path.
+React reports via `onCellClear(detail, event)`, Vue via
+`@cell-clear="handler"` (a native `CustomEvent`), and Angular via
+`GridCellEntryDirective`'s `(cellClear)` output (unwrapped detail).
+Angular's attribute form also imports `GridUndoRedoDirective` and binds
+`[undoRedo]="true"`.
+
 ## Events
 
 The existing cancelable `cell-activate` can veto entry. Editor commit, row commit,
 `before-edit-close` and edit-open/close events retain Editing's existing semantics.
 A commit veto rejects/reverts values but still closes the editor; use the existing
 `onBeforeEditClose` contract to prevent leaving an editor.
+
+`cell-clear` is a non-cancelable outcome report. Each `cells` item has `status`
+`cleared`, `skipped` or `rejected`, with optional `reason` (`readonly`,
+`unavailable`, `unsupported-type`, `unchanged`, `rule`, `validation`) and message.
+Veto an individual clear through `cell-commit`, not this post-action report.
 
 ## Accessibility
 
@@ -118,6 +189,10 @@ Enter/F2 provides keyboard entry, and Escape cancels. Editing continues to suppl
 column-based editor names and edit announcements. Native links/controls, nested
 interactive content, IME composition and custom-editor event cancellation retain
 their own interaction.
+Clearing also leaves active editors, contenteditable, repeat events and modifier
+chords untouched. Its live-region summary is localized through optional
+`a11y.messages.cellsCleared(cleared, notCleared)` and
+`cellClearLimitExceeded()`; `a11y.announcements: false` suppresses announcements.
 
 [SC 2.1.2 No Keyboard Trap](https://www.w3.org/WAI/WCAG22/Understanding/no-keyboard-trap.html):
 boundary Tab/Shift+Tab leaves the grid using browser focus navigation.

@@ -26,7 +26,7 @@ interface Row {
 }
 
 it('retains canonical generic configs and combined feature props without widening DOM controls', () => {
-  const cellEntry: ReactCellEntryConfig = { singleClick: true };
+  const cellEntry: ReactCellEntryConfig = { singleClick: true, clearOnDelete: true };
   expectTypeOf(cellEntry).toEqualTypeOf<CellEntryConfig>();
   const editing: EditingConfig = { editOn: 'manual', tabToEdit: true };
   const tree: TreeConfig<Row> = {
@@ -47,7 +47,18 @@ it('retains canonical generic configs and combined feature props without widenin
     detailRenderer: () => <section>Details</section>,
   };
   const gridConfig: GridConfig<Row> = {
-    columns: [{ field: 'name', editable: true }],
+    columns: [
+      {
+        field: 'name',
+        editable: true,
+        clearValue: (context) => {
+          expectTypeOf(context.row).toEqualTypeOf<Row>();
+          // @ts-expect-error Clear rules retain the configured row type.
+          void context.row.missing;
+          return { value: '' };
+        },
+      },
+    ],
     features: { selection: 'range', editing, cellEntry, tree, masterDetail },
   };
   const props: DataGridProps<Row> = {
@@ -58,6 +69,11 @@ it('retains canonical generic configs and combined feature props without widenin
     tree,
     masterDetail,
     gridConfig,
+    onCellClear: (detail) => {
+      expectTypeOf(detail.cells[0].row).toEqualTypeOf<Row>();
+      // @ts-expect-error Clear outcomes retain the configured row type.
+      void detail.cells[0].row.missing;
+    },
   };
   expectTypeOf(props).toExtend<DataGridProps<Row>>();
   const selection: SelectionConfig<Row> = {

@@ -749,6 +749,7 @@ export class Grid implements OnInit, AfterContentInit, OnDestroy {
    * consumers must import the relevant feature directive.
    */
   declare private _intentionallyOmittedEvents:
+    | 'cell-clear' // GridCellEntryDirective
     | 'cell-commit'
     | 'cell-cancel'
     | 'row-commit'
@@ -769,11 +770,13 @@ export class Grid implements OnInit, AfterContentInit, OnDestroy {
     | 'group-toggle'
     | 'group-expand'
     | 'group-collapse'
+    | 'group-load-error'
     | 'tree-expand'
     | 'tree-load-start'
     | 'tree-load-end'
     | 'tree-load-error'
     | 'detail-expand'
+    | 'detail-load-error'
     | 'responsive-change'
     | 'context-menu-open'
     | 'copy'
@@ -781,6 +784,7 @@ export class Grid implements OnInit, AfterContentInit, OnDestroy {
     | 'paste-rejected'
     | 'undo'
     | 'redo'
+    | 'history-change'
     | 'export-complete'
     | 'print-start'
     | 'print-complete'

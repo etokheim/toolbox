@@ -96,10 +96,37 @@ export class HierarchyPlugin extends BaseGridPlugin {
     if (attached && contributors[contributors.length - 1] !== caller) return rows as unknown[];
     const generation = ++this.#generation;
     this.#model = { rows: [], positions: new WeakMap() };
-    const model = buildHierarchyModel(rows, attached ? contributors : [caller]);
+    const model = buildHierarchyModel(rows, attached ? contributors : [caller], undefined, this.#rowSubstitute());
     if (generation !== this.#generation) throw new Error('Hierarchy generation changed during row processing');
     this.#model = model;
     return model.rows;
+  }
+
+  /**
+   * Rows other plugins pin by ID for this rebuild (`getRowSubstitutes` query) — e.g.
+   * EditingPlugin's in-progress row, so an edit survives `rows` being replaced with
+   * new objects even when the row is nested (#570). `undefined` when nothing is pinned.
+   */
+  #rowSubstitute(): ((row: unknown) => unknown) | undefined {
+    const responses = this.grid?.query?.<ReadonlyMap<string, unknown> | undefined>('getRowSubstitutes', null) ?? [];
+    let pinned: Map<string, unknown> | undefined;
+    for (const map of responses) {
+      if (!map?.size) continue;
+      pinned ??= new Map();
+      for (const [id, row] of map) pinned.set(id, row);
+    }
+    if (!pinned) return undefined;
+    const grid = this.grid;
+    return (row) => {
+      if (typeof row !== 'object' || row === null) return row;
+      let id: string | undefined;
+      try {
+        id = grid.getRowId(row);
+      } catch {
+        return row;
+      }
+      return pinned.has(id) ? pinned.get(id) : row;
+    };
   }
 
   /**

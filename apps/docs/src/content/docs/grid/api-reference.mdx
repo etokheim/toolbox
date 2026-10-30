@@ -460,6 +460,15 @@ For opt-in single-cell activation, use [CellEntry](/grid/plugins/cell-entry/) wi
 [`EditingConfig.tabToEdit`](/grid/plugins/editing/interfaces/editingconfig/#tabtoedit)
 adds Tab/Shift+Tab continuation to the existing single-cell lifecycle; it is off by default.
 
+CellEntry's separately opt-in `clearOnDelete` clears selected cells through Editing
+and requires UndoRedo. `column.clearValue(context)` overrides nullable/text
+defaults; `cell-clear` reports accepted/skipped/rejected outcomes or rejects the
+entire action above 10,000 unique selected cells.
+See [selected-cell clearing](/grid/plugins/cell-entry/#selected-cell-clearing)
+for `CellClearContext`, `CellClearValue`, `CellClearResult` and `CellClearDetail`,
+validation and one-step Undo. The mutation source is `'clear'`; cancel each edit
+through `cell-commit`, not the non-cancelable outcome event.
+
 Bulk-edit lifecycle, change tracking, and active-row controls are provided by the **Editing plugin** and surfaced on the grid instance when the plugin is loaded. See [Editing Plugin → Imperative Bulk-Edit API](/grid/plugins/editing/#imperative-bulk-edit-api) for the full method list and examples.
 
 ### Plugin Methods
@@ -578,7 +587,8 @@ await grid.animateRows([0, 1, 2], 'change');
 grid.loading = true;
 grid.loading = false;
 
-// To customise the loading indicator, configure a renderer at config time:
+// To customise the grid, row, and cell indicators, configure a renderer at config time.
+// It receives { size: 'large' } for grid loading and { size: 'small' } for row/cell loading.
 grid.gridConfig = {
   loadingRenderer: (ctx) => {
     const el = document.createElement('div');

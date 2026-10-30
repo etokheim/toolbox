@@ -21,6 +21,28 @@ export interface HierarchyModel {
 
 const building = new WeakSet<HierarchyContributor>();
 
+function substituteRows(nodes: HierarchyNode[], substitute: (row: unknown) => unknown): HierarchyNode[] {
+  let out: HierarchyNode[] | undefined;
+  for (let i = 0; i < nodes.length; i++) {
+    const row = substitute(nodes[i].row);
+    if (row === nodes[i].row) continue;
+    out ??= nodes.slice();
+    out[i] = { ...nodes[i], row };
+  }
+  return out ?? nodes;
+}
+
+function substituteValues(rows: readonly unknown[], substitute: (row: unknown) => unknown): readonly unknown[] {
+  let out: unknown[] | undefined;
+  for (let i = 0; i < rows.length; i++) {
+    const row = substitute(rows[i]);
+    if (row === rows[i]) continue;
+    out ??= rows.slice();
+    out[i] = row;
+  }
+  return out ?? rows;
+}
+
 /** @internal Custom contributor hooks always use the generic pipeline. */
 export function hasDefaultHierarchyHooks(contributor: HierarchyContributor, prototype: HierarchyContributor): boolean {
   return (
@@ -51,6 +73,10 @@ export function hasDefaultHierarchyHooks(contributor: HierarchyContributor, prot
  * @param rows - The root rows.
  * @param contributors - Contributors to run, in `processRows` hook order.
  * @param meta - Receives each emitted row's position. Pass a fresh map per rebuild.
+ * @param substitute - Optional. Maps a row to the object to use in its place, at
+ * every nesting level, before any contributor sees it. Return the row itself to
+ * keep it. `HierarchyPlugin` uses this to keep a row being edited when the data
+ * is replaced with new objects. Added in 3.10.2.
  * @returns The flattened rows, in render order.
  * @since 3.9.0
  */
@@ -58,8 +84,9 @@ export function buildHierarchy(
   rows: readonly unknown[],
   contributors: readonly HierarchyContributor[],
   meta: WeakMap<object, HierarchyRowMeta> = new WeakMap(),
+  substitute?: (row: unknown) => unknown,
 ): unknown[] {
-  return buildHierarchyModel(rows, contributors, meta).rows;
+  return buildHierarchyModel(rows, contributors, meta, substitute).rows;
 }
 
 /** @internal Allows a standalone contributor to lend its completed metadata generation. */
@@ -67,13 +94,14 @@ export function buildHierarchyModel(
   rows: readonly unknown[],
   contributors: readonly HierarchyContributor[],
   meta?: WeakMap<object, HierarchyRowMeta>,
+  substitute?: (row: unknown) => unknown,
 ): HierarchyModel {
   if (contributors.some((contributor) => building.has(contributor))) {
     throw new Error('Hierarchy contributors cannot rebuild re-entrantly');
   }
   for (const contributor of contributors) building.add(contributor);
   try {
-    return compose(rows, contributors, meta);
+    return compose(substitute ? substituteValues(rows, substitute) : rows, contributors, meta, substitute);
   } finally {
     for (const contributor of contributors) building.delete(contributor);
   }
@@ -96,10 +124,11 @@ function compose(
   rows: readonly unknown[],
   contributors: readonly HierarchyContributor[],
   suppliedMeta?: WeakMap<object, HierarchyRowMeta>,
+  substitute?: (row: unknown) => unknown,
 ): HierarchyModel {
   const active = beginContributors(rows, contributors);
   if (active.length === 0) return { rows: [...rows], positions: suppliedMeta ?? new WeakMap() };
-  if (active.length === 1) {
+  if (active.length === 1 && !substitute) {
     const contributor = active[0] as HierarchyContributor & Partial<FlatHierarchyContributor>;
     const flat = contributor[FLAT_HIERARCHY]?.(rows, suppliedMeta);
     if (flat) return flat;
@@ -108,6 +137,7 @@ function compose(
   const meta = suppliedMeta ?? new WeakMap<object, HierarchyRowMeta>();
   const out: unknown[] = [];
   const process = (nodes: HierarchyNode[], parent: HierarchyNode | null, depth: number): HierarchyNode[] => {
+    if (substitute && parent) nodes = substituteRows(nodes, substitute);
     const context = { parent: parent ? parent.row : null, parentKey: parent?.key ?? null, depth };
     for (const c of active) nodes = c.processSiblings(nodes, context);
     return nodes;

@@ -84,9 +84,11 @@ export interface TreeConfig<T = unknown> {
   /**
    * Lazy-load child rows when a node is expanded.
    *
-   * Called once per node the first time it is expanded while its children are
-   * not yet loaded. The resolved rows are written to `row[childrenField]` and
-   * the grid re-renders. While the request is in flight the node's toggle is
+   * Called once per row object the first time it is expanded while its children
+   * are not yet loaded — and again for a still-expanded node when the rows are
+   * replaced with new objects (e.g. a new `grid.rows` array). The resolved rows
+   * are written to `row[childrenField]` and the grid re-renders. While the
+   * request is in flight the node's toggle is
    * replaced by the grid's small spinner and the row carries `aria-busy`.
    *
    * Returns a `Promise` or a {@link Subscribable} (e.g. an Angular
@@ -121,7 +123,8 @@ export interface TreeConfig<T = unknown> {
    * `children: true`) means children exist but are not loaded yet.
    *
    * A node with a non-empty embedded children array always counts as having
-   * children regardless of what this predicate returns.
+   * children regardless of what this predicate returns. Never called for
+   * ServerSide loading placeholders, which are always leaves.
    *
    * @since 3.4.0
    */
@@ -216,8 +219,18 @@ export interface TreeLoadStartDetail<T = TreeRow> {
  * @since 3.4.0
  */
 export interface TreeLoadEndDetail<T = TreeRow> extends TreeLoadStartDetail<T> {
-  /** Number of child rows received */
+  /** Number of child rows received (`0` when {@link TreeLoadEndDetail.cancelled | cancelled}) */
   childCount: number;
+  /**
+   * `true` when the load was superseded before it settled: the node's row was
+   * replaced by a new object for the same key (e.g. a ServerSide refetch after a
+   * sort/filter change or `refresh()`) and the replacement rendered, so the
+   * request was aborted and nothing was merged. If the node is still expanded and
+   * the new row's children are lazy, they are requested again (a fresh
+   * `tree-load-start`).
+   * @since 3.9.2
+   */
+  cancelled?: boolean;
 }
 
 /**
@@ -237,12 +250,16 @@ declare module '../../core/types' {
     /**
      * Fired when lazy child loading starts for a node — i.e. a node with
      * unloaded children was expanded and `loadChildren` (or the ServerSide
-     * data source) was invoked. @group Tree Events
+     * data source) was invoked. Every `tree-load-start` is followed by exactly
+     * one `tree-load-end` or `tree-load-error` (unless the grid is torn down).
+     * @group Tree Events
      */
     'tree-load-start': TreeLoadStartDetail;
     /**
      * Fired when lazy child loading completes and the children have been
-     * merged into the parent row. @group Tree Events
+     * merged into the parent row — or, with `cancelled: true`, when the load
+     * was superseded because the row was replaced before its children arrived.
+     * @group Tree Events
      */
     'tree-load-end': TreeLoadEndDetail;
     /**

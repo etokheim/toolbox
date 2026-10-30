@@ -36,12 +36,25 @@ serverSide.setDataSource({
 
 ## Configuration
 
-| Option                  | Type     | Default | Description                                                    |
-| ----------------------- | -------- | ------- | -------------------------------------------------------------- |
-| `pageSize`              | `number` | `100`   | Rows per `getRows()` call (also surfaced as `params.pageSize`) |
-| `maxConcurrentRequests` | `number` | `2`     | Max concurrent block loads                                     |
+| Option                  | Type                         | Default         | Description                                                                                     |
+| ----------------------- | ---------------------------- | --------------- | ----------------------------------------------------------------------------------------------- |
+| `pageSize`              | `number`                     | `100`           | Rows per `getRows()` call (also surfaced as `params.pageSize`)                                  |
+| `maxConcurrentRequests` | `number`                     | `2`             | Max concurrent block loads                                                                      |
+| `placeholderRendering`  | `'loading-row' \| 'columns'` | `'loading-row'` | How rows still loading render: the grid's row-loading spinner, or through your column renderers |
 
 > **Note:** `dataSource` is set via the `setDataSource()` method, not as a config option.
+
+## Loading Placeholders
+
+Rows whose block hasn't arrived are placeholder objects (`{ __loading: true, __index }`). By default the grid renders them itself in the core row-loading state (`.tbw-row-loading`, `aria-busy`, spinner overlay, `loadingRenderer({ size: 'small' })`). Column renderers, `format`, `cellClass`, `rowClass` and context menus (mouse or keyboard) are never called for them while the grid renders (Export `mode: 'formatted'` and Clipboard copy still run `format` over every row — guard with `isLoadingPlaceholder()`). In every mode `valueAccessor`, `filterValue` and a `rowHeight` function are never called with a placeholder, so local sort/filter is safe mid-load, and `getRowId` is never called with one: placeholders get an internal id `__loading:<index>`.
+
+Set `placeholderRendering: 'columns'` to render placeholders through your own column renderers instead, and detect them with the exported guard:
+
+```ts
+import { isLoadingPlaceholder } from '@toolbox-web/grid/plugins/server-side';
+
+renderer: ({ row, value }) => (isLoadingPlaceholder(row) ? 'Loading…' : value);
+```
 
 ## Data Source Interface
 
@@ -71,8 +84,10 @@ For hierarchical data (tree nodes, grouped rows, master-detail), implement `getC
 
 ```typescript
 interface GetChildRowsParams {
-  parentRow: unknown;
-  context: { source: string }; // e.g. 'tree', 'groupingRows', 'masterDetail'
+  context: { source: string; [key: string]: unknown }; // source: 'tree' | 'grouping-rows' | 'master-detail'
+  sortModel?: Array<{ field: string; direction: 'asc' | 'desc' }>;
+  filterModel?: Record<string, unknown>;
+  signal: AbortSignal; // aborted when the requester supersedes the request, or on detach
 }
 
 interface GetChildRowsResult<TRow = any> {
@@ -93,10 +108,12 @@ The plugin broadcasts lifecycle events that other plugins can subscribe to:
 
 ## Queries
 
-| Query Type                  | Response             | Purpose                          |
-| --------------------------- | -------------------- | -------------------------------- |
-| `datasource:is-active`      | `boolean`            | Check if a data source is active |
-| `datasource:fetch-children` | `GetChildRowsResult` | Request child rows for a parent  |
+| Query Type                  | Response              | Purpose                                        |
+| --------------------------- | --------------------- | ---------------------------------------------- |
+| `datasource:is-active`      | `boolean`             | Check if a data source is active               |
+| `datasource:filter-mode`    | `'server' \| 'local'` | Who filters rows while a data source is active |
+| `datasource:sort-mode`      | `'server' \| 'local'` | Who sorts rows while a data source is active   |
+| `datasource:fetch-children` | `GetChildRowsResult`  | Request child rows for a parent                |
 
 ## API Methods
 

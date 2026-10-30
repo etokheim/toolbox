@@ -14,7 +14,7 @@ import type {
   InternalGrid,
   RowElementInternal,
 } from '../../../core/types';
-import { getInputValue } from '../editors';
+import { getInputValue, isSameEditorValue } from '../editors';
 import type { EditingConfig } from '../types';
 
 // #region Constants
@@ -143,35 +143,76 @@ export function noopUpdateRow(_changes: unknown): void {
 // #region Editor Input Wiring
 
 /**
- * Auto-wire commit/cancel lifecycle for input elements in string-returned editors.
+ * Auto-wire blur/change commits for the first native control in an editor host
+ * (HTML-string factory editors and `<tbw-grid-column-editor>` templates).
+ *
+ * `currentValue` reads the row's live value. A re-read that is already equal to
+ * it is skipped — `getInputValue` returns a fresh array per call for a
+ * `<select multiple>` and `#commitCellValue` compares by reference, so `change`
+ * followed by `blur` would otherwise emit two accepted `cell-commit`s for one
+ * selection (#551). The comparison is against the ROW, never a cached baseline:
+ * a vetoed commit or an external update must stay retryable.
  */
-export function wireEditorInputs(
+export function wireEditorInputs<T>(
   editorHost: HTMLElement,
-  column: ColumnConfig<unknown>,
+  column: ColumnConfig<T>,
   commit: (value: unknown) => void,
   originalValue?: unknown,
+  currentValue?: () => unknown,
 ): void {
   const input = editorHost.querySelector('input,textarea,select') as
-    | HTMLInputElement
-    | HTMLTextAreaElement
-    | HTMLSelectElement
-    | null;
+    HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement | null;
   if (!input) return;
 
-  input.addEventListener('blur', () => {
-    commit(getInputValue(input, column, originalValue));
-  });
+  const commitRead = () => {
+    const next = getInputValue(input, column, originalValue);
+    if (currentValue && isSameEditorValue(currentValue(), next)) return;
+    commit(next);
+  };
+
+  input.addEventListener('blur', commitRead);
 
   if (input instanceof HTMLInputElement && input.type === 'checkbox') {
     input.addEventListener('change', () => commit(input.checked));
   } else if (input instanceof HTMLSelectElement) {
-    input.addEventListener('change', () => commit(getInputValue(input, column, originalValue)));
+    input.addEventListener('change', commitRead);
   }
 }
 
 // #endregion
 
 // #region Edit Guard
+
+type BeforeEditCloseFn = NonNullable<EditingConfig['onBeforeEditClose']>;
+
+/**
+ * Enter events the editor host deferred to the editor itself — editor-level
+ * `preventDefault()` (#250) or an open ARIA overlay (#251). Marked per event so
+ * `EditingPlugin`'s grid-mode Enter handler, which runs later on the same
+ * bubble, can tell "the editor owns this Enter" from "the host already
+ * committed it" — both reach the plugin with `defaultPrevented === true`.
+ */
+const enterDeferredToEditor = new WeakSet<Event>();
+
+/** Record that the host keydown handler handed `event` (Enter) to the editor. */
+export function markEnterDeferredToEditor(event: KeyboardEvent): void {
+  enterDeferredToEditor.add(event);
+}
+
+/**
+ * Whether Enter belongs to the editor: the host deferred it, or the target
+ * declares an open overlay (`aria-expanded="true"` + `aria-controls`). The
+ * attribute check repeats the host's so the verdict holds even when the host
+ * handler did not see the event (editor focused outside the host).
+ */
+export function isEnterOwnedByEditor(event: KeyboardEvent): boolean {
+  if (enterDeferredToEditor.has(event)) return true;
+  const target = event.target as HTMLElement | null;
+  return target?.getAttribute?.('aria-expanded') === 'true' && !!target.hasAttribute?.('aria-controls');
+}
+
+/** Per-event cache of `onBeforeEditClose` verdicts, keyed by callback (#558). */
+const editCloseVerdicts = new WeakMap<Event, Map<BeforeEditCloseFn, boolean>>();
 
 /**
  * Returns `true` when the configured `onBeforeEditClose` callback vetoes
@@ -180,9 +221,22 @@ export function wireEditorInputs(
  * ```ts
  * if (shouldPreventEditClose(config, e)) return;
  * ```
+ *
+ * The callback is consulted at most once per event (#558): one keystroke
+ * reaches several close paths (document capture, editor host, plugin
+ * `onKeyDown`) with different DOM state in between, so every path reuses
+ * the first verdict instead of re-asking.
  */
 export function shouldPreventEditClose(config: EditingConfig, event: MouseEvent | KeyboardEvent): boolean {
-  return config.onBeforeEditClose?.(event) === false;
+  const callback = config.onBeforeEditClose;
+  if (!callback) return false;
+  let verdicts = editCloseVerdicts.get(event);
+  const cached = verdicts?.get(callback);
+  if (cached !== undefined) return cached;
+  const prevent = callback(event) === false;
+  if (!verdicts) editCloseVerdicts.set(event, (verdicts = new Map()));
+  verdicts.set(callback, prevent);
+  return prevent;
 }
 
 // #endregion
@@ -215,6 +269,51 @@ export function isInsideOpenAriaOverlay(target: Node | null | undefined, scopeEl
     if (panel && panel.contains(target as Node)) return true;
   }
   return false;
+}
+
+/** Escape keystrokes already claimed by an open ARIA overlay → the scope that claimed them (#558). */
+const escapesForOpenOverlay = new WeakMap<Event, HTMLElement>();
+
+/**
+ * `true` when the event's composed path (crosses web-component shadow roots)
+ * passes through an expanded overlay trigger between its target and `scopeEl`.
+ */
+function pathHasOpenAriaTrigger(event: Event, scopeEl: HTMLElement): boolean {
+  const path = event.composedPath?.() ?? [];
+  if (!path.includes(scopeEl)) return false;
+  for (const node of path) {
+    if (node === scopeEl) return false;
+    const el = node as Element;
+    if (el.getAttribute?.('aria-expanded') === 'true' && el.hasAttribute('aria-controls')) return true;
+  }
+  return false;
+}
+
+/**
+ * Returns `true` when this Escape keystroke belongs to an open ARIA overlay
+ * (combobox list, menu, picker) rather than to the row edit — i.e. the
+ * keystroke originates from an `aria-expanded="true"` + `aria-controls`
+ * control (or a descendant of one) inside `scopeEl`, or from inside the
+ * panel such a control owns — whether that panel is portalled to `<body>`
+ * or rendered inline beside its trigger. Standard dialog-stack behaviour:
+ * the first Escape closes the overlay, the next one cancels the edit (#558).
+ *
+ * The verdict is remembered per event: the overlay's own handler flips
+ * `aria-expanded` to `"false"` while the event is still propagating, so the
+ * later (bubble-phase) close paths must not re-read the live DOM. It is
+ * shared only with related scopes (the row and its editor host nest); an
+ * unrelated grid's row judges the keystroke on its own.
+ *
+ * @internal
+ */
+export function isEscapeForOpenOverlay(event: KeyboardEvent, scopeEl: HTMLElement | null | undefined): boolean {
+  if (!scopeEl) return false;
+  const claimedBy = escapesForOpenOverlay.get(event);
+  if (claimedBy && (claimedBy.contains(scopeEl) || scopeEl.contains(claimedBy))) return true;
+  const claimed =
+    pathHasOpenAriaTrigger(event, scopeEl) || isInsideOpenAriaOverlay(event.target as Node | null, scopeEl);
+  if (claimed) escapesForOpenOverlay.set(event, scopeEl);
+  return claimed;
 }
 
 // #endregion

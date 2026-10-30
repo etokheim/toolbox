@@ -3,4 +3,4 @@
  * @module Plugins/Cell Entry
  */
 export { CellEntryPlugin } from './cell-entry-plugin';
-export type { CellEntryConfig } from './types';
+export type { CellClearContext, CellClearDetail, CellClearResult, CellClearValue, CellEntryConfig } from './types';

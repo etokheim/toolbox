@@ -28,6 +28,13 @@ inputs:
 runs:
   using: composite
   steps:
+    - name: Enforce upstream publication boundary
+      if: github.repository != 'OysteinAmundsen/toolbox' || (github.event_name == 'release' && startsWith(github.event.release.tag_name, 'fork-preview-'))
+      shell: bash
+      run: |
+        echo "::error::Registry publication and release reconciliation are restricted to upstream, non-preview runs."
+        exit 1
+
     - uses: actions/checkout@v5
       with:
         fetch-depth: 0

@@ -11,20 +11,9 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { nextFrame, waitUpgrade } from '../../../../test/helpers';
 import { UndoRedoPlugin } from '../undo-redo/undo-redo-plugin';
 import { EditingPlugin } from './editing-plugin';
-
-// Test helpers
-async function nextFrame(): Promise<void> {
-  return new Promise((resolve) => requestAnimationFrame(() => resolve()));
-}
-
-async function waitUpgrade(el: HTMLElement & { ready?: () => Promise<void> }): Promise<void> {
-  await customElements.whenDefined('tbw-grid');
-  await el.ready?.();
-  await nextFrame();
-  await nextFrame();
-}
 
 describe('EditingPlugin', () => {
   let grid: any;
@@ -629,6 +618,78 @@ describe('EditingPlugin', () => {
       const nameCell = row.querySelector('.cell[data-col="1"]') as HTMLElement;
       expect(nameCell.querySelector('input')).toBeTruthy();
     });
+
+    it('preserves custom cell loading content when editing begins', async () => {
+      const editingPlugin = new EditingPlugin({ editOn: 'manual' });
+      grid.gridConfig = {
+        columns: [
+          { field: 'id', header: 'ID' },
+          { field: 'name', header: 'Name', editable: true },
+        ],
+        getRowId: (row: { id: number }) => String(row.id),
+        loadingRenderer: (ctx: { size: 'large' | 'small' }) => {
+          const el = document.createElement('span');
+          el.className = 'custom-cell-loader';
+          el.textContent = ctx.size;
+          return el;
+        },
+        plugins: [editingPlugin],
+      };
+      grid.rows = [{ id: 1, name: 'Alpha' }];
+      await waitUpgrade(grid);
+
+      grid.setCellLoading('1', 'name', true);
+      expect(grid.isCellLoading('1', 'name')).toBe(true);
+      const nameCell = grid.querySelector('.data-grid-row .cell[data-col="1"]') as HTMLElement;
+      editingPlugin.beginCellEdit(0, 'name');
+      expect(nameCell.querySelector('.tbw-editor-host')).not.toBeNull();
+      expect(nameCell.querySelector('.tbw-cell-loading-overlay .custom-cell-loader')?.textContent).toBe('small');
+      await nextFrame();
+      await nextFrame();
+
+      const currentCell = grid.querySelector('.data-grid-row .cell[data-col="1"]') as HTMLElement;
+      expect(currentCell.querySelector('.tbw-editor-host')).not.toBeNull();
+      expect(currentCell.querySelector('.tbw-cell-loading-overlay .custom-cell-loader')?.textContent).toBe('small');
+      expect(currentCell.classList.contains('tbw-cell-loading-custom')).toBe(true);
+      expect(grid.isCellLoading('1', 'name')).toBe(true);
+    });
+
+    it('preserves custom cell loading content when the edit closes', async () => {
+      const editingPlugin = new EditingPlugin({ editOn: 'manual' });
+      grid.gridConfig = {
+        columns: [
+          { field: 'id', header: 'ID' },
+          { field: 'name', header: 'Name', editable: true },
+        ],
+        getRowId: (row: { id: number }) => String(row.id),
+        loadingRenderer: () => {
+          const el = document.createElement('span');
+          el.className = 'custom-cell-loader';
+          return el;
+        },
+        plugins: [editingPlugin],
+      };
+      grid.rows = [{ id: 1, name: 'Alpha' }];
+      await waitUpgrade(grid);
+      // Mirrors React's releaseCell, which tears down every loading root inside the cell.
+      grid.__frameworkAdapter = {
+        canHandle: () => false,
+        createRenderer: () => () => null,
+        createEditor: () => () => document.createElement('input'),
+        releaseCell: (cell: HTMLElement) => cell.querySelectorAll('.custom-cell-loader').forEach((n) => n.remove()),
+      };
+
+      grid.setCellLoading('1', 'name', true);
+      editingPlugin.beginCellEdit(0, 'name');
+      editingPlugin.cancelActiveRowEdit();
+      await nextFrame();
+      await nextFrame();
+
+      const currentCell = grid.querySelector('.data-grid-row .cell[data-col="1"]') as HTMLElement;
+      expect(currentCell.querySelector('.tbw-editor-host')).toBeNull();
+      expect(currentCell.querySelector(':scope > .tbw-cell-loading-overlay .custom-cell-loader')).not.toBeNull();
+      expect(grid.isCellLoading('1', 'name')).toBe(true);
+    });
   });
 
   describe('row-based editing', () => {
@@ -716,6 +777,47 @@ describe('EditingPlugin', () => {
       const nameCell = row.querySelector('.cell[data-col="1"]') as HTMLElement;
       expect(nameCell.querySelector('input')).toBeTruthy();
     });
+
+    // #559: a click on another editor in the row already being edited must not
+    // restart the row edit — beginBulkEdit's deferred focus would snap focus
+    // back to the `_focusCol` / first editor on every click.
+    it.each(['click', 'dblclick'] as const)(
+      'keeps focus in the clicked editor of the row already in edit (%s mode, #559)',
+      async (editOn) => {
+        grid.gridConfig = {
+          columns: [
+            { field: 'id', header: 'ID', editable: false },
+            { field: 'name', header: 'Name', editable: true },
+            { field: 'email', header: 'Email', editable: true },
+          ],
+          plugins: [new EditingPlugin({ editOn })],
+        };
+        grid.rows = [{ id: 1, name: 'Alpha', email: 'alpha@test.com' }];
+        await waitUpgrade(grid);
+
+        const editingPlugin = grid.getPluginByName('editing') as EditingPlugin;
+        grid._focusRow = 0;
+        grid._focusCol = 0; // non-editable column, as after an "Add row" action button
+        editingPlugin.beginBulkEdit(0);
+        await new Promise((r) => setTimeout(r, 0));
+
+        const row = grid.querySelector('.data-grid-row') as HTMLElement;
+        const nameInput = row.querySelector('.cell[data-col="1"] input') as HTMLInputElement;
+        const emailInput = row.querySelector('.cell[data-col="2"] input') as HTMLInputElement;
+        expect(document.activeElement).toBe(nameInput);
+
+        const beginSpy = vi.spyOn(editingPlugin, 'beginBulkEdit');
+        emailInput.focus();
+        emailInput.dispatchEvent(new MouseEvent(editOn, { bubbles: true }));
+        await new Promise((r) => setTimeout(r, 0));
+        await nextFrame();
+
+        expect(beginSpy).not.toHaveBeenCalled();
+        expect(document.activeElement).toBe(emailInput);
+        expect(grid._focusCol).toBe(2);
+        expect(grid._activeEditRows).toBe(0);
+      },
+    );
   });
 
   describe('keyboard navigation after failed edit attempt', () => {
@@ -2235,6 +2337,61 @@ describe('EditingPlugin', () => {
       // The row should have exited edit mode
       expect(grid._activeEditRows).toBe(-1);
     });
+
+    // #557: Enter on the editor host must not finalize the cell before
+    // `before-edit-close` lets blur-commit editors flush their draft.
+    it('commits a blur-commit managed editor when the row is closed with Enter (#557)', async () => {
+      grid.gridConfig = {
+        columns: [
+          { field: 'id', header: 'ID' },
+          {
+            field: 'notes',
+            header: 'Notes',
+            editable: true,
+            editor: (ctx: { value: unknown; commit: (v: unknown) => void }) => {
+              let draft = String(ctx.value ?? '');
+              const input = document.createElement('input');
+              input.value = draft;
+              input.addEventListener('input', () => (draft = input.value));
+              input.addEventListener('blur', () => ctx.commit(draft));
+              // Wrapped like an adapter mount so the cell is `data-editor-managed`.
+              const wrapper = document.createElement('div');
+              wrapper.appendChild(input);
+              return wrapper;
+            },
+          },
+        ],
+        getRowId: (row: any) => String(row.id),
+        plugins: [new EditingPlugin({ editOn: 'dblclick' })],
+      };
+      grid.rows = [{ id: 1, notes: 'old' }];
+      await waitUpgrade(grid);
+
+      // Emulate the adapters' `before-edit-close` blur bridge (makeFlushFocusedInput).
+      grid.on('before-edit-close', () => {
+        const focused = document.activeElement;
+        if (focused instanceof HTMLInputElement && grid.contains(focused)) focused.blur();
+      });
+      const commits: unknown[] = [];
+      grid.on('cell-commit', (detail: any) => commits.push(detail.value));
+
+      const notesCell = grid.querySelector('.data-grid-row .cell[data-col="1"]') as HTMLElement;
+      notesCell.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+      await nextFrame(2);
+      expect(notesCell.hasAttribute('data-editor-managed')).toBe(true);
+
+      const input = notesCell.querySelector('input') as HTMLInputElement;
+      input.focus();
+      input.value = 'new';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+      await nextFrame(2);
+
+      expect(grid._activeEditRows).toBe(-1);
+      expect(commits).toEqual(['new']);
+      expect(grid.rows[0].notes).toBe('new');
+    });
   });
 
   // #endregion
@@ -3726,10 +3883,255 @@ describe('EditingPlugin', () => {
         expect(select.options[0].selected).toBe(true);
         expect(select.options[0].textContent).toBe('(Blank)');
       });
+
+      // #547: row close re-reads native editors via getInputValue, which must map the
+      // internal blank-option sentinel back to null instead of committing it.
+      async function openSelectRow(
+        options: { label: string; value: unknown }[],
+        value: unknown,
+        extra: Record<string, unknown>,
+      ) {
+        const editingPlugin = new EditingPlugin({ editOn: 'dblclick' });
+        grid.gridConfig = {
+          columns: [
+            { field: 'id', header: 'ID' },
+            { field: 'val', header: 'Value', type: 'select', editable: true, options, ...extra },
+          ],
+          getRowId: (r: any) => String(r.id),
+          plugins: [editingPlugin],
+        };
+        grid.rows = [{ id: 1, val: value }];
+        await waitUpgrade(grid);
+
+        const commits: unknown[] = [];
+        grid.on('cell-commit', (detail: { value: unknown }) => commits.push(detail.value));
+
+        const cell = grid.querySelector('.data-grid-row .cell[data-col="1"]') as HTMLElement;
+        cell.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+        await nextFrame();
+        await nextFrame();
+        const select = cell.querySelector('select') as HTMLSelectElement;
+        expect(select).toBeTruthy();
+        return { editingPlugin, select, commits };
+      }
+
+      it.each([
+        ['single', { nullable: true }],
+        ['multi (#551)', { nullable: true, multi: true }],
+      ])(
+        'nullable: true, %s — closing the row with an untouched null value does not commit the sentinel',
+        async (_, extra) => {
+          const { editingPlugin, commits } = await openSelectRow(
+            [
+              { label: 'Active', value: 'active' },
+              { label: 'Inactive', value: 'inactive' },
+            ],
+            null,
+            extra,
+          );
+
+          editingPlugin.commitActiveRowEdit();
+          await nextFrame();
+
+          expect(commits).toEqual([]);
+          expect(grid.rows[0].val).toBeNull();
+        },
+      );
+
+      it('nullable: true — closing the row with the blank option on a numeric column commits null, not NaN', async () => {
+        const { editingPlugin, select, commits } = await openSelectRow(
+          [
+            { label: 'One', value: 1 },
+            { label: 'Two', value: 2 },
+          ],
+          2,
+          { nullable: true },
+        );
+        // Pick the blank option without a change event, so only the row-close path reads it.
+        select.value = select.options[0].value;
+
+        editingPlugin.commitActiveRowEdit();
+        await nextFrame();
+
+        expect(commits).toEqual([null]);
+        expect(grid.rows[0].val).toBeNull();
+      });
+
+      // #551: a multi-select's `input.value` is only its first selected option — row close
+      // must read the full selection and compare it as a set against the original array.
+      async function openMultiSelectRow(options: { label: string; value: unknown }[], value: unknown) {
+        const opened = await openSelectRow(options, value, { multi: true });
+        expect(opened.select.multiple).toBe(true);
+        return opened;
+      }
+
+      const abcOptions = [
+        { label: 'A', value: 'a' },
+        { label: 'B', value: 'b' },
+        { label: 'C', value: 'c' },
+      ];
+
+      it('multi: true — closing the row with an untouched array value does not commit', async () => {
+        // Original order differs from DOM option order: equality must be order-insensitive.
+        const { editingPlugin, select, commits } = await openMultiSelectRow(abcOptions, ['b', 'a']);
+        expect(Array.from(select.selectedOptions).map((o) => o.value)).toEqual(['a', 'b']);
+
+        editingPlugin.commitActiveRowEdit();
+        await nextFrame();
+
+        expect(commits).toEqual([]);
+        expect(grid.rows[0].val).toEqual(['b', 'a']);
+      });
+
+      it('multi: true — blurring an untouched multi-select does not commit', async () => {
+        const { select, commits } = await openMultiSelectRow(abcOptions, ['b', 'a']);
+
+        select.dispatchEvent(new Event('blur'));
+
+        expect(commits).toEqual([]);
+      });
+
+      it('multi: true — re-selecting the original value after an external updateRow commits it', async () => {
+        const { select, commits } = await openMultiSelectRow(abcOptions, ['a']);
+        grid.updateRow('1', { val: ['b'] });
+        await nextFrame();
+        commits.length = 0;
+
+        select.options[0].selected = true;
+        select.options[1].selected = false;
+        select.dispatchEvent(new Event('change', { bubbles: true }));
+
+        expect(commits).toEqual([['a']]);
+        expect(grid.rows[0].val).toEqual(['a']);
+      });
+
+      // #555: the external-update push must set the option selection, not `select.value = 'a,c'`
+      // (which matches no option and deselects everything, so row close then commits []).
+      it('multi: true — an external updateRow updates the open editor and survives row close', async () => {
+        const { editingPlugin, select, commits } = await openMultiSelectRow(abcOptions, ['a']);
+
+        grid.updateRow('1', { val: ['a', 'c'] });
+        await nextFrame();
+        expect(Array.from(select.options).map((o) => o.selected)).toEqual([true, false, true]);
+
+        editingPlugin.commitActiveRowEdit();
+        await nextFrame();
+
+        expect(commits).toEqual([['a', 'c']]);
+        expect(grid.rows[0].val).toEqual(['a', 'c']);
+      });
+
+      it('multi: true — an external updateRow to null on a nullable column selects the blank option', async () => {
+        const { editingPlugin, select } = await openSelectRow(abcOptions, ['a'], { multi: true, nullable: true });
+
+        grid.updateRow('1', { val: null });
+        await nextFrame();
+        expect(Array.from(select.options).map((o) => o.selected)).toEqual([true, false, false, false]);
+
+        editingPlugin.commitActiveRowEdit();
+        await nextFrame();
+
+        expect(grid.rows[0].val).toBeNull();
+      });
+
+      it('single, nullable: true — an external updateRow to null selects the blank option', async () => {
+        const { editingPlugin, select } = await openSelectRow(abcOptions, 'a', { nullable: true });
+
+        grid.updateRow('1', { val: null });
+        await nextFrame();
+        expect(select.value).toBe('__tbw_null__');
+
+        editingPlugin.commitActiveRowEdit();
+        await nextFrame();
+
+        expect(grid.rows[0].val).toBeNull();
+      });
+
+      it('multi: true — a vetoed change is retried by the next blur', async () => {
+        const { select, commits } = await openMultiSelectRow(abcOptions, ['a']);
+        let veto = true;
+        grid.addEventListener('cell-commit', (e: Event) => {
+          if (veto) e.preventDefault();
+        });
+
+        select.options[0].selected = false;
+        select.options[1].selected = true;
+        select.dispatchEvent(new Event('change', { bubbles: true }));
+        expect(grid.rows[0].val).toEqual(['a']);
+
+        veto = false;
+        select.dispatchEvent(new Event('blur'));
+
+        expect(commits).toEqual([['b'], ['b']]);
+        expect(grid.rows[0].val).toEqual(['b']);
+      });
+
+      it('multi: true — closing the row commits the full selection, not the first option', async () => {
+        const { editingPlugin, select, commits } = await openMultiSelectRow(abcOptions, ['a', 'b']);
+        // Change the selection without a change event, so only the row-close path reads it.
+        select.options[2].selected = true;
+
+        editingPlugin.commitActiveRowEdit();
+        await nextFrame();
+
+        expect(commits).toEqual([['a', 'b', 'c']]);
+        expect(grid.rows[0].val).toEqual(['a', 'b', 'c']);
+      });
+
+      it('multi: true — numeric option values keep their type on row close and on change', async () => {
+        const numericOptions = [
+          { label: 'One', value: 1 },
+          { label: 'Two', value: 2 },
+          { label: 'Three', value: 3 },
+        ];
+        const { editingPlugin, select, commits } = await openMultiSelectRow(numericOptions, [1, 2]);
+
+        select.options[1].selected = false;
+        select.dispatchEvent(new Event('change', { bubbles: true }));
+        expect(commits).toEqual([[1]]);
+
+        editingPlugin.commitActiveRowEdit();
+        await nextFrame();
+
+        expect(commits).toEqual([[1]]);
+        expect(grid.rows[0].val).toEqual([1]);
+      });
     });
 
     // ---- Date editors ----
     describe('date editor', () => {
+      // #555: `String(date)` is not a valid date-input value — the push used to blank the
+      // editor, and row close then committed null over the externally-set date.
+      it('nullable: true — an external updateRow with a Date updates the open editor and survives row close', async () => {
+        const editingPlugin = new EditingPlugin({ editOn: 'dblclick' });
+        grid.gridConfig = {
+          columns: [
+            { field: 'id', header: 'ID' },
+            { field: 'startDate', header: 'Start Date', type: 'date', editable: true, nullable: true },
+          ],
+          getRowId: (r: any) => String(r.id),
+          plugins: [editingPlugin],
+        };
+        grid.rows = [{ id: 1, startDate: new Date(Date.UTC(2024, 5, 15)) }];
+        await waitUpgrade(grid);
+
+        const dateCell = grid.querySelector('.data-grid-row .cell[data-col="1"]') as HTMLElement;
+        dateCell.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+        await nextFrame();
+        await nextFrame();
+        const input = dateCell.querySelector('input') as HTMLInputElement;
+
+        const next = new Date(Date.UTC(2026, 9, 23));
+        grid.updateRow('1', { startDate: next });
+        await nextFrame();
+        expect(input.value).toBe('2026-10-23');
+
+        editingPlugin.commitActiveRowEdit();
+        await nextFrame();
+
+        expect(grid.rows[0].startDate).toEqual(next);
+      });
+
       it('nullable: true — clearing date commits null', async () => {
         grid.gridConfig = {
           columns: [

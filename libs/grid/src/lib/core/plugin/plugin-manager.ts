@@ -286,6 +286,8 @@ export class PluginManager {
       this.unsubscribeAll(plugin); // Clean up event subscriptions
       this.unregisterQueryHandlers(plugin); // Clean up query handlers
       plugin.detach();
+      // Guarantee the `disconnectSignal` contract even when an override skips super.detach().
+      plugin.__releaseDisconnectSignal();
     }
     this.plugins = [];
     this.pluginMap.clear();
@@ -383,6 +385,18 @@ export class PluginManager {
       if (transformed !== result) {
         result = transformed;
       }
+    }
+    return result;
+  }
+
+  /**
+   * Execute the internal orderColumns hook on all plugins (full column list, hidden included).
+   * Returns the input array unchanged when no plugin reorders.
+   */
+  orderColumns<C extends ColumnConfig>(columns: readonly C[]): readonly C[] {
+    let result = columns;
+    for (const plugin of this.plugins) {
+      if (plugin.orderColumns) result = plugin.orderColumns(result) as C[];
     }
     return result;
   }
@@ -627,11 +641,11 @@ export class PluginManager {
   }
 
   /**
-   * Execute renderRow hook on all plugins.
+   * Execute renderRow hook on all plugins, in `hookPriority` order.
    * Returns true if any plugin handled the row.
    */
   renderRow(row: any, rowEl: HTMLElement, rowIndex: number): boolean {
-    for (const plugin of this.plugins) {
+    for (const plugin of this.#getPluginsForHook('renderRow')) {
       if (plugin.renderRow?.(row, rowEl, rowIndex)) {
         return true;
       }

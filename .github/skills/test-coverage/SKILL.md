@@ -43,11 +43,9 @@ bun nx test grid-vue --coverage
 
 ## Step 2: Identify Gaps
 
-For a focused rerun, inspect the project's test executor first. Legacy
-`@nx/vitest:test` targets accept `--testFile=<repo-relative path>`; inferred
-Vitest targets (for example grid-vue) forward CLI options and require
-`bun nx test grid-vue --run src/features/cell-entry.spec.ts` instead.
-Do not assume a positional path filtered a legacy target: check its test-file count.
+For a focused rerun, use the inferred Vitest target's positional filter:
+`bun nx test grid --run src/lib/plugins/cell-entry/cell-entry-plugin.spec.ts`.
+Nx24 forwards CLI options; Vitest rejects `--testFile`. Check the reported file count.
 
 For isolated configs or a legacy executor that exits before starting Vitest, use
 `bun nx exec --projects=<project> --excludeTaskDependencies -- vitest run --config <absolute-config-path>`.
@@ -90,7 +88,8 @@ describe('myFunction', () => {
 });
 
 // Integration test (full component lifecycle)
-import { waitUpgrade, nextFrame } from '../../test/utils';
+// From src/__tests__/integration/ — `libs/grid/test/helpers.ts`; never redefine these inline
+import { nextFrame, waitUpgrade } from '../../../test/helpers';
 
 describe('Grid feature', () => {
   afterEach(() => {
@@ -161,7 +160,7 @@ function createMockGrid(overrides = {}) {
 2. **Always `await waitUpgrade(grid)`** after creating grid elements
 3. **Use `await nextFrame()`** after data changes to wait for rendering
 4. **Mock `document.execCommand`** when testing clipboard (not in happy-dom)
-5. **Run tests through Nx**: core/React's `@nx/vitest:test` executor accepts `--testFiles=path1,path2`. Confirm the reported file count; positional paths can run the whole suite. Inferred Vitest targets instead use normal CLI positional filters.
+5. **Run tests through Nx**: `bun nx test grid --run <file-substring>`; combine related positional selectors and confirm the reported file count.
 6. **Never use `npx vitest`** directly — always use `bun nx test <project>`
 
 ### Public generic type regressions

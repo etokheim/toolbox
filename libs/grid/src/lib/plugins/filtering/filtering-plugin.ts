@@ -7,6 +7,7 @@
  */
 
 import { announce, getA11yMessage } from '../../core/internal/aria';
+import { FORMAT_ERROR } from '../../core/internal/diagnostics';
 import { resolveCellValue } from '../../core/internal/value-accessor';
 import { BaseGridPlugin, type GridElement, type PluginManifest, type PluginQuery } from '../../core/plugin/base-plugin';
 import { isUtilityColumn } from '../../core/plugin/utility-column';
@@ -18,13 +19,17 @@ import {
   filterRows,
   getUniqueValues,
   getUniqueValuesBatch,
+  normalizeValuesHandlerResult,
 } from './filter-model';
 import { renderDateFilterPanel } from './filter-panel-date';
-import { renderDefaultFilterPanel } from './filter-panel-default';
+import { renderDefaultFilterPanel, type FilterValueLabelSource } from './filter-panel-default';
 import { renderNumberFilterPanel } from './filter-panel-number';
 import styles from './filtering.css?inline';
 import filterPanelStyles from './FilteringPlugin.css?inline';
 import type { BlankMode, FilterChangeDetail, FilterConfig, FilterModel, FilterPanelParams } from './types';
+
+/** A data-source loading placeholder (e.g. ServerSide's `{ __loading: true, __index }`). */
+const isLoadingRow = (row: Record<string, unknown>): boolean => row.__loading === true;
 
 /**
  * Filtering Plugin for tbw-grid
@@ -219,7 +224,10 @@ export class FilteringPlugin extends BaseGridPlugin<FilterConfig> {
   private getFilterExtractor(
     col: ColumnConfig,
   ): ((value: unknown, row: Record<string, unknown>) => unknown | unknown[]) | undefined {
-    if (col.filterValue) return col.filterValue;
+    const { filterValue } = col;
+    // Loading placeholders (ServerSide under `filterMode: 'local'`) hold no data; give
+    // them the same `undefined` a plain field read would, without calling consumer code.
+    if (filterValue) return (v, row) => (row.__loading === true ? undefined : filterValue(v, row));
     if (col.valueAccessor) return (_v, row) => resolveCellValue(row, col);
     return undefined;
   }
@@ -232,8 +240,11 @@ export class FilteringPlugin extends BaseGridPlugin<FilterConfig> {
   private cacheKey: string | null = null;
   /**
    * Reference to the input rows used to compute {@link cachedResult}.
-   * Upstream plugins (e.g. sort) produce a new array on every change, so
-   * reference inequality is a sufficient invalidation signal.
+   * Upstream stages produce a new array when they reorder or reshape rows, but
+   * the SAME array is passed through when nothing upstream changed it (core with
+   * no sort, MultiSort with no model, ServerSide's `managedNodes`) — including
+   * after an in-place mutation, so edit/revert/`cell-change` signals clear this
+   * reference (see `attach`).
    */
   private cachedInputRows: readonly unknown[] | null = null;
   private openPanelField: string | null = null;
@@ -385,10 +396,22 @@ export class FilteringPlugin extends BaseGridPlugin<FilterConfig> {
   override attach(grid: GridElement): void {
     super.attach(grid);
     this.injectGlobalStyles();
+    // A row mutated in place keeps the input array's identity, so the input-identity
+    // cache would keep showing a row that no longer matches. Forget only the input
+    // ref — the async `filterHandler` path still serves `cachedResult`. Covers edits
+    // (`cell-edit-committed`), rollbacks (`cell-edit-reverted`) and every
+    // `updateRow`/`updateRows` (core `cell-change`, incl. undo/redo's `'history'`).
+    const forgetInput = () => {
+      this.cachedInputRows = null;
+    };
+    this.on('cell-edit-committed', forgetInput);
+    this.on('cell-edit-reverted', forgetInput);
+    this.gridElement?.addEventListener('cell-change', forgetInput, { signal: this.disconnectSignal });
   }
 
   /** @internal */
   override detach(): void {
+    super.detach();
     this.filters.clear();
     this.invalidateCache();
     this.columnLookup = null;
@@ -481,9 +504,18 @@ export class FilteringPlugin extends BaseGridPlugin<FilterConfig> {
       return rows as unknown[];
     }
 
+    // A ServerSide data source in `filterMode: 'server'` already applied the
+    // filter (via `getRows({ filterModel })`) with its own semantics, and its
+    // loading placeholders must keep their slots. In `'local'` mode the loaded
+    // rows are filtered here, but placeholders pass until their block loads so
+    // the scroll height (and the fetch of the next block) survives (#520).
+    const dataSourceMode = this.grid.query?.<'server' | 'local'>('datasource:filter-mode', null)?.[0];
+    if (dataSourceMode === 'server') return rows as unknown[];
+    const keep = dataSourceMode === 'local' ? isLoadingRow : undefined;
+
     // Check cache — also verify input rows haven't changed (e.g. due to sort).
-    // Upstream plugins return a new array on every change, so reference
-    // equality is a sufficient invalidation signal.
+    // Reference equality covers reorders/reshapes upstream; in-place mutations keep
+    // the reference, so edit/revert/`cell-change` signals clear `cachedInputRows` (see attach).
     const newCacheKey = computeFilterCacheKey(filterList);
     const inputUnchanged = rows === this.cachedInputRows;
 
@@ -507,6 +539,7 @@ export class FilteringPlugin extends BaseGridPlugin<FilterConfig> {
       filterList,
       this.config.caseSensitive,
       this.getFilterValues(),
+      keep,
     );
 
     // Update cache
@@ -900,18 +933,21 @@ export class FilteringPlugin extends BaseGridPlugin<FilterConfig> {
       this.positionPanel(panel, buttonEl);
       this.setupPanelCloseHandler(panel, buttonEl);
 
-      this.config.valuesHandler(field, column).then((values) => {
+      this.config.valuesHandler(field, column).then((entries) => {
         // Check if panel is still open for this field
         if (this.openPanelField !== field || !this.panelElement) return;
         panel.innerHTML = '';
-        this.renderPanelContent(field, column, panel, values);
+        const { values, labels } = normalizeValuesHandlerResult(entries, !this.getFilterExtractor(column));
+        this.renderPanelContent(field, column, panel, values, { labels });
       });
       return;
     }
 
     // Sync path: get unique values from locally available rows (raw input or
     // plugin-managed processed rows when a plugin owns the data, e.g. ServerSide).
-    const uniqueValues = getUniqueValues(this.getDataRows(), field, this.getFilterExtractor(column));
+    // The first row per value lets the panel call `column.format(value, row)` with a real row.
+    const rowsByValue = new Map<unknown, Record<string, unknown>>();
+    const uniqueValues = getUniqueValues(this.getDataRows(), field, this.getFilterExtractor(column), rowsByValue);
 
     // Position and append to body BEFORE rendering content
     // so getListItemHeight() can read CSS variables from computed styles.
@@ -919,14 +955,20 @@ export class FilteringPlugin extends BaseGridPlugin<FilterConfig> {
     this.promoteToTopLayer(panel);
     this.positionPanel(panel, buttonEl);
 
-    this.renderPanelContent(field, column, panel, uniqueValues);
+    this.renderPanelContent(field, column, panel, uniqueValues, { rows: rowsByValue });
     this.setupPanelCloseHandler(panel, buttonEl);
   }
 
   /**
    * Render filter panel content with given values
    */
-  private renderPanelContent(field: string, column: ColumnConfig, panel: HTMLElement, uniqueValues: unknown[]): void {
+  private renderPanelContent(
+    field: string,
+    column: ColumnConfig,
+    panel: HTMLElement,
+    uniqueValues: unknown[],
+    labelSource: Omit<FilterValueLabelSource, 'onFormatError'>,
+  ): void {
     // For `in` filters, recompute excludedValues from current data if not yet populated.
     // This handles the case where setFilterModel was called before rows were loaded.
     const currentFilter = this.filters.get(field);
@@ -1014,6 +1056,11 @@ export class FilteringPlugin extends BaseGridPlugin<FilterConfig> {
           excludedSet,
           { caseSensitive: this.config.caseSensitive, debounceMs: this.config.debounceMs },
           this.searchText,
+          {
+            ...labelSource,
+            onFormatError: (error) =>
+              this.warn(FORMAT_ERROR, `Format error in column '${field}' while labelling filter values: ${error}`),
+          },
         );
       }
     }

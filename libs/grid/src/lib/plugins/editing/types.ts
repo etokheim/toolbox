@@ -259,7 +259,11 @@ declare module '../../core/types' {
     editable?: boolean | ((row: TRow) => boolean);
     /** Optional custom editor factory or element tag name. Requires EditingPlugin. */
     editor?: ColumnEditorSpec<TRow, TValue>;
-    /** For select type - allow multi select. Requires EditingPlugin. */
+    /**
+     * For select type - allow multi select. Requires EditingPlugin.
+     * The cell value is an array of the selected options' `value`s (their original types
+     * are kept); a `nullable` column commits `null` when only its blank option is selected.
+     */
     multi?: boolean;
     /**
      * Configuration parameters for built-in editors.
@@ -478,6 +482,17 @@ export interface EditingConfig {
    * Use this to check if the event target is inside your component library's
    * overlay container, allowing keyboard navigation and selection within
    * open dropdowns before the edit commits.
+   *
+   * The callback is consulted **at most once per event**: Enter/Escape reach
+   * several close paths, and all of them reuse the first verdict, so a check
+   * against live DOM state (e.g. "is a listbox open?") stays consistent even
+   * after the overlay's own handler has closed it.
+   *
+   * In row mode, Escape from (or from inside the panel of) a control that
+   * declares an open overlay via `aria-expanded="true"` + `aria-controls` is
+   * left to that overlay automatically — the first Escape closes the popup,
+   * the next one cancels the row edit. No callback is needed for such
+   * ARIA-compliant comboboxes.
    *
    * @example
    * ```typescript

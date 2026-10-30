@@ -7,43 +7,43 @@ on:
   pull_request:
     branches:
       - main
-      - "2.x"
+      - '2.x'
   push:
     branches:
       - main
-      - "2.x"
-      - "release-please--*"
+      - '2.x'
+      - 'release-please--*'
   release:
     types: [published]
   workflow_dispatch:
     inputs:
       run_release_please:
-        description: "Run release-please (create/update release PR or cut a release). Use this to bypass a flaky CI gate."
+        description: 'Run release-please (create/update release PR or cut a release). Use this to bypass a flaky CI gate.'
         required: false
         type: boolean
         default: false
       deploy_pages:
-        description: "Build and deploy docs site to GitHub Pages"
+        description: 'Build and deploy docs site to GitHub Pages'
         required: false
         type: boolean
         default: true
       publish_grid:
-        description: "Publish @toolbox-web/grid to npm"
+        description: 'Publish @toolbox-web/grid to npm'
         required: false
         type: boolean
         default: false
       publish_grid_react:
-        description: "Publish @toolbox-web/grid-react to npm"
+        description: 'Publish @toolbox-web/grid-react to npm'
         required: false
         type: boolean
         default: false
       publish_grid_angular:
-        description: "Publish @toolbox-web/grid-angular to npm"
+        description: 'Publish @toolbox-web/grid-angular to npm'
         required: false
         type: boolean
         default: false
       publish_grid_vue:
-        description: "Publish @toolbox-web/grid-vue to npm"
+        description: 'Publish @toolbox-web/grid-vue to npm'
         required: false
         type: boolean
         default: false
@@ -116,7 +116,7 @@ jobs:
 
       - uses: actions/setup-node@v5
         with:
-          node-version: "24"
+          node-version: '24'
 
       - name: Cache Bun dependencies
         uses: actions/cache@v5
@@ -134,54 +134,29 @@ jobs:
         id: nx-shas
 
       - name: Run linting (affected)
-        run:
-          bun nx affected -t lint --quiet --base=${{ steps.nx-shas.outputs.base }}
+        run: bun nx affected -t lint --quiet --base=${{ steps.nx-shas.outputs.base }}
           --head=${{ steps.nx-shas.outputs.head }}
 
       - name: Run tests with coverage (affected)
         run: bun nx affected -t test --exclude='demo-*' --coverage --base=${{
           steps.nx-shas.outputs.base }} --head=${{ steps.nx-shas.outputs.head }}
 
-      - name: Coverage Report - Grid
-        if: always() && github.event_name == 'pull_request' &&
-          hashFiles('coverage/libs/grid/coverage-summary.json') != ''
-        uses: davelosert/vitest-coverage-report-action@v2
-        with:
-          name: Grid
-          json-summary-path: coverage/libs/grid/coverage-summary.json
-          file-coverage-mode: none
+      # One combined table (column per library) → step summary + ONE sticky PR
+      # comment. Every library writes its summary to coverage/libs/<project>/.
+      - name: Coverage report
+        if: always() && hashFiles('coverage/libs/*/coverage-summary.json') != ''
+        run: bun tools/coverage-report.ts --out coverage/coverage-report.md
+        env:
+          COVERAGE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         continue-on-error: true
 
-      - name: Coverage Report - Grid Angular
+      - name: Coverage report - PR comment
         if: always() && github.event_name == 'pull_request' &&
-          hashFiles('libs/grid-angular/test-output/vitest/coverage/coverage-summary.json')
-          != ''
-        uses: davelosert/vitest-coverage-report-action@v2
+          hashFiles('coverage/coverage-report.md') != ''
+        uses: marocchino/sticky-pull-request-comment@v3
         with:
-          name: Grid Angular
-          json-summary-path: libs/grid-angular/test-output/vitest/coverage/coverage-summary.json
-          file-coverage-mode: none
-        continue-on-error: true
-
-      - name: Coverage Report - Grid React
-        if: always() && github.event_name == 'pull_request' &&
-          hashFiles('libs/grid-react/test-output/vitest/coverage/coverage-summary.json')
-          != ''
-        uses: davelosert/vitest-coverage-report-action@v2
-        with:
-          name: Grid React
-          json-summary-path: libs/grid-react/test-output/vitest/coverage/coverage-summary.json
-          file-coverage-mode: none
-        continue-on-error: true
-
-      - name: Coverage Report - Grid Vue
-        if: always() && github.event_name == 'pull_request' &&
-          hashFiles('coverage/libs/grid-vue/coverage-summary.json') != ''
-        uses: davelosert/vitest-coverage-report-action@v2
-        with:
-          name: Grid Vue
-          json-summary-path: coverage/libs/grid-vue/coverage-summary.json
-          file-coverage-mode: none
+          header: coverage
+          path: coverage/coverage-report.md
         continue-on-error: true
 
       # ----------------------------------------------------------------
@@ -213,7 +188,7 @@ jobs:
 
       - uses: actions/setup-node@v5
         with:
-          node-version: "24"
+          node-version: '24'
 
       - name: Cache Bun dependencies
         uses: actions/cache@v5
@@ -235,8 +210,7 @@ jobs:
           --head=${{ steps.nx-shas.outputs.head }}
 
       - name: Enforce bundle budgets (affected)
-        run:
-          bun nx affected -t bundle-check --base=${{ steps.nx-shas.outputs.base }}
+        run: bun nx affected -t bundle-check --base=${{ steps.nx-shas.outputs.base }}
           --head=${{ steps.nx-shas.outputs.head }}
 
       - name: Build size report
@@ -265,10 +239,10 @@ jobs:
     timeout-minutes: 20
     env:
       # Disable Nx interactive prompts for CI
-      NX_INTERACTIVE: "false"
-      NX_DAEMON: "false"
+      NX_INTERACTIVE: 'false'
+      NX_DAEMON: 'false'
       # Run demos against built dist packages
-      USE_DIST: "true"
+      USE_DIST: 'true'
       # Visual regression mode (see e2e/tests/utils.ts):
       #   write   - re-seed the baseline cache from this run (pushes to main/2.x
       #             only; whatever is on the trunk is the new reference)
@@ -292,7 +266,7 @@ jobs:
 
       - uses: actions/setup-node@v5
         with:
-          node-version: "24"
+          node-version: '24'
 
       - name: Cache Bun dependencies
         uses: actions/cache@v5
@@ -374,8 +348,7 @@ jobs:
         uses: actions/cache/restore@v5
         with:
           path: e2e/snapshots
-          key:
-            visual-baseline-${{ runner.os }}-chrome${{ steps.chrome.outputs.major
+          key: visual-baseline-${{ runner.os }}-chrome${{ steps.chrome.outputs.major
             }}-${{ github.sha }}
           restore-keys: |
             visual-baseline-${{ runner.os }}-chrome${{ steps.chrome.outputs.major }}-
@@ -393,8 +366,7 @@ jobs:
         uses: actions/cache/save@v5
         with:
           path: e2e/snapshots
-          key:
-            visual-baseline-${{ runner.os }}-chrome${{ steps.chrome.outputs.major
+          key: visual-baseline-${{ runner.os }}-chrome${{ steps.chrome.outputs.major
             }}-${{ github.sha }}
 
       - name: Upload Playwright report
@@ -485,7 +457,7 @@ jobs:
 
       - uses: actions/setup-node@v5
         with:
-          node-version: "24"
+          node-version: '24'
 
       - name: Cache Bun dependencies
         uses: actions/cache@v5
@@ -703,6 +675,7 @@ jobs:
     needs: [setup, test, build, e2e]
     # Source-pinned fork previews distribute existing bytes, never registry releases.
     if: |
+      github.repository == 'OysteinAmundsen/toolbox' &&
       !(github.event_name == 'release' && startsWith(github.event.release.tag_name, 'fork-preview-')) && (
         always() && !cancelled() &&
         (github.event_name == 'release' || github.event_name == 'workflow_dispatch') ||
@@ -763,6 +736,7 @@ jobs:
   release-gate:
     # A skipped gate has no publish outputs, so all publish-* jobs stay skipped.
     if: |
+      github.repository == 'OysteinAmundsen/toolbox' &&
       always() && !cancelled() &&
       !(github.event_name == 'release' && startsWith(github.event.release.tag_name, 'fork-preview-')) && (
         github.event_name == 'release' ||
@@ -781,7 +755,7 @@ jobs:
 
       - uses: actions/setup-node@v5
         with:
-          node-version: "24"
+          node-version: '24'
 
       - id: gate
         env:
@@ -929,7 +903,7 @@ jobs:
 
       - uses: actions/setup-node@v5
         with:
-          node-version: "24"
+          node-version: '24'
 
       - name: Cache Bun dependencies
         uses: actions/cache@v5
@@ -955,6 +929,7 @@ jobs:
 
   deploy-pages:
     if: |
+      github.repository == 'OysteinAmundsen/toolbox' &&
       always() && !cancelled() && (
         (github.event_name == 'release' && github.event.release.prerelease != true) ||
         ((
@@ -977,7 +952,7 @@ jobs:
         uses: actions/deploy-pages@v4
 
   publish-grid:
-    if: always() && !cancelled() && needs.release-gate.outputs.grid == 'true'
+    if: github.repository == 'OysteinAmundsen/toolbox' && always() && !cancelled() && needs.release-gate.outputs.grid == 'true'
     needs: [release-gate]
     runs-on: ubuntu-latest
     environment: NPM
@@ -988,7 +963,7 @@ jobs:
       - uses: actions/checkout@v5
       - uses: ./.github/actions/publish
         with:
-          package-name: "@toolbox-web/grid"
+          package-name: '@toolbox-web/grid'
           dist-path: dist/libs/grid
           build-command: bun nx build grid
           post-build-command: bun run cem
@@ -997,7 +972,7 @@ jobs:
           changelog-path: libs/grid/CHANGELOG.md
 
   publish-grid-angular:
-    if: always() && !cancelled() && needs.release-gate.outputs.grid_angular == 'true'
+    if: github.repository == 'OysteinAmundsen/toolbox' && always() && !cancelled() && needs.release-gate.outputs.grid_angular == 'true'
     needs: [release-gate]
     runs-on: ubuntu-latest
     environment: NPM
@@ -1008,7 +983,7 @@ jobs:
       - uses: actions/checkout@v5
       - uses: ./.github/actions/publish
         with:
-          package-name: "@toolbox-web/grid-angular"
+          package-name: '@toolbox-web/grid-angular'
           dist-path: dist/libs/grid-angular
           build-command: bun nx build grid-angular
           release-tag-prefix: grid-angular
@@ -1016,7 +991,7 @@ jobs:
           changelog-path: libs/grid-angular/CHANGELOG.md
 
   publish-grid-react:
-    if: always() && !cancelled() && needs.release-gate.outputs.grid_react == 'true'
+    if: github.repository == 'OysteinAmundsen/toolbox' && always() && !cancelled() && needs.release-gate.outputs.grid_react == 'true'
     needs: [release-gate]
     runs-on: ubuntu-latest
     environment: NPM
@@ -1027,7 +1002,7 @@ jobs:
       - uses: actions/checkout@v5
       - uses: ./.github/actions/publish
         with:
-          package-name: "@toolbox-web/grid-react"
+          package-name: '@toolbox-web/grid-react'
           dist-path: dist/libs/grid-react
           build-command: bun nx build grid-react
           release-tag-prefix: grid-react
@@ -1035,7 +1010,7 @@ jobs:
           changelog-path: libs/grid-react/CHANGELOG.md
 
   publish-grid-vue:
-    if: always() && !cancelled() && needs.release-gate.outputs.grid_vue == 'true'
+    if: github.repository == 'OysteinAmundsen/toolbox' && always() && !cancelled() && needs.release-gate.outputs.grid_vue == 'true'
     needs: [release-gate]
     runs-on: ubuntu-latest
     environment: NPM
@@ -1046,7 +1021,7 @@ jobs:
       - uses: actions/checkout@v5
       - uses: ./.github/actions/publish
         with:
-          package-name: "@toolbox-web/grid-vue"
+          package-name: '@toolbox-web/grid-vue'
           dist-path: dist/libs/grid-vue
           build-command: bun nx build grid-vue
           release-tag-prefix: grid-vue

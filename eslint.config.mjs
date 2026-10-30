@@ -133,9 +133,9 @@ export default [
     // Caveat for the two plugins: splitting them across modules is bounded by the
     // bundle budget, not by effort. Terser mangles `#private` members but CANNOT
     // mangle names that cross a module boundary, so every member promoted to a
-    // shared seam is permanent bytes. `plugins/editing` measured 54.5 kB against a
-    // 55 kB budget, so extraction there must stay inside the class (private
-    // methods) or be limited to pure helpers whose parameters are all manglable.
+    // shared seam is permanent bytes. Editing's per-entry cap lives in
+    // libs/grid/vite.config.ts; prefer private methods or pure helpers whose
+    // parameters are manglable over byte-driven module boundaries.
     files: [
       'libs/grid/src/lib/core/grid.ts',
       'libs/grid/src/lib/plugins/editing/editing-plugin.ts',

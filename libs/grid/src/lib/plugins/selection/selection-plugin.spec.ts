@@ -1413,6 +1413,191 @@ describe('SelectionPlugin', () => {
       expect(mockGrid.setAttribute).toHaveBeenCalledWith('data-selection-mode', 'row');
     });
 
+    describe('paint scope (PR #582 review)', () => {
+      /** Real render-tree shape: `.rows-viewport > .tbw-sticky-rows + .rows`, rows holding `.cell[data-row][data-col]`. */
+      function buildRenderTree(mockGrid: any, rowIndices: number[], stickyIndices: number[] = []) {
+        const root = mockGrid.querySelector('.tbw-grid-root') as HTMLElement;
+        const viewport = document.createElement('div');
+        viewport.className = 'rows-viewport';
+        const sticky = document.createElement('div');
+        sticky.className = 'tbw-sticky-rows';
+        const rows = document.createElement('div');
+        rows.className = 'rows';
+        viewport.append(sticky, rows);
+        root.appendChild(viewport);
+        const makeRow = (index: number, extraClass = '') => {
+          const row = document.createElement('div');
+          row.className = `data-grid-row ${extraClass}`.trim();
+          const cell = document.createElement('div');
+          cell.className = 'cell';
+          cell.setAttribute('data-row', String(index));
+          cell.setAttribute('data-col', '0');
+          row.appendChild(cell);
+          return row;
+        };
+        for (const i of rowIndices) rows.appendChild(makeRow(i));
+        for (const i of stickyIndices) sticky.appendChild(makeRow(i, 'tbw-sticky-row'));
+        mockGrid._bodyEl = rows;
+        return { rows, sticky };
+      }
+
+      it('keeps a retained sticky clone in sync when its source row is out of the window', () => {
+        const mockGrid = createMockGrid(
+          Array.from({ length: 10 }, (_, id) => ({ id })),
+          [{ field: 'id' }],
+        );
+        // Row 0 is stuck (clone displayed) while the pool shows rows 5–7.
+        const { sticky } = buildRenderTree(mockGrid, [5, 6, 7], [0]);
+        const clone = sticky.firstElementChild as HTMLElement;
+        const plugin = new SelectionPlugin({ mode: 'row' });
+        plugin.attach(mockGrid);
+
+        plugin['selected'].add(0);
+        plugin.afterRender();
+        expect(clone.classList.contains('selected')).toBe(true);
+
+        plugin['selected'].clear();
+        plugin.afterRender();
+        expect(clone.classList.contains('selected')).toBe(false);
+        expect(clone.classList.contains('row-focus')).toBe(false);
+      });
+
+      it('does not drive a nested grid checkbox rendered inside a parent cell', () => {
+        const mockGrid = createMockGrid([{ id: 0 }, { id: 1 }], [{ field: 'id' }]);
+        const { rows } = buildRenderTree(mockGrid, [0, 1]);
+        const parentCell = rows.querySelector('.cell[data-row="1"]') as HTMLElement;
+        const ownCheckbox = document.createElement('input');
+        ownCheckbox.type = 'checkbox';
+        ownCheckbox.className = 'tbw-select-row-checkbox';
+        parentCell.appendChild(ownCheckbox);
+        // A nested grid inside the SAME parent cell, with its own row 1 checked.
+        const nested = document.createElement('div');
+        nested.className = 'rows';
+        nested.innerHTML =
+          '<div class="data-grid-row"><div class="cell" data-row="1" data-col="0">' +
+          '<input type="checkbox" class="tbw-select-row-checkbox" checked></div></div>';
+        parentCell.appendChild(nested);
+        const nestedCheckbox = nested.querySelector('input') as HTMLInputElement;
+
+        const plugin = new SelectionPlugin({ mode: 'row', checkbox: true });
+        plugin.attach(mockGrid);
+        plugin['selected'].add(0); // parent selects row 0 only
+        plugin.afterRender();
+
+        expect(ownCheckbox.checked).toBe(false);
+        expect(nestedCheckbox.checked).toBe(true);
+      });
+
+      it('never hands a group-header row to isSelectable nor paints it in a range', () => {
+        const rows = [{ __isGroupRow: true }, { id: 1, status: 'ok' }, { id: 2, status: 'ok' }];
+        const mockGrid = createMockGrid(rows, [{ field: 'id' }]);
+        const { rows: body } = buildRenderTree(mockGrid, [1, 2]);
+        // Group header the way GroupingRows renders it: aria-rowindex, data-col, NO data-row.
+        const groupRow = document.createElement('div');
+        groupRow.className = 'data-grid-row group-row';
+        groupRow.setAttribute('aria-rowindex', '2'); // data index 0
+        const groupCell = document.createElement('div');
+        groupCell.className = 'cell group-full';
+        groupCell.setAttribute('data-col', '0');
+        groupRow.appendChild(groupCell);
+        body.prepend(groupRow);
+
+        const isSelectable = vi.fn((row: any) => row.status.toLowerCase() === 'ok');
+        const plugin = new SelectionPlugin({ mode: 'range', isSelectable });
+        plugin.attach(mockGrid);
+        plugin['ranges'].push({ startRow: 0, startCol: 0, endRow: 2, endCol: 0 });
+
+        expect(() => plugin.afterRender()).not.toThrow();
+        expect(isSelectable.mock.calls.every(([row]) => row !== rows[0])).toBe(true);
+        expect(groupCell.classList.contains('selected')).toBe(false);
+        expect(body.querySelector('.cell[data-row="1"]')!.classList.contains('selected')).toBe(true);
+      });
+
+      it('wipes markers inherited from a previous plugin instance on its first pass', () => {
+        const mockGrid = createMockGrid([{ id: 0 }, { id: 1 }], [{ field: 'id' }]);
+        const { rows: body } = buildRenderTree(mockGrid, [0, 1]);
+        const stale = body.firstElementChild as HTMLElement;
+        stale.classList.add('selected', 'row-focus');
+        stale.firstElementChild!.classList.add('selected', 'top', 'bottom');
+
+        const plugin = new SelectionPlugin({ mode: 'cell' });
+        plugin.attach(mockGrid);
+        plugin.afterRender();
+
+        expect(stale.classList.contains('selected')).toBe(false);
+        expect(stale.classList.contains('row-focus')).toBe(false);
+        expect(stale.firstElementChild!.classList.contains('selected')).toBe(false);
+      });
+
+      it('wipes a re-attached sticky clone even after a pass that painted nothing', () => {
+        const mockGrid = createMockGrid(
+          Array.from({ length: 10 }, (_, id) => ({ id })),
+          [{ field: 'id' }],
+        );
+        const { sticky } = buildRenderTree(mockGrid, [5, 6, 7]);
+        const plugin = new SelectionPlugin({ mode: 'row' });
+        plugin.attach(mockGrid);
+        plugin.afterRender(); // nothing selected → #paintedMarks false
+
+        // StickyRows re-attaches a cached clone of row 0 that was captured while selected.
+        const clone = document.createElement('div');
+        clone.className = 'data-grid-row tbw-sticky-row selected row-focus';
+        const cell = document.createElement('div');
+        cell.className = 'cell selected';
+        cell.setAttribute('data-row', '0');
+        cell.setAttribute('data-col', '0');
+        clone.appendChild(cell);
+        sticky.appendChild(clone);
+
+        plugin.afterRender();
+        expect(clone.classList.contains('selected')).toBe(false);
+        expect(cell.classList.contains('selected')).toBe(false);
+      });
+
+      it('wipes markers painted by another instance while this one was detached (re-attach)', () => {
+        const mockGrid = createMockGrid([{ id: 0 }, { id: 1 }], [{ field: 'id' }]);
+        const { rows: body } = buildRenderTree(mockGrid, [0, 1]);
+        const cellPlugin = new SelectionPlugin({ mode: 'cell' });
+        cellPlugin.attach(mockGrid);
+        cellPlugin.afterRender(); // empty paint → flag false
+        cellPlugin.detach();
+
+        const rowPlugin = new SelectionPlugin({ mode: 'row' });
+        rowPlugin.attach(mockGrid);
+        rowPlugin['selected'].add(0);
+        rowPlugin.afterRender();
+        rowPlugin.detach();
+        const row0 = body.firstElementChild as HTMLElement;
+        expect(row0.classList.contains('selected')).toBe(true);
+
+        cellPlugin.attach(mockGrid);
+        cellPlugin.afterRender();
+        expect(row0.classList.contains('selected')).toBe(false);
+        expect(row0.classList.contains('row-focus')).toBe(false);
+      });
+
+      it('does not flag cells as unselectable in column-only mode', () => {
+        const rows = [
+          { id: 0, locked: true },
+          { id: 1, locked: false },
+        ];
+        const mockGrid = createMockGrid(rows, [{ field: 'id' }]);
+        const { rows: body } = buildRenderTree(mockGrid, [0, 1]);
+        const plugin = new SelectionPlugin({ mode: 'column', isSelectable: (row: any) => !row.locked });
+        plugin.attach(mockGrid);
+        plugin.afterRender();
+
+        expect(body.querySelector('[data-selectable]')).toBeNull();
+
+        // Cell mode with the same callback does flag the rejected row's cells.
+        const cellPlugin = new SelectionPlugin({ mode: 'cell', isSelectable: (row: any) => !row.locked });
+        cellPlugin.attach(mockGrid);
+        cellPlugin.afterRender();
+        expect(body.querySelector('.cell[data-row="0"]')!.getAttribute('data-selectable')).toBe('false');
+        expect(body.querySelector('.cell[data-row="1"]')!.hasAttribute('data-selectable')).toBe(false);
+      });
+    });
+
     it('should toggle selecting class during drag', () => {
       const mockGrid = createMockGrid([{ id: 1 }], [{ field: 'name' }]);
       const plugin = new SelectionPlugin({ mode: 'range' });
@@ -1844,52 +2029,49 @@ describe('SelectionPlugin', () => {
       plugin.handleQuery({ type: 'getContextMenuItems', context: params(rowIndex, columnIndex) }) as
         { id: string; label: string; order?: number; action: () => void }[] | undefined;
 
-    it('contributes nothing until a cell has been anchored', () => {
+    const rangePlugin = () => {
       const plugin = new SelectionPlugin({ mode: 'range' });
       plugin.attach(createMockGrid(rows, columns));
+      return plugin;
+    };
 
-      expect(items(plugin, 2, 1)).toBeUndefined();
+    /** A range plugin whose primary anchor is cell (0, 0). */
+    const anchoredRange = () => {
+      const plugin = rangePlugin();
+      clickCell(plugin, 0, 0);
+      return plugin;
+    };
+
+    /** Run "Extend selection to here" on (2, 1) and assert it extended from the (0, 0) anchor. */
+    const expectExtendsFromAnchor = (plugin: SelectionPlugin) => {
+      items(plugin, 2, 1)![0].action();
+      expect(plugin['ranges']).toEqual([{ startRow: 0, startCol: 0, endRow: 2, endCol: 1 }]);
+    };
+
+    it('contributes nothing until a cell has been anchored', () => {
+      expect(items(rangePlugin(), 2, 1)).toBeUndefined();
     });
 
     it('offers a single-pointer extension once an anchor exists', () => {
-      const plugin = new SelectionPlugin({ mode: 'range' });
-      plugin.attach(createMockGrid(rows, columns));
-      clickCell(plugin, 0, 0);
-
-      const menu = items(plugin, 2, 1);
+      const menu = items(anchoredRange(), 2, 1);
       expect(menu?.map((i) => i.label)).toEqual(['Extend selection to here']);
       // Own order band, below column move (50-59).
       expect(menu?.[0].order).toBe(60);
     });
 
     it('extends the range from the anchor to the targeted cell', () => {
-      const plugin = new SelectionPlugin({ mode: 'range' });
-      plugin.attach(createMockGrid(rows, columns));
-      clickCell(plugin, 0, 0);
-
-      items(plugin, 2, 1)![0].action();
-
-      expect(plugin['ranges']).toEqual([{ startRow: 0, startCol: 0, endRow: 2, endCol: 1 }]);
+      expectExtendsFromAnchor(anchoredRange());
     });
 
-    it('keeps the anchor when a right-click re-targets the menu outside the range', () => {
-      const plugin = new SelectionPlugin({ mode: 'range' });
-      plugin.attach(createMockGrid(rows, columns));
-      clickCell(plugin, 0, 0);
+    it('keeps the anchor when the menu re-targets the selection outside the range', () => {
+      const plugin = anchoredRange();
 
-      // Right-click outside the range clears + selects the clicked cell so the
-      // menu targets it — but must not become the extension anchor.
-      plugin.onCellMouseDown!({
-        type: 'mousedown',
-        rowIndex: 2,
-        colIndex: 1,
-        isHeader: false,
-        column: columns[1],
-        originalEvent: new MouseEvent('mousedown', { button: 2, bubbles: true }),
-      } as any);
+      // Opening the menu outside the range collapses it to the invoked cell so
+      // the menu targets it — but that cell must not become the extension anchor.
+      plugin.handleQuery({ type: 'selectContextMenuTarget', context: { rowIndex: 2, colIndex: 1 } });
+      expect(plugin['ranges']).toEqual([{ startRow: 2, startCol: 1, endRow: 2, endCol: 1 }]);
 
-      items(plugin, 2, 1)![0].action();
-      expect(plugin['ranges']).toEqual([{ startRow: 0, startCol: 0, endRow: 2, endCol: 1 }]);
+      expectExtendsFromAnchor(plugin);
     });
 
     it('offers nothing on the anchor itself, on headers, or outside range mode', () => {
@@ -2035,6 +2217,141 @@ describe('SelectionPlugin', () => {
 
       // Should clamp to actual row count
       expect(result).toEqual([{ id: 1 }, { id: 2 }]);
+    });
+  });
+
+  // #541: guards of the shared context-menu target sync; the per-invocation,
+  // per-mode behaviour is covered end-to-end in context-menu-selection-integration.spec.ts.
+  describe('selectContextMenuTarget query', () => {
+    const rows = [{ id: 1 }, { id: 2 }, { id: 3 }];
+    const target = (plugin: SelectionPlugin, rowIndex: number, colIndex: number) =>
+      plugin.handleQuery({ type: 'selectContextMenuTarget', context: { rowIndex, colIndex } });
+
+    /** Mixed `['range', 'column']` plugin with column `id` selected (column axis active). */
+    const columnSelected = () => {
+      const plugin = new SelectionPlugin({ mode: ['range', 'column'] });
+      plugin.attach(createMockGrid(rows, [{ field: 'id' }, { field: 'name' }]));
+      plugin.handleQuery({ type: 'selectColumns', context: ['id'] });
+      return plugin;
+    };
+
+    it('leaves the selection alone on a utility column', () => {
+      const plugin = new SelectionPlugin({ mode: 'range' });
+      plugin.attach(createMockGrid(rows, [{ field: '__expander', utility: true }, { field: 'id' }]));
+      plugin['ranges'] = [{ startRow: 0, startCol: 1, endRow: 0, endCol: 1 }];
+
+      expect(target(plugin, 2, 0)).toEqual([0]);
+    });
+
+    it('leaves the selection alone on a cell rejected by isSelectable', () => {
+      const plugin = new SelectionPlugin({ mode: 'cell', isSelectable: (_row, rowIndex) => rowIndex !== 2 });
+      plugin.attach(createMockGrid(rows, [{ field: 'id' }]));
+      plugin['selectedCell'] = { row: 0, col: 0 };
+
+      expect(target(plugin, 2, 0)).toEqual([0]);
+    });
+
+    it('leaves the selection alone when selection is disabled', () => {
+      const plugin = new SelectionPlugin({ mode: 'row', enabled: false });
+      plugin.attach(createMockGrid(rows, [{ field: 'id' }]));
+      plugin['selected'].add(0);
+
+      expect(target(plugin, 2, 0)).toEqual([0]);
+    });
+
+    it('does nothing outside row/cell/range modes', () => {
+      const plugin = new SelectionPlugin({ mode: 'column' });
+      plugin.attach(createMockGrid(rows, [{ field: 'id' }]));
+
+      expect(target(plugin, 1, 0)).toEqual([]);
+      expect(plugin.getSelection().ranges).toEqual([]);
+    });
+
+    it('keeps a column selection when the target is inside a selected column (mixed modes)', () => {
+      const plugin = columnSelected();
+
+      target(plugin, 1, 0);
+
+      expect(plugin.getSelectedColumns()).toEqual(['id']);
+      expect(plugin.getSelection().ranges).toEqual([]);
+    });
+
+    it('moves off a column selection when the target is in another column (mixed modes)', () => {
+      const plugin = columnSelected();
+
+      expect(target(plugin, 1, 1)).toEqual([1]);
+      expect(plugin.getSelectedColumns()).toEqual([]);
+      expect(plugin.getSelection().ranges).toEqual([{ from: { row: 1, col: 1 }, to: { row: 1, col: 1 } }]);
+    });
+  });
+
+  // #541: getSelectedRowIndices must agree with getSelectedRows in every mode,
+  // because ContextMenuPlugin builds `params.selectedRows` from it.
+  describe('getSelectedRowIndices (mode-aware)', () => {
+    /** Plugin in `mode` attached to `rowCount` rows `{ id: i }`. */
+    const attached = (mode: 'cell' | 'range', rowCount: number) => {
+      const rows = Array.from({ length: rowCount }, (_, i) => ({ id: i }));
+      const plugin = new SelectionPlugin({ mode });
+      plugin.attach(createMockGrid(rows, [{ field: 'id' }, { field: 'name' }]));
+      return { plugin, rows };
+    };
+
+    it('returns the selected cell row in cell mode', () => {
+      const { plugin } = attached('cell', 3);
+
+      expect(plugin.getSelectedRowIndices()).toEqual([]);
+      plugin['selectedCell'] = { row: 2, col: 0 };
+      expect(plugin.getSelectedRowIndices()).toEqual([2]);
+    });
+
+    it('returns [] in cell mode when the selected cell row is out of bounds', () => {
+      const { plugin } = attached('cell', 1);
+
+      plugin['selectedCell'] = { row: 4, col: 0 };
+      expect(plugin.getSelectedRowIndices()).toEqual([]);
+    });
+
+    it('returns unique sorted rows intersecting any range in range mode', () => {
+      const { plugin } = attached('range', 8);
+
+      expect(plugin.getSelectedRowIndices()).toEqual([]);
+      plugin['ranges'] = [
+        { startRow: 5, startCol: 0, endRow: 3, endCol: 1 }, // reversed drag
+        { startRow: 1, startCol: 0, endRow: 1, endCol: 0 },
+        { startRow: 4, startCol: 1, endRow: 20, endCol: 1 }, // overlaps + out of bounds
+      ];
+
+      expect(plugin.getSelectedRowIndices()).toEqual([1, 3, 4, 5, 6, 7]);
+    });
+
+    it('skips nested and fully out-of-bounds ranges in range mode', () => {
+      const { plugin } = attached('range', 8);
+
+      plugin['ranges'] = [
+        { startRow: 0, startCol: 0, endRow: 5, endCol: 0 },
+        { startRow: 2, startCol: 0, endRow: 3, endCol: 0 }, // nested
+        { startRow: 20, startCol: 0, endRow: 30, endCol: 0 }, // entirely past the last row
+      ];
+
+      expect(plugin.getSelectedRowIndices()).toEqual([0, 1, 2, 3, 4, 5]);
+    });
+
+    it('agrees with getSelectedRows in range mode', () => {
+      const { plugin, rows } = attached('range', 6);
+
+      plugin['ranges'] = [{ startRow: 0, startCol: 0, endRow: 4, endCol: 0 }];
+
+      const indices = plugin.getSelectedRowIndices();
+      expect(indices).toEqual([0, 1, 2, 3, 4]);
+      expect(plugin.getSelectedRows()).toEqual(indices.map((i) => rows[i]));
+    });
+
+    it('is exposed through the getSelectedRowIndices query in range mode', () => {
+      const { plugin } = attached('range', 6);
+
+      plugin['ranges'] = [{ startRow: 1, startCol: 0, endRow: 3, endCol: 0 }];
+
+      expect(plugin.handleQuery({ type: 'getSelectedRowIndices', context: undefined })).toEqual([1, 2, 3]);
     });
   });
 

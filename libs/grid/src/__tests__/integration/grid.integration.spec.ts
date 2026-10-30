@@ -4,6 +4,7 @@ import '../../lib/core/grid';
 // `features: { shell }` activates the ShellPlugin.
 import '../../lib/features/shell';
 // Import plugins used by integration tests
+import { nextFrame, waitUpgrade } from '../../../test/helpers';
 import { ColumnVirtualizationPlugin } from '../../lib/plugins/column-virtualization';
 import { EditingPlugin } from '../../lib/plugins/editing';
 import { GroupingColumnsPlugin } from '../../lib/plugins/grouping-columns';
@@ -11,34 +12,6 @@ import { GroupingRowsPlugin } from '../../lib/plugins/grouping-rows';
 import { PinnedColumnsPlugin } from '../../lib/plugins/pinned-columns';
 import { ResponsivePlugin } from '../../lib/plugins/responsive';
 import { SelectionPlugin } from '../../lib/plugins/selection';
-
-function nextFrame() {
-  return new Promise((r) => requestAnimationFrame(r));
-}
-
-async function waitUpgrade(grid: any) {
-  await customElements.whenDefined('tbw-grid');
-  const start = Date.now();
-  while (!grid.hasAttribute('data-upgraded')) {
-    if (Date.now() - start > 3000) break;
-    await new Promise((r) => setTimeout(r, 10));
-  }
-  if (grid.ready) {
-    try {
-      await grid.ready();
-    } catch {
-      /* empty */
-    }
-  }
-  if (grid.forceLayout) {
-    try {
-      await grid.forceLayout();
-    } catch {
-      /* empty */
-    }
-  }
-  await nextFrame();
-}
 
 describe('tbw-grid integration: inference, sorting, editing', () => {
   let grid: any;
@@ -761,6 +734,122 @@ describe('tbw-grid integration: setPinPosition with ColumnVirtualizationPlugin',
   });
 });
 
+describe('tbw-grid integration: pinned columns with hidden columns (#512)', () => {
+  let grid: any;
+  beforeEach(() => {
+    document.body.innerHTML = '';
+    grid = document.createElement('tbw-grid');
+    grid.style.display = 'block';
+    grid.style.height = '300px';
+    document.body.appendChild(grid);
+  });
+  afterEach(() => {
+    document.body.innerHTML = '';
+  });
+
+  async function render(columns: any[], extra: Record<string, unknown> = {}) {
+    grid.gridConfig = { columns, fitMode: 'fixed' as const, plugins: [new PinnedColumnsPlugin()], ...extra };
+    grid.rows = [{ a: 1, b: 2, c: 3, d: 4, e: 5 }];
+    await waitUpgrade(grid);
+    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+    await new Promise((r) => setTimeout(r, 50));
+  }
+
+  const headerOrder = () =>
+    Array.from(grid.querySelectorAll('.header-row [role="columnheader"]')).map((el: any) =>
+      el.getAttribute('data-field'),
+    );
+
+  it.each([
+    [
+      'right-pinned before a hidden column',
+      [{ field: 'a' }, { field: 'b', pinned: 'right' }, { field: 'c', hidden: true }, { field: 'd' }],
+      ['a', 'd', 'b'],
+    ],
+    [
+      'leading hidden column',
+      [{ field: 'c', hidden: true }, { field: 'a' }, { field: 'b', pinned: 'right' }, { field: 'd' }],
+      ['a', 'd', 'b'],
+    ],
+    [
+      'logical end pin',
+      [{ field: 'a' }, { field: 'b', pinned: 'end' }, { field: 'c', hidden: true }, { field: 'd' }],
+      ['a', 'd', 'b'],
+    ],
+    [
+      'left-pinned last column',
+      [{ field: 'a' }, { field: 'b' }, { field: 'c', hidden: true }, { field: 'd', pinned: 'left' }],
+      ['d', 'a', 'b'],
+    ],
+  ])('moves pinned columns to the edge with a %s', async (_label, columns, expected) => {
+    await render(columns);
+    expect(grid._visibleColumns.map((c: any) => c.field)).toEqual(expected);
+    expect(headerOrder()).toEqual(expected);
+  });
+
+  it('keeps a hidden column where it would appear once shown', async () => {
+    await render([
+      { field: 'a' },
+      { field: 'b', pinned: 'right' },
+      { field: 'c', hidden: true },
+      { field: 'd' },
+      { field: 'e' },
+    ]);
+    // `b` is the column the plugin moved; `c` stays anchored to its unmoved neighbours.
+    expect(grid.getColumnOrder()).toEqual(['a', 'c', 'd', 'e', 'b']);
+
+    grid.toggleColumnVisibility('c');
+    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+    expect(headerOrder()).toEqual(['a', 'c', 'd', 'e', 'b']);
+  });
+
+  it.each([
+    [
+      'right',
+      [{ field: 'a' }, { field: 'b', pinned: 'right' }, { field: 'c', hidden: true }, { field: 'd' }],
+      ['a', 'c', 'd', 'b'],
+    ],
+    [
+      'left',
+      [{ field: 'a' }, { field: 'b' }, { field: 'c', hidden: true }, { field: 'd', pinned: 'left' }],
+      ['d', 'a', 'b', 'c'],
+    ],
+  ])('reveals a hidden column next to its source neighbours (%s pin, 4 columns)', async (_label, columns, expected) => {
+    await render(columns);
+    expect(grid.getColumnOrder()).toEqual(expected);
+
+    grid.toggleColumnVisibility('c');
+    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+    expect(headerOrder()).toEqual(expected);
+  });
+
+  it('makes the group header above a right-pinned column sticky while a column is hidden', async () => {
+    grid.gridConfig = {
+      columns: [
+        { field: 'a', pinned: 'left' },
+        { field: 'b' },
+        { field: 'c', hidden: true },
+        { field: 'd', pinned: 'right' },
+      ],
+      columnGroups: [{ id: 'g', header: 'G', children: ['b', 'c'] }],
+      fitMode: 'fixed' as const,
+      plugins: [new GroupingColumnsPlugin(), new PinnedColumnsPlugin()],
+    };
+    grid.rows = [{ a: 1, b: 2, c: 3, d: 4 }];
+    await waitUpgrade(grid);
+    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+    await new Promise((r) => setTimeout(r, 50));
+
+    const groupCells = Array.from(grid.querySelectorAll('.header-group-row .header-group-cell')) as HTMLElement[];
+    const first = groupCells[0];
+    const last = groupCells[groupCells.length - 1];
+    expect(first.classList.contains('sticky-left')).toBe(true);
+    expect(last.classList.contains('implicit-group')).toBe(true);
+    expect(last.classList.contains('sticky-right')).toBe(true);
+    expect(last.style.position).toBe('sticky');
+  });
+});
+
 describe('tbw-grid integration: aria row/col indices', () => {
   it('applies correct aria-rowindex / aria-colindex values', async () => {
     const grid = document.createElement('tbw-grid') as any;
@@ -963,6 +1052,41 @@ describe('tbw-grid integration: shell header & tool panels', () => {
     document.body.innerHTML = '';
   });
 
+  type PanelStub = { id: string; order?: number; render?: (container: HTMLElement) => void };
+
+  async function mountWithPanels(shell: boolean | Record<string, unknown>, panels: PanelStub[] = [{ id: 'columns' }]) {
+    grid = document.createElement('tbw-grid');
+    grid.gridConfig = { features: { shell } };
+    grid.rows = [{ id: 1 }];
+    document.body.appendChild(grid);
+    await waitUpgrade(grid);
+    const plugin = grid.getPluginByName('shell');
+    for (const { id, order, render } of panels) {
+      plugin.registerToolPanel({ id, title: id, icon: '☰', order, render: render ?? (() => undefined) });
+    }
+    await nextFrame();
+    return plugin;
+  }
+
+  const settingsAndFilters: PanelStub[] = [
+    { id: 'settings', order: 1 },
+    { id: 'filters', order: 2 },
+  ];
+
+  async function clickPanelToggle() {
+    const toggleBtn = grid.querySelector('[data-panel-toggle]') as HTMLButtonElement;
+    expect(toggleBtn).not.toBeNull();
+    toggleBtn.click();
+    await nextFrame();
+  }
+
+  async function openAndExpectSection(shell: any, id: string) {
+    shell.openToolPanel(id);
+    await nextFrame();
+    expect(shell.isToolPanelOpen).toBe(true);
+    expect(shell.expandedToolPanelSections).toEqual([id]);
+  }
+
   it('renders shell header when title is configured', async () => {
     grid = document.createElement('tbw-grid');
     grid.gridConfig = {
@@ -1059,22 +1183,14 @@ describe('tbw-grid integration: shell header & tool panels', () => {
   });
 
   it('opens and closes tool panels via API', async () => {
-    grid = document.createElement('tbw-grid');
-    grid.rows = [{ id: 1 }];
-    grid.gridConfig = { features: { shell: true } };
-    document.body.appendChild(grid);
-    await waitUpgrade(grid);
-
-    const shell = grid.getPluginByName('shell');
-    shell.registerToolPanel({
-      id: 'test-panel',
-      title: 'Test Panel',
-      icon: '⚙',
-      render: (container: HTMLElement) => {
-        container.innerHTML = '<span class="test-content">Hello</span>';
+    const shell = await mountWithPanels(true, [
+      {
+        id: 'test-panel',
+        render: (container) => {
+          container.innerHTML = '<span class="test-content">Hello</span>';
+        },
       },
-    });
-    await nextFrame();
+    ]);
 
     // Panel should be registered but closed
     expect(shell.isToolPanelOpen).toBe(false);
@@ -1098,22 +1214,7 @@ describe('tbw-grid integration: shell header & tool panels', () => {
   });
 
   it('renders the tool panel as a popover in dropdown mode and anchors to the toggle', async () => {
-    grid = document.createElement('tbw-grid');
-    grid.gridConfig = { features: { shell: { toolPanel: { mode: 'dropdown' } } } };
-    grid.rows = [{ id: 1 }];
-    document.body.appendChild(grid);
-    await waitUpgrade(grid);
-
-    const shell = grid.getPluginByName('shell');
-    shell.registerToolPanel({
-      id: 'columns',
-      title: 'Columns',
-      icon: '☰',
-      render: () => {
-        /* noop */
-      },
-    });
-    await nextFrame();
+    const shell = await mountWithPanels({ toolPanel: { mode: 'dropdown' } });
 
     const body = grid.querySelector('.tbw-shell-body');
     const panel = grid.querySelector('.tbw-tool-panel') as HTMLElement;
@@ -1142,15 +1243,7 @@ describe('tbw-grid integration: shell header & tool panels', () => {
     // header update, which never rewrites `data-mode` on `.tbw-shell-body`. The
     // config (effectiveConfig.shell.toolPanel.mode) updated but the DOM did not,
     // so push/dropdown silently rendered as overlay.
-    grid = document.createElement('tbw-grid');
-    grid.gridConfig = { features: { shell: { toolPanel: { mode: 'overlay' } } } };
-    grid.rows = [{ id: 1 }];
-    document.body.appendChild(grid);
-    await waitUpgrade(grid);
-
-    const shell = grid.getPluginByName('shell');
-    shell.registerToolPanel({ id: 'columns', title: 'Columns', icon: '☰', render: () => undefined });
-    await nextFrame();
+    await mountWithPanels({ toolPanel: { mode: 'overlay' } });
 
     const mode = () => grid.querySelector('.tbw-shell-body')?.getAttribute('data-mode');
     expect(mode()).toBe('overlay');
@@ -1168,31 +1261,31 @@ describe('tbw-grid integration: shell header & tool panels', () => {
     expect(grid.querySelector('.tbw-tool-panel')?.getAttribute('popover')).toBe('manual');
   });
 
-  it('omits the in-panel close button in dropdown mode (light-dismisses instead)', async () => {
-    grid = document.createElement('tbw-grid');
-    // Header hidden (would normally render a ✕) AND dropdown mode → no ✕ button.
-    grid.gridConfig = { features: { shell: { header: { visible: false }, toolPanel: { mode: 'dropdown' } } } };
-    grid.rows = [{ id: 1 }];
-    document.body.appendChild(grid);
-    await waitUpgrade(grid);
+  it('applies toolPanel.width to --tbw-tool-panel-width and follows config changes (#575)', async () => {
+    await mountWithPanels({ toolPanel: { width: 400 } });
 
-    const shell = grid.getPluginByName('shell');
-    shell.registerToolPanel({ id: 'columns', title: 'Columns', icon: '☰', render: () => undefined });
+    const cssVar = () => grid.style.getPropertyValue('--tbw-tool-panel-width');
+    expect(cssVar()).toBe('400px');
+
+    // Width-only change (non-structural) must still reach the DOM.
+    grid.gridConfig = { features: { shell: { toolPanel: { width: 320 } } } };
     await nextFrame();
+    expect(cssVar()).toBe('320px');
+
+    grid.gridConfig = { features: { shell: { toolPanel: {} } } };
+    await nextFrame();
+    expect(cssVar()).toBe('');
+  });
+
+  it('omits the in-panel close button in dropdown mode (light-dismisses instead)', async () => {
+    // Header hidden (would normally render a ✕) AND dropdown mode → no ✕ button.
+    await mountWithPanels({ header: { visible: false }, toolPanel: { mode: 'dropdown' } });
 
     expect(grid.querySelector('[data-panel-close]')).toBeNull();
   });
 
   it('inlines the close button onto the single accordion header when the header bar is hidden (overlay)', async () => {
-    grid = document.createElement('tbw-grid');
-    grid.gridConfig = { features: { shell: { header: { visible: false }, toolPanel: { mode: 'overlay' } } } };
-    grid.rows = [{ id: 1 }];
-    document.body.appendChild(grid);
-    await waitUpgrade(grid);
-
-    const shell = grid.getPluginByName('shell');
-    shell.registerToolPanel({ id: 'columns', title: 'Columns', icon: '☰', render: () => undefined });
-    await nextFrame();
+    await mountWithPanels({ header: { visible: false }, toolPanel: { mode: 'overlay' } });
 
     const closeBtn = grid.querySelector('[data-panel-close]') as HTMLButtonElement | null;
     expect(closeBtn).not.toBeNull();
@@ -1203,22 +1296,7 @@ describe('tbw-grid integration: shell header & tool panels', () => {
   });
 
   it('anchors the dropdown to an explicit anchor element when provided', async () => {
-    grid = document.createElement('tbw-grid');
-    grid.gridConfig = { features: { shell: { toolPanel: { mode: 'dropdown' } } } };
-    grid.rows = [{ id: 1 }];
-    document.body.appendChild(grid);
-    await waitUpgrade(grid);
-
-    const shell = grid.getPluginByName('shell');
-    shell.registerToolPanel({
-      id: 'columns',
-      title: 'Columns',
-      icon: '☰',
-      render: () => {
-        /* noop */
-      },
-    });
-    await nextFrame();
+    const shell = await mountWithPanels({ toolPanel: { mode: 'dropdown' } });
 
     const customAnchor = document.createElement('button');
     document.body.appendChild(customAnchor);
@@ -1234,22 +1312,7 @@ describe('tbw-grid integration: shell header & tool panels', () => {
   });
 
   it('toggles tool panels', async () => {
-    grid = document.createElement('tbw-grid');
-    grid.rows = [{ id: 1 }];
-    grid.gridConfig = { features: { shell: true } };
-    document.body.appendChild(grid);
-    await waitUpgrade(grid);
-
-    const shell = grid.getPluginByName('shell');
-    shell.registerToolPanel({
-      id: 'columns',
-      title: 'Columns',
-      icon: '☰',
-      render: () => {
-        /* noop */
-      },
-    });
-    await nextFrame();
+    const shell = await mountWithPanels(true);
 
     // Toggle on
     shell.toggleToolPanel();
@@ -1261,49 +1324,14 @@ describe('tbw-grid integration: shell header & tool panels', () => {
   });
 
   it('clicks panel toggle button to open panel', async () => {
-    grid = document.createElement('tbw-grid');
-    grid.rows = [{ id: 1 }];
-    grid.gridConfig = { features: { shell: true } };
-    document.body.appendChild(grid);
-    await waitUpgrade(grid);
+    const shell = await mountWithPanels(true);
 
-    const shell = grid.getPluginByName('shell');
-    shell.registerToolPanel({
-      id: 'columns',
-      title: 'Columns',
-      icon: '☰',
-      render: () => {
-        /* noop */
-      },
-    });
-    await nextFrame();
-
-    const shadow = grid;
-    const toggleBtn = shadow.querySelector('[data-panel-toggle]') as HTMLButtonElement;
-    expect(toggleBtn).not.toBeNull();
-
-    toggleBtn.click();
-    await nextFrame();
+    await clickPanelToggle();
     expect(shell.isToolPanelOpen).toBe(true);
   });
 
   it('closes panel by toggling toolbar button again', async () => {
-    grid = document.createElement('tbw-grid');
-    grid.rows = [{ id: 1 }];
-    grid.gridConfig = { features: { shell: true } };
-    document.body.appendChild(grid);
-    await waitUpgrade(grid);
-
-    const shell = grid.getPluginByName('shell');
-    shell.registerToolPanel({
-      id: 'columns',
-      title: 'Columns',
-      icon: '☰',
-      render: () => {
-        /* noop */
-      },
-    });
-    await nextFrame();
+    const shell = await mountWithPanels(true);
 
     // Open panel
     shell.openToolPanel();
@@ -1311,106 +1339,26 @@ describe('tbw-grid integration: shell header & tool panels', () => {
     expect(shell.isToolPanelOpen).toBe(true);
 
     // Toggle via toolbar button to close
-    const shadow = grid;
-    const toggleBtn = shadow.querySelector('[data-panel-toggle]') as HTMLButtonElement;
-    expect(toggleBtn).not.toBeNull();
-
-    toggleBtn.click();
-    await nextFrame();
+    await clickPanelToggle();
     expect(shell.isToolPanelOpen).toBe(false);
   });
 
   it('opens tool panel with explicit panelId expanding the requested section', async () => {
-    grid = document.createElement('tbw-grid');
-    grid.rows = [{ id: 1 }];
-    grid.gridConfig = { features: { shell: true } };
-    document.body.appendChild(grid);
-    await waitUpgrade(grid);
-
-    const shell = grid.getPluginByName('shell');
-    shell.registerToolPanel({
-      id: 'settings',
-      title: 'Settings',
-      icon: '⚙',
-      order: 1,
-      render: () => {
-        /* noop */
-      },
-    });
-    shell.registerToolPanel({
-      id: 'filters',
-      title: 'Filters',
-      icon: '⌕',
-      order: 2,
-      render: () => {
-        /* noop */
-      },
-    });
-    await nextFrame();
+    const shell = await mountWithPanels(true, settingsAndFilters);
 
     // Open with explicit panelId — should expand 'filters' even though 'settings' is order:1
-    shell.openToolPanel('filters');
-    await nextFrame();
-    expect(shell.isToolPanelOpen).toBe(true);
-    expect(shell.expandedToolPanelSections).toEqual(['filters']);
+    await openAndExpectSection(shell, 'filters');
   });
 
   it('switches expanded section when openToolPanel is called with a different panelId while open', async () => {
-    grid = document.createElement('tbw-grid');
-    grid.rows = [{ id: 1 }];
-    grid.gridConfig = { features: { shell: true } };
-    document.body.appendChild(grid);
-    await waitUpgrade(grid);
+    const shell = await mountWithPanels(true, settingsAndFilters);
 
-    const shell = grid.getPluginByName('shell');
-    shell.registerToolPanel({
-      id: 'settings',
-      title: 'Settings',
-      icon: '⚙',
-      order: 1,
-      render: () => {
-        /* noop */
-      },
-    });
-    shell.registerToolPanel({
-      id: 'filters',
-      title: 'Filters',
-      icon: '⌕',
-      order: 2,
-      render: () => {
-        /* noop */
-      },
-    });
-    await nextFrame();
-
-    shell.openToolPanel('settings');
-    await nextFrame();
-    expect(shell.expandedToolPanelSections).toEqual(['settings']);
-
-    shell.openToolPanel('filters');
-    await nextFrame();
-    expect(shell.isToolPanelOpen).toBe(true);
-    expect(shell.expandedToolPanelSections).toEqual(['filters']);
+    await openAndExpectSection(shell, 'settings');
+    await openAndExpectSection(shell, 'filters');
   });
 
   it('falls back to default behavior when openToolPanel is called with an unknown panelId', async () => {
-    grid = document.createElement('tbw-grid');
-    grid.rows = [{ id: 1 }];
-    grid.gridConfig = { features: { shell: true } };
-    document.body.appendChild(grid);
-    await waitUpgrade(grid);
-
-    const shell = grid.getPluginByName('shell');
-    shell.registerToolPanel({
-      id: 'settings',
-      title: 'Settings',
-      icon: '⚙',
-      order: 1,
-      render: () => {
-        /* noop */
-      },
-    });
-    await nextFrame();
+    const shell = await mountWithPanels(true, [{ id: 'settings', order: 1 }]);
 
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     shell.openToolPanel('does-not-exist');
@@ -2982,11 +2930,7 @@ describe('MasterDetailPlugin + GroupingRowsPlugin integration', () => {
     await waitUpgrade(grid);
     await nextFrame();
 
-    expect(grid._visibleColumns.map((column: any) => column.field)).toEqual([
-      '__tbw_expander',
-      'orderId',
-      'total',
-    ]);
+    expect(grid._visibleColumns.map((column: any) => column.field)).toEqual(['__tbw_expander', 'orderId', 'total']);
   });
 
   it('renders expander toggle on data rows within expanded groups', async () => {

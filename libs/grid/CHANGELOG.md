@@ -1,5 +1,76 @@
 # Changelog
 
+## [3.10.3](https://github.com/OysteinAmundsen/toolbox/compare/grid-3.10.2...grid-3.10.3) (2026-10-28)
+
+
+### Bug Fixes
+
+* **shell:** honor configured tool panel width ([#575](https://github.com/OysteinAmundsen/toolbox/issues/575)) ([#576](https://github.com/OysteinAmundsen/toolbox/issues/576)) ([f574431](https://github.com/OysteinAmundsen/toolbox/commit/f57443136924873fad330a70cc23c6409aff91d6))
+
+## [3.10.2](https://github.com/OysteinAmundsen/toolbox/compare/grid-3.10.1...grid-3.10.2) (2026-10-26)
+
+
+### Bug Fixes
+
+* **editing/hierarchy:** keep nested tree row edit alive across re-renders ([#570](https://github.com/OysteinAmundsen/toolbox/issues/570)) ([#571](https://github.com/OysteinAmundsen/toolbox/issues/571)) ([8a41f78](https://github.com/OysteinAmundsen/toolbox/commit/8a41f78f0fb340a3c7794cd4dfcad64eb1ae247d))
+* **grid/editing:** keep uncommitted row-edit draft when the edit row moves to another index ([#572](https://github.com/OysteinAmundsen/toolbox/issues/572)) ([#574](https://github.com/OysteinAmundsen/toolbox/issues/574)) ([07478a5](https://github.com/OysteinAmundsen/toolbox/commit/07478a5f93532c543acf2a4abd362569e2877b83))
+
+## [3.10.1](https://github.com/OysteinAmundsen/toolbox/compare/grid-3.10.0...grid-3.10.1) (2026-10-23)
+
+
+### Bug Fixes
+
+* **editing:** commit blur-commit editors when row is closed with Enter ([#557](https://github.com/OysteinAmundsen/toolbox/issues/557)) ([#560](https://github.com/OysteinAmundsen/toolbox/issues/560)) ([f30ef89](https://github.com/OysteinAmundsen/toolbox/commit/f30ef896874b26014ebd7c22ab4534bf5245e484))
+* **editing:** keep focus in clicked editor of the row already in edit ([#559](https://github.com/OysteinAmundsen/toolbox/issues/559)) ([#564](https://github.com/OysteinAmundsen/toolbox/issues/564)) ([2ca0261](https://github.com/OysteinAmundsen/toolbox/commit/2ca0261b63dff86ccaed9e010b4089f091f92243))
+* **editing:** let Escape close an open ARIA combobox popup before cancelling the row edit ([#558](https://github.com/OysteinAmundsen/toolbox/issues/558)) ([#562](https://github.com/OysteinAmundsen/toolbox/issues/562)) ([db90ba2](https://github.com/OysteinAmundsen/toolbox/commit/db90ba2c0c5af10ee9f61edf445f5f28ce3ca7b4))
+* **grid/editing/grouping-rows/master-detail/tree:** structural toggle clicks never start a row edit ([#565](https://github.com/OysteinAmundsen/toolbox/issues/565)) ([#567](https://github.com/OysteinAmundsen/toolbox/issues/567)) ([b93ae8e](https://github.com/OysteinAmundsen/toolbox/commit/b93ae8eec004cd16c4d6fd01d40f283b135ef49d))
+* **grid/grouping-rows/master-detail/tree:** double-clicking an expand toggle toggles twice, not three times ([#568](https://github.com/OysteinAmundsen/toolbox/issues/568)) ([#569](https://github.com/OysteinAmundsen/toolbox/issues/569)) ([0bf4222](https://github.com/OysteinAmundsen/toolbox/commit/0bf42224be64edf3c97cb1ed0e7f411a9146a02b))
+* **undo-redo/grid-angular/grid-react/grid-vue:** emit undo/redo from programmatic calls and add history-change event ([#563](https://github.com/OysteinAmundsen/toolbox/issues/563)) ([#566](https://github.com/OysteinAmundsen/toolbox/issues/566)) ([1aacb63](https://github.com/OysteinAmundsen/toolbox/commit/1aacb63023c94deef5b160deafcb50e1e6b5b4c3))
+
+## [3.10.0](https://github.com/OysteinAmundsen/toolbox/compare/grid-3.9.2...grid-3.10.0) (2026-10-23)
+
+
+### Features
+
+* **filtering/pivot:** format set-filter values with their row and accept { value, label } from valuesHandler ([#548](https://github.com/OysteinAmundsen/toolbox/issues/548)) ([#553](https://github.com/OysteinAmundsen/toolbox/issues/553)) ([25bf813](https://github.com/OysteinAmundsen/toolbox/commit/25bf813a415989e96685cf59d860015c515e7855))
+
+
+### Bug Fixes
+
+* **editing:** map nullable select blank sentinel to null on row close ([#547](https://github.com/OysteinAmundsen/toolbox/issues/547)) ([#552](https://github.com/OysteinAmundsen/toolbox/issues/552)) ([8f68af1](https://github.com/OysteinAmundsen/toolbox/commit/8f68af15a9a6a30927f6bb30315cc4b70226a3a7))
+* **editing:** push external updates into open editors via setInputValue so multi-select keeps its selection ([#555](https://github.com/OysteinAmundsen/toolbox/issues/555)) ([#556](https://github.com/OysteinAmundsen/toolbox/issues/556)) ([6140f9e](https://github.com/OysteinAmundsen/toolbox/commit/6140f9e55b2ad9b01991fb73c624d4a98d399d84))
+* **editing:** read the full multi-select selection and compare as a set on row close ([#551](https://github.com/OysteinAmundsen/toolbox/issues/551)) ([#554](https://github.com/OysteinAmundsen/toolbox/issues/554)) ([11c0ce7](https://github.com/OysteinAmundsen/toolbox/commit/11c0ce77e6ed46005e93e70840b588b4e5fa423f))
+* **grid/grouping-rows/master-detail/pivot/selection/tree:** let form fields keep Space instead of toggling rows ([#546](https://github.com/OysteinAmundsen/toolbox/issues/546)) ([#549](https://github.com/OysteinAmundsen/toolbox/issues/549)) ([bad793b](https://github.com/OysteinAmundsen/toolbox/commit/bad793b9eaf95d35d79ece14048d16fe37bcee39))
+
+## [3.9.2](https://github.com/OysteinAmundsen/toolbox/compare/grid-3.9.1...grid-3.9.2) (2026-10-22)
+
+
+### Bug Fixes
+
+* **filtering/server-side:** stop re-filtering server results and refresh stale filter cache on block load ([#520](https://github.com/OysteinAmundsen/toolbox/issues/520)) ([#522](https://github.com/OysteinAmundsen/toolbox/issues/522)) ([bda5c42](https://github.com/OysteinAmundsen/toolbox/commit/bda5c4223d5109a3710ca1a9f0a5bf0db67ca64d))
+* **grid/editing/undo-redo:** resolve undo/redo actions by row id ([#526](https://github.com/OysteinAmundsen/toolbox/issues/526)) ([#529](https://github.com/OysteinAmundsen/toolbox/issues/529)) ([e383edb](https://github.com/OysteinAmundsen/toolbox/commit/e383edb89768783e4c6192566dc1776dfc44c862))
+* **grouping-rows/master-detail:** release loading state and emit load-error events when getChildRows fails ([#531](https://github.com/OysteinAmundsen/toolbox/issues/531)) ([#533](https://github.com/OysteinAmundsen/toolbox/issues/533)) ([b0bb93b](https://github.com/OysteinAmundsen/toolbox/commit/b0bb93bd5ab6878fda986434db4abe89a2bd2334))
+* **grouping-rows/server-side:** merge ServerSide group-definition blocks by node index and load groups past the first block ([#538](https://github.com/OysteinAmundsen/toolbox/issues/538)) ([#540](https://github.com/OysteinAmundsen/toolbox/issues/540)) ([b9374e1](https://github.com/OysteinAmundsen/toolbox/commit/b9374e12ce56b0f942c1f083a85bbcec27c41b0d))
+* **grouping-rows:** fetch ServerSide group rows for defaultExpanded/expandAll()/expand() ([#534](https://github.com/OysteinAmundsen/toolbox/issues/534)) ([#537](https://github.com/OysteinAmundsen/toolbox/issues/537)) ([c6d465b](https://github.com/OysteinAmundsen/toolbox/commit/c6d465b5d19a6d3bdd459f01be7f84517a539d39))
+* **master-detail:** fetch ServerSide detail data on programmatic expand()/toggle()/expandAll() ([#532](https://github.com/OysteinAmundsen/toolbox/issues/532)) ([#536](https://github.com/OysteinAmundsen/toolbox/issues/536)) ([bfea041](https://github.com/OysteinAmundsen/toolbox/commit/bfea041e0db4263deeb0cbf886498e7d1dd5c0a3))
+* **master-detail:** skip ServerSide loading placeholders and keep expandAll() active for rows that load later ([#535](https://github.com/OysteinAmundsen/toolbox/issues/535)) ([#539](https://github.com/OysteinAmundsen/toolbox/issues/539)) ([78c1bf0](https://github.com/OysteinAmundsen/toolbox/commit/78c1bf04556e84a0246b4de64f4b8af2b2f65ac4))
+* **multi-sort/server-side:** honor sortMode 'server' and stop mutating consumer rows ([#521](https://github.com/OysteinAmundsen/toolbox/issues/521)) ([#525](https://github.com/OysteinAmundsen/toolbox/issues/525)) ([e215cf4](https://github.com/OysteinAmundsen/toolbox/commit/e215cf4465c59ea2ac4bb1141c58e29b52a732aa))
+* **selection/context-menu:** make getSelectedRowIndices mode-aware so context menu selectedRows covers range/cell selection ([#541](https://github.com/OysteinAmundsen/toolbox/issues/541)) ([#543](https://github.com/OysteinAmundsen/toolbox/issues/543)) ([79a2cd3](https://github.com/OysteinAmundsen/toolbox/commit/79a2cd396c66813b4a86f65400f78188ee6facee))
+* **tree:** keep ServerSide order under sortMode 'server' ([#524](https://github.com/OysteinAmundsen/toolbox/issues/524)) ([#528](https://github.com/OysteinAmundsen/toolbox/issues/528)) ([4b6f590](https://github.com/OysteinAmundsen/toolbox/commit/4b6f590fa69140f5159dd072cf35bf0fd62fc70a))
+* **tree:** re-fetch lazy children of expanded nodes after their rows are replaced ([#527](https://github.com/OysteinAmundsen/toolbox/issues/527)) ([#530](https://github.com/OysteinAmundsen/toolbox/issues/530)) ([82b42b5](https://github.com/OysteinAmundsen/toolbox/commit/82b42b5ddee5dc659fb962f76dc158ebf96a3a47))
+
+## [3.9.1](https://github.com/OysteinAmundsen/toolbox/compare/grid-3.9.0...grid-3.9.1) (2026-10-19)
+
+
+### Bug Fixes
+
+* **grid/pinned-columns:** keep pinned columns at the edge when a column is hidden ([#512](https://github.com/OysteinAmundsen/toolbox/issues/512)) ([#516](https://github.com/OysteinAmundsen/toolbox/issues/516)) ([b01a8b0](https://github.com/OysteinAmundsen/toolbox/commit/b01a8b0e8e0e80bfeef9bfb3bda0c669a5f54a96))
+* **grid/server-side:** render loading placeholders with core row-loading state and hide them from consumer callbacks ([#508](https://github.com/OysteinAmundsen/toolbox/issues/508)) ([#511](https://github.com/OysteinAmundsen/toolbox/issues/511)) ([cb71d05](https://github.com/OysteinAmundsen/toolbox/commit/cb71d055e41a7d24de571fb72c0e40d683df1d57))
+* **grid:** honor loadingRenderer for cell loading ([#515](https://github.com/OysteinAmundsen/toolbox/issues/515)) ([#518](https://github.com/OysteinAmundsen/toolbox/issues/518)) ([6420531](https://github.com/OysteinAmundsen/toolbox/commit/64205315f6da75f3625ddd766e8b567735ad020d))
+* **grid:** measure rendered rows by aria-rowindex so auto-measured row heights are cached ([#513](https://github.com/OysteinAmundsen/toolbox/issues/513)) ([#517](https://github.com/OysteinAmundsen/toolbox/issues/517)) ([8a47343](https://github.com/OysteinAmundsen/toolbox/commit/8a4734329fe5bb0086e4391545ac457be304d7f1))
+* **server-side:** fill viewport taller than one block after initial render ([#507](https://github.com/OysteinAmundsen/toolbox/issues/507)) ([#509](https://github.com/OysteinAmundsen/toolbox/issues/509)) ([bac5cc3](https://github.com/OysteinAmundsen/toolbox/commit/bac5cc3ac1ff0080f8c2430b18ca875793266741))
+* **tree:** preserve custom renderers in decorated tree column ([#514](https://github.com/OysteinAmundsen/toolbox/issues/514)) ([99d2009](https://github.com/OysteinAmundsen/toolbox/commit/99d2009b3fc0fb49ced2f7bbf5cd7f56fc3be115))
+
 ## [3.9.0](https://github.com/OysteinAmundsen/toolbox/compare/grid-3.8.3...grid-3.9.0) (2026-10-07)
 
 

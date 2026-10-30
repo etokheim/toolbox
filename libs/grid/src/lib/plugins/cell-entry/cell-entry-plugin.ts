@@ -1,4 +1,5 @@
 import { CONFIG_RULE_ERROR, throwDiagnostic } from '../../core/internal/diagnostics';
+import { announce, getA11yMessage } from '../../core/internal/aria';
 import { readCellField } from '../../core/internal/value-accessor';
 import {
   BaseGridPlugin,
@@ -10,6 +11,8 @@ import type { CellEditRequest } from '../editing/internal/single-cell-entry';
 import { findEntryCell, isCellEntryTarget } from '../editing/internal/single-cell-entry';
 import type {} from '../editing/types';
 import type {} from '../selection/types';
+import type {} from '../undo-redo/types';
+import { clearSelectedCells } from './clear-selection';
 import type { CellEntryConfig } from './types';
 
 /**
@@ -17,7 +20,8 @@ import type { CellEntryConfig } from './types';
  *
  * Configure Editing with `mode: 'row', editOn: 'manual'` and Selection with
  * `mode: 'cell'` or `'range'`. Editing's opt-in `tabToEdit` continues an edit with
- * Tab/Shift+Tab. No printable-key entry or destructive clearing is installed.
+ * Tab/Shift+Tab. Selected-cell clearing is separately opt-in; printable-key
+ * entry is not installed.
  *
  * @since 3.9.0
  */
@@ -29,14 +33,20 @@ export class CellEntryPlugin extends BaseGridPlugin<CellEntryConfig> {
   static override readonly dependencies = [
     { name: 'editing', required: true },
     { name: 'selection', required: true },
+    { name: 'undoRedo', required: false },
   ];
 
   /** @internal */
   static override readonly manifest: PluginManifest<CellEntryConfig> = {
     hookPriority: { onCellClick: 20, onKeyDown: -20 },
+    ownedProperties: [
+      { property: 'clearValue', level: 'column', description: 'Explicit selected-cell clear value rule' },
+    ],
+    events: [{ type: 'cell-clear', description: 'Selected-cell clear outcomes or oversized-action rejection' }],
   };
 
   #selectionGesture = false;
+  #clearing = false;
 
   /** @internal */
   override attach(grid: GridElement): void {
@@ -50,7 +60,8 @@ export class CellEntryPlugin extends BaseGridPlugin<CellEntryConfig> {
       !selection ||
       (selection.mode !== 'cell' && selection.mode !== 'range') ||
       (selection.triggerOn !== undefined && selection.triggerOn !== 'click') ||
-      (this.config.singleClick !== undefined && typeof this.config.singleClick !== 'boolean')
+      (this.config.singleClick !== undefined && typeof this.config.singleClick !== 'boolean') ||
+      (this.config.clearOnDelete !== undefined && typeof this.config.clearOnDelete !== 'boolean')
     ) {
       throwDiagnostic(
         CONFIG_RULE_ERROR,
@@ -58,6 +69,9 @@ export class CellEntryPlugin extends BaseGridPlugin<CellEntryConfig> {
         grid.id,
         this.name,
       );
+    }
+    if (this.config.clearOnDelete && !grid.getPluginByName('undoRedo')) {
+      throwDiagnostic(CONFIG_RULE_ERROR, 'CellEntry clearOnDelete requires UndoRedo.', grid.id, this.name);
     }
     const signal = this.disconnectSignal;
     grid.addEventListener('pointerdown', () => (this.#selectionGesture = false), { capture: true, signal });
@@ -107,6 +121,7 @@ export class CellEntryPlugin extends BaseGridPlugin<CellEntryConfig> {
 
   /** @internal */
   override onKeyDown(event: KeyboardEvent): boolean {
+    if (event.key === 'Delete' || event.key === 'Backspace') return this.#clear(event);
     if (event.key !== 'Enter' && event.key !== 'F2') return false;
     if (
       event.defaultPrevented ||
@@ -154,6 +169,47 @@ export class CellEntryPlugin extends BaseGridPlugin<CellEntryConfig> {
     const current = findEntryCell(this.grid, row, column.field);
     if (!activate.defaultPrevented && current) this.#enter(current.rowIndex, current.colIndex, event);
     event.preventDefault();
+    return true;
+  }
+
+  #clear(event: KeyboardEvent): boolean {
+    if (
+      !this.config.clearOnDelete ||
+      this.#clearing ||
+      event.defaultPrevented ||
+      event.isComposing ||
+      event.keyCode === 229 ||
+      event.repeat ||
+      event.shiftKey ||
+      event.ctrlKey ||
+      event.metaKey ||
+      event.altKey ||
+      this.grid.effectiveConfig.selectable === false ||
+      this.grid.getPluginByName('selection')?.resolvedConfig.enabled === false ||
+      this.grid.getPluginByName('editing')?.resolvedConfig.editOn === false ||
+      this.grid.query<boolean>('isEditing').some(Boolean) ||
+      !isCellEntryTarget(event, this.gridElement)
+    )
+      return false;
+    const selection = this.grid.getPluginByName('selection')?.getSelection();
+    const undo = this.grid.getPluginByName('undoRedo');
+    if (!undo || !selection?.ranges.length || (selection.activeAxis !== 'cell' && selection.activeAxis !== 'range'))
+      return false;
+    event.preventDefault();
+    this.#clearing = true;
+    try {
+      const result = clearSelectedCells(this.grid, selection.ranges, undo);
+      const cleared = result.cells.filter((cell) => cell.status === 'cleared').length;
+      announce(
+        this.gridElement,
+        result.limitExceeded
+          ? getA11yMessage(this.gridElement, 'cellClearLimitExceeded')
+          : getA11yMessage(this.gridElement, 'cellsCleared', cleared, result.cells.length - cleared),
+      );
+      this.emit('cell-clear', result);
+    } finally {
+      this.#clearing = false;
+    }
     return true;
   }
 

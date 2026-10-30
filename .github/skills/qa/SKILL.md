@@ -62,6 +62,10 @@ For each file (or each hunk, when reviewing a diff), check:
 - Dead code, unreachable branches, contradictory conditions.
 - Race conditions, stale closures (especially in React hooks: missing/incorrect `useEffect` deps).
 - Type assertions that hide real type errors (`as any`, `as unknown as T`, non-null `!`).
+- **Spec type errors** — no gate type-checks `*.spec.ts` (lint/test/build all pass over a hard `TS2322`): see
+  `build-and-deploy.md` → `INVARIANT (#470)`. For each touched spec, run that one-file `tsc --ignoreConfig` recipe
+  and report only errors on lines the diff changed (intersect with `git diff -U0` hunk ranges) — specs on `main`
+  already carry dozens of pre-existing errors.
 
 ### Security (OWASP-aware)
 
@@ -75,7 +79,9 @@ For each file (or each hunk, when reviewing a diff), check:
 ### Workspace conventions
 
 - File/folder naming, public-API boundaries (no deep imports into `internal/`, `src/lib/...`).
-- Forbidden patterns called out in instruction files (e.g. `as unknown as`, `T[]` vs `Array<T>`).
+- Forbidden patterns called out in instruction files (e.g. `as unknown as`, `T[]` vs `Array<T>`). Grep the
+  added lines instead of eyeballing hunks — reading misses casts in spec fixtures (PR #566 shipped one):
+  `git diff <base> -U0 | Select-String '^\+.*as unknown as'` (diff mode: `git diff -U0` + `git diff --staged -U0`).
 - Generated/legacy preferences.
 - Test conventions (co-located `*.spec.ts`, `waitUpgrade()`, no skipped tests left behind).
 
@@ -107,16 +113,30 @@ bunx fallow audit --base <resolved-base-ref> --format json > tmp/fallow-audit.js
 **For single-file or folder mode**:
 
 ```bash
-bunx fallow health --file <path> --format json > tmp/fallow-audit.json
+# `health` has no `--file` flag — run it whole-repo, then keep only findings[] whose `path` is in scope.
+bunx fallow health --format json > tmp/fallow-audit.json
 # or for dead-code:
 bunx fallow dead-code --format json > tmp/fallow-audit.json
 ```
 
+Without coverage input, `crap` assumes 0 % coverage (CRAP = cyclomatic² + cyclomatic), so treat high CRAP on a
+well-tested file as complexity debt, not an introduced regression. When `audit` fails on CRAP alone, re-score it
+with real coverage before reporting anything, once per affected project that writes lcov — today only `grid`:
+`bun nx test grid --coverage`, then
+`bun .github/skills/fallow/scripts/crap-from-lcov.ts --lcov coverage/libs/grid/lcov.info --root libs/grid`
+(see the `fallow` skill). Only `ok (coverage artifact)` rows are cleared. Report `REAL` rows at their fallow
+tier, and `UNVERIFIED (no lcov)` rows (files outside that lcov, e.g. adapter code — the adapters emit no lcov)
+at their fallow tier marked "unverified, no coverage" — never drop them.
+
 **For full working-tree scope** (uncommitted changes):
 
 ```bash
-bunx fallow --format json > tmp/fallow-audit.json
+bunx fallow audit --base HEAD --format json > tmp/fallow-audit.json
 ```
+
+Use `audit --base HEAD`, not bare `bunx fallow`: bare output (11 MB, `check`/`dupes`/`health` keys) has no
+`introduced` flags and no `complexity.findings`, so `crap-from-lcov.ts` silently prints "No complexity findings
+to re-score". `audit` exits 1 on any introduced finding — read `verdict` and the findings, not the exit code.
 
 After running, read `tmp/fallow-audit.json` and extract findings. Map to report severity:
 
@@ -127,9 +147,41 @@ After running, read `tmp/fallow-audit.json` and extract findings. Map to report 
 | `moderate`                                                              | **Nit**                                         |
 | dead-code (`unused-export`, `unused-file`) in `libs/grid/src/public.ts` | **Blocking**                                    |
 | dead-code elsewhere                                                     | **Should fix**                                  |
+| `duplication` clone group overlapping a changed hunk (specs included)   | **Should fix**                                  |
 | `circular-dependencies`                                                 | **Blocking**                                    |
 
 Filter out findings in `libs/grid/scripts/`, `tools/`, `demos/`, and `apps/docs/` with CRAP < 900 (these have relaxed thresholds per `.fallowrc.json`). Include all others.
+
+**Duplication is scoped by hunk, not by file.** `audit` marks every clone group in a touched file `introduced`, so a
+spec with long-standing repeated setup floods the list. Keep only groups where some instance's
+`[start_line, end_line]` overlaps a `git diff -U0 <base>` hunk range of the same file — those are clones the change
+added. No duplication is allowed, tests included: extract a local helper in the enclosing `describe`.
+
+If `duplication_introduced` suddenly jumps to ~the whole repo's group count (#547: 1 → 109) after a file was
+rewritten by a script, check line endings first. On this Windows (`core.autocrlf=true`) tree, a file saved with LF
+while the base worktree is CRLF makes fallow's baseline comparison miss every group. Restore CRLF and re-run.
+`git diff` hides this because it normalizes line endings.
+
+Hunk overlap is only a proxy: a uniform rename across a file (e.g. `foo()` → `bar()` at every call site) overlaps
+pre-existing clones without creating any. Before reporting an overlap from such an edit, confirm per file that the
+clone-group count actually grew. Run `bunx fallow dupes --format json` on the current tree, then on a **separate
+checkout of the comparison revision** — the merge-base from §1 in `branch` mode, `HEAD` otherwise — so the user's
+working tree and stash are never touched (`git stash` would leave committed branch changes in place, and on a clean
+tree `git stash pop` would pop an unrelated stash):
+
+```powershell
+$wt = "$env:TEMP\qa-dupes-base"; git worktree add --detach $wt <rev>
+New-Item -ItemType Junction -Path "$wt\node_modules" -Target "$PWD\node_modules" | Out-Null
+try { Push-Location $wt; bunx fallow dupes --format json --quiet > "$env:TEMP\dupes-base.json" }
+finally { Pop-Location; (Get-Item "$wt\node_modules").Delete(); git worktree remove --force $wt }
+```
+
+The `node_modules` junction is required: without it fallow's test plugins never activate, specs and e2e drop out of the
+scan, and the baseline is silently partial (640 vs 951 files, ≈200 vs ≈1400 groups). That is also why fallow's own
+`%TEMP%\fallow-audit-base-cache-*` worktrees are not a usable baseline. Delete the junction with `.Delete()` **before**
+`git worktree remove`, so the removal cannot recurse into the real `node_modules`. In PowerShell, never dedupe
+clone-group objects with `Select-Object -Unique` — it compares `ToString()` and collapses every group into one; dedupe
+on a `"path:start-end"` string instead.
 
 Each fallow finding becomes one report item with the fallow `path:line` as the location. Quote the fallow `description` as the Problem and use the `actions[0].description` as the Fix suggestion.
 

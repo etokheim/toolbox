@@ -21,7 +21,7 @@ When the constraints below conflict, resolve them in this order. A higher-priori
 **Trade-off rules:**
 
 - **Performance vs. maintainability** — prefer maintainability **unless** the code is on a documented hot path (scroll, cell render, virtualization, render scheduler tick) **or** the perf gap is measurable and material in a benchmark.
-- **Bundle size vs. maintainability** — investigate above the 45 KiB gzip soft warning, but do not sacrifice readable ownership or clear behavior for byte savings. Current core hard cap is 52 KiB gzip / 170 KiB raw. The user permits future increases after evaluating need, code quality, plugin placement and measured impact; record rationale and update enforcement together (see `copilot-instructions.md` → standing budget permission).
+- **Bundle size vs. maintainability** — investigate above the 45 KiB gzip soft warning, but do not sacrifice readable ownership or clear behavior for byte savings. Current core hard cap is 52 KiB gzip / 175 KiB raw. The user permits future increases after evaluating need, code quality, plugin placement and measured impact; record rationale and update enforcement together (see `copilot-instructions.md` → standing budget permission).
 - **Bundle size vs. performance** — consider a smaller form (lazy-load, plugin entry point, simpler algorithm), then a justified budget increase rather than a harmful runtime or readability trade-off. No per-increase approval is required; commit/remote consent rules are unchanged.
 - **Speed of delivery vs. anything above** — never. "It was faster to write" is not a valid justification.
 
@@ -49,14 +49,25 @@ Avoid shortcuts and quick hacks. Prefer correct, maintainable solutions even whe
 
 ## Bundle Size
 
-- **Core budget**: `tools/core-bundle-budget.ts`: ≤174080 raw / ≤53248 gzip bytes, soft warning at 46080 gzip bytes. Bun's default gzip is authoritative even when Nx/Vite runs under Node.
-- **Plugin budget**: Each plugin ≤55 KiB raw except Selection ≤60 KiB; unchanged by the core increase.
+- **Core budget**: `tools/core-bundle-budget.ts`: ≤179200 raw / ≤53248 gzip bytes, soft warning at 46080 gzip bytes. Bun's default gzip is authoritative even when Nx/Vite runs under Node.
+- **Plugin budget**: Each plugin ≤55 KiB raw except Editing ≤56 KiB and Selection ≤60 KiB.
 - **Adapter budgets**: `grid-react/index.js` ≤50 kB, `grid-vue/index.js` ≤50 kB
 - **Enforced automatically**: Vite `bundleBudget` plugin fails the build on violations (see `tools/vite-bundle-budget.ts`)
 - **Tree-shakeable**: Features and plugins are separate entry points, not bundled in core
 - **No dead code**: Remove unused functions, imports, and types immediately
 - **Minimize abstraction overhead**: Prefer inline code over creating classes/wrappers for simple operations
 - **Audit before adding**: New features must justify their byte cost
+
+## Bundle Composition (global rule)
+
+The build output must be as small, fast and correct as possible. These rules govern **where** code lives and **how** it is bundled:
+
+- **No shared chunks.** Every entry (`index.js`, each plugin, each feature, each UMD file) is self-contained. Consumers never download an extra "shared" bundle.
+- **Code shared by plugins only** lives in `libs/grid/src/lib/plugins/shared/`. It is inlined into each plugin bundle that imports it. Never move plugin-only code into `core/` to share it.
+- **Code goes in core only** when core itself uses it, or its byte cost in `index.js` is negligible.
+- **No source duplication.** Extract a shared helper instead of copying code between plugins. Duplication in _build output_ (an inlined helper) is acceptable; duplication in the _repo_ is not.
+- **Plugins import core freely by relative path.** `tools/vite-core-imports.ts` routes every imported symbol: public API (value exports of `src/index.ts`) comes from `@toolbox-web/grid` (the `TbwGrid` global in UMD), internal helpers are inlined, and literal-only constants (`GridClasses`, …) stay inlined because terser folds them.
+- **Module-level state exists once at runtime.** If a plugin needs a function from a core module that holds module-level state (caches, registries, `let` bindings), export that function from `public.ts` (`@internal` when it is not consumer API). Otherwise the plugin carries its own copy of the state. The build fails on violations: `[core-imports] … inlines module state`.
 
 ## Performance
 

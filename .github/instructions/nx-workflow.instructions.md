@@ -17,7 +17,7 @@ applyTo: '{libs,apps,demos,e2e}/**'
 bun nx serve docs          # Start docs site (port 4401)
 bun nx build grid          # Build grid library
 bun nx test grid           # Run grid tests
-bun nx test grid --testFile=src/lib/plugins/visibility/group-drag.spec.ts
+bun nx test grid group-drag.spec.ts   # positional file filter (no `--`; `--testFile` is rejected by Vitest 4)
 bun run lint               # Lint all projects
 bun run lint && bun run test && bun run build  # CI flow
 bun nx affected -t test    # Run affected tests
@@ -30,6 +30,7 @@ bun nx serve demo-vanilla  # Serve a demo app
 - ❌ `bunx vitest …` — same issue
 - ❌ `npx eslint …` — use `bun nx lint <project>` instead
 - ✅ Always use `bun nx <target> <project>` or `bun run <script>`
+- ⚠️ `bun nx run-many … > out.log` captures ONLY the Nx summary (no test counts, no lint warnings) — add `--outputStyle=static` when you need per-task output in a file. Strip ANSI codes before grepping it.
 
 ## Path Mappings
 

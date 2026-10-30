@@ -107,14 +107,21 @@ export function loadBlock(
 ): Promise<GetRowsResult> {
   const range = getBlockRange(blockNumber, blockSize);
 
-  const result = dataSource.getRows({
-    startNode: range.start,
-    endNode: range.end,
-    pageSize: range.end - range.start,
-    sortModel: params.sortModel,
-    filterModel: params.filterModel,
-    signal,
-  });
+  let result: Promise<GetRowsResult> | Subscribable<GetRowsResult>;
+  try {
+    result = dataSource.getRows({
+      startNode: range.start,
+      endNode: range.end,
+      pageSize: range.end - range.start,
+      sortModel: params.sortModel,
+      filterModel: params.filterModel,
+      signal,
+    });
+  } catch (error) {
+    // A non-async getRows() can throw synchronously — surface it as a rejection
+    // so the caller's .catch releases the block and broadcasts datasource:error.
+    return Promise.reject(error);
+  }
   return toResultPromise(result, signal);
 }
 
@@ -131,13 +138,8 @@ export function getRowFromCache(
   return block[indexInBlock];
 }
 
-export function isBlockLoaded(blockNumber: number, loadedBlocks: Map<number, unknown[]>): boolean {
-  return loadedBlocks.has(blockNumber);
-}
-
-export function isBlockLoading(blockNumber: number, loadingBlocks: Set<number>): boolean {
-  return loadingBlocks.has(blockNumber);
-}
+/** Sources built by {@link createUrlDataSource}. */
+const urlDataSources = new WeakSet<ServerSideDataSource>();
 
 /**
  * Build a default {@link ServerSideDataSource} that fetches the whole dataset
@@ -189,10 +191,22 @@ export function createUrlDataSource(url: string): ServerSideDataSource {
     return datasetPromise;
   };
 
-  return {
+  const source: ServerSideDataSource = {
     async getRows({ startNode, endNode, signal }: GetRowsParams): Promise<GetRowsResult> {
       const { rows, total } = await loadDataset(signal);
       return { rows: rows.slice(startNode, endNode), totalNodeCount: total };
     },
   };
+  urlDataSources.add(source);
+  return source;
+}
+
+/**
+ * Whether `source` was built by {@link createUrlDataSource}. Such a source only
+ * slices a cached dataset and ignores `sortModel` / `filterModel`, so the grid
+ * must sort and filter its rows locally.
+ * @internal
+ */
+export function isUrlDataSource(source: ServerSideDataSource | null): boolean {
+  return source != null && urlDataSources.has(source);
 }

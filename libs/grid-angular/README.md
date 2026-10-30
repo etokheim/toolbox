@@ -206,6 +206,10 @@ For opt-in single-cell entry, import `GridCellEntryDirective` from
 directives. Use `[cellEntry]="{ singleClick: true }"`,
 `[editing]="{ editOn: 'manual', tabToEdit: true }"` and `[selection]="'range'"`.
 The same options work in `gridConfig.features` without attribute directives.
+For selected-cell Delete/Backspace, import `GridUndoRedoDirective` from
+`features/undo-redo`, bind `[undoRedo]="true"` and
+`[cellEntry]="{ clearOnDelete: true }"`, and handle `(cellClear)` for unwrapped
+outcomes. Column `clearValue` rules use the shared API.
 See [Cell Entry](https://toolboxjs.com/grid/plugins/cell-entry/) for keyboard,
 validation and boundary-focus behaviour.
 
@@ -1214,14 +1218,19 @@ export class TextFilterComponent extends BaseFilterPanel {
 | `selectionChange`   | `OutputEmitterRef<SelectionChangeDetail>`  | Selection changed            |
 | `rowMove`           | `OutputEmitterRef<RowMoveDetail>`          | Row moved (drag & drop)      |
 | `groupToggle`       | `OutputEmitterRef<GroupToggleDetail>`      | Group expanded/collapsed     |
+| `groupLoadError`    | `OutputEmitterRef<GroupLoadErrorDetail>`   | Server group rows failed     |
 | `treeExpand`        | `OutputEmitterRef<TreeExpandDetail>`       | Tree node expanded/collapsed |
 | `treeLoadStart`     | `OutputEmitterRef<TreeLoadStartDetail>`    | Lazy child loading started   |
 | `treeLoadEnd`       | `OutputEmitterRef<TreeLoadEndDetail>`      | Lazy child loading finished  |
 | `treeLoadError`     | `OutputEmitterRef<TreeLoadErrorDetail>`    | Lazy child loading failed    |
 | `detailExpand`      | `OutputEmitterRef<DetailExpandDetail>`     | Detail panel toggled         |
+| `detailLoadError`   | `OutputEmitterRef<DetailLoadErrorDetail>`  | Server detail data failed    |
 | `responsiveChange`  | `OutputEmitterRef<ResponsiveChangeDetail>` | Responsive mode changed      |
 | `copy`              | `OutputEmitterRef<CopyDetail>`             | Data copied to clipboard     |
 | `paste`             | `OutputEmitterRef<PasteDetail>`            | Data pasted from clipboard   |
+| `undo`              | `OutputEmitterRef<UndoRedoDetail>`         | Undo performed               |
+| `redo`              | `OutputEmitterRef<UndoRedoDetail>`         | Redo performed               |
+| `historyChange`     | `OutputEmitterRef<HistoryChangeDetail>`    | Undo/redo history changed    |
 
 ### GridDetailView Inputs
 

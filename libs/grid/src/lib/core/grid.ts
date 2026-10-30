@@ -8,7 +8,7 @@ import {
   type AriaState,
 } from './internal/aria';
 import { normalizeColumns, type ColumnShorthand } from './internal/column-shorthand';
-import { autoSizeColumns, updateTemplate } from './internal/columns';
+import { autoSizeColumns, interleaveHiddenColumns, updateTemplate } from './internal/columns';
 import { ConfigManager } from './internal/config-manager';
 import { INVALID_ATTRIBUTE_JSON, warnDiagnostic } from './internal/diagnostics';
 import { buildBareGridDOMIntoElement } from './internal/dom-builder';
@@ -31,7 +31,7 @@ import { RenderPhase, RenderScheduler } from './internal/render-scheduler';
 import { createResizeController } from './internal/resize';
 import { animateRow, animateRowById, animateRows } from './internal/row-animation';
 import { resolveRowIdOrThrow, RowManager, tryResolveRowId } from './internal/row-manager';
-import { releaseCell } from './internal/control-lifecycle';
+import { releasePooledRow } from './internal/row-teardown';
 import { invalidateCellCache, renderVisibleRows } from './internal/rows';
 import { getRowWindow } from './internal/row-window';
 import { applySort, reapplyCoreSort, toggleSort } from './internal/sorting';
@@ -362,8 +362,17 @@ export class DataGridElement<T = any> extends HTMLElement implements InternalGri
   // #endregion
 
   // #region Derived State
-  // _rows: result of applying plugin processRows hooks
-  _rows: T[] = [];
+  // _rows: result of applying plugin processRows hooks.
+  // Accessor so EVERY reassignment (sort fast path, clear-sort, RowDragDrop, …) marks the
+  // lazy row-ID map dirty — otherwise `_getRowEntry(id).index` goes stale (#526).
+  #processedRows: T[] = [];
+  get _rows(): T[] {
+    return this.#processedRows;
+  }
+  set _rows(value: T[]) {
+    this.#processedRows = value;
+    this.#rowIdMapDirty = true;
+  }
 
   // _baseColumns: columns before plugin transformation (analogous to #rows for row processing)
   // This is the source of truth for processColumns - plugins transform these
@@ -492,6 +501,7 @@ export class DataGridElement<T = any> extends HTMLElement implements InternalGri
   get rows(): T[] {
     return this._rows;
   }
+
   set rows(value: T[]) {
     // Invariant: #rows is always an array. Coerce nullish/non-array to []
     // (frameworks may sync `grid.rows = undefined` when no rows prop is provided).
@@ -502,6 +512,12 @@ export class DataGridElement<T = any> extends HTMLElement implements InternalGri
       this.#virtManager.cancelHeightAnchor();
       this.#queueUpdate('rows');
     }
+  }
+
+  /** @internal Source setters have queued a replacement that the current view cannot yet resolve. */
+  get _pendingSourceUpdate(): 'rows' | 'config' | undefined {
+    const flags = this.#pendingUpdateFlags;
+    return flags.rows ? 'rows' : flags.columns || flags.gridConfig ? 'config' : undefined;
   }
 
   /**
@@ -744,7 +760,7 @@ export class DataGridElement<T = any> extends HTMLElement implements InternalGri
 
   /**
    * Set loading state for a specific row.
-   * Shows a small spinner indicator on the row.
+   * Shows a small spinner or custom loadingRenderer on the row.
    *
    * @param rowId - The row's unique identifier (from getRowId)
    * @param loading - Whether the row is loading
@@ -773,7 +789,7 @@ export class DataGridElement<T = any> extends HTMLElement implements InternalGri
 
   /**
    * Set loading state for a specific cell.
-   * Shows a small spinner indicator on the cell.
+   * Shows a small spinner or custom loadingRenderer on the cell.
    *
    * @param rowId - The row's unique identifier
    * @param field - The column field
@@ -1040,9 +1056,18 @@ export class DataGridElement<T = any> extends HTMLElement implements InternalGri
    * @internal Plugin API
    */
   requestVirtualRefresh(): void {
+    // Rows were swapped in place (e.g. ServerSide placeholders → loaded rows), so
+    // ids in a row-ID map built before the swap are stale. Mark it dirty — O(1);
+    // the lazy rebuild runs only if something reads it.
+    this.#rowIdMapDirty = true;
     // Invalidate start so refreshVirtualWindow doesn't early-exit
     this._virtualization.start = -1;
-    this.refreshVirtualWindow(false);
+    // The rebuilt rows lost plugin visual state (selection classes, aria-selected);
+    // the virtualized non-force path runs no afterRender, so reapply it exactly as
+    // a scroll that changes the window does (#onScrollBatched).
+    if (this.refreshVirtualWindow(false)) {
+      this.#pluginManager?.onScrollRender();
+    }
   }
 
   /**
@@ -1498,9 +1523,6 @@ export class DataGridElement<T = any> extends HTMLElement implements InternalGri
     // Configure variable row heights based on plugins and user config
     this.#virtManager.configureVariableHeights();
 
-    // Initialize ARIA selection state
-    queueMicrotask(() => this.#updateAriaSelection());
-
     // Request initial render through the scheduler.
     // The scheduler resolves ready() after the render cycle completes.
     // Framework adapters (React/Angular) will request COLUMNS phase via refreshColumns(),
@@ -1800,20 +1822,6 @@ export class DataGridElement<T = any> extends HTMLElement implements InternalGri
     // and doesn't conflict with sortApplied/filterApplied announcements.
     announceDataLoaded(this, this.#ariaState, this.#rows.length);
   }
-
-  /** Update ARIA selection attributes on rendered rows/cells */
-  #updateAriaSelection(): void {
-    // Mark active row and cell with aria-selected
-    const rows = this._bodyEl?.querySelectorAll(':scope > .data-grid-row');
-    const indices = getRowWindow(this)?.indices;
-    rows?.forEach((row, rowIdx) => {
-      const isActiveRow = (indices?.[rowIdx] ?? rowIdx) === this._focusRow;
-      row.setAttribute('aria-selected', String(isActiveRow));
-      row.querySelectorAll('.cell').forEach((cell, colIdx) => {
-        (cell as HTMLElement).setAttribute('aria-selected', String(isActiveRow && colIdx === this._focusCol));
-      });
-    });
-  }
   // #endregion
 
   // #region Batched Update System
@@ -2022,6 +2030,7 @@ export class DataGridElement<T = any> extends HTMLElement implements InternalGri
         this.#baseColumns.length > 0 ? this.#baseColumns : this._columns,
         this.#pluginManager.getAll(),
       );
+      sourceColumns = this.#pluginManager.orderColumns(sourceColumns) as ColumnInternal<T>[];
       const visibleCols = sourceColumns.filter((c) => !c.hidden);
       let processedColumns = this.#pluginManager.processColumns(visibleCols);
       // Hidden managed columns do not reach the hooks. Retain their saved state
@@ -2057,90 +2066,19 @@ export class DataGridElement<T = any> extends HTMLElement implements InternalGri
           // Complete replacement: use processed columns directly (pivot mode)
           // Preserve hidden columns at the end
           this._columns = [...processedColumns, ...hiddenCols] as ColumnInternal<T>[];
+        } else if (hiddenCols.length === 0) {
+          this._columns = processedColumns as ColumnInternal<T>[];
         } else {
-          // Plugins may have modified, added, or reordered visible columns.
-          // Re-interleave hidden columns at their original positions (from sourceColumns)
-          // so that showing a column later restores it to its correct position.
-          this._columns = this.#mergeColumnsPreservingOrder(
-            sourceColumns,
-            processedColumns as ColumnInternal<T>[],
-            hiddenCols,
-          );
+          // Plugins may have modified, added, or dropped visible columns — their order is
+          // authoritative. Hidden columns are interleaved next to their unmoved source
+          // neighbours so showing one later restores it where it belongs (#512).
+          this._columns = interleaveHiddenColumns(sourceColumns, processedColumns as ColumnInternal<T>[]);
         }
       } else {
         // Plugins returned columns unchanged, but we may need to restore from base
         this._columns = [...sourceColumns] as ColumnInternal<T>[];
       }
     }
-  }
-
-  /**
-   * Merge plugin-processed visible columns with hidden columns, preserving original order.
-   * Hidden columns are re-inserted at their original positions (from sourceColumns) so that
-   * showing a column later restores it to the correct position instead of appending at end.
-   *
-   * @param sourceColumns - The original columns in correct order (from #baseColumns)
-   * @param processedVisible - Plugin-processed visible columns
-   * @param hiddenCols - Hidden columns to re-interleave
-   * @returns Merged columns array preserving original ordering for hidden columns
-   */
-  #mergeColumnsPreservingOrder(
-    sourceColumns: ColumnInternal<T>[],
-    processedVisible: ColumnInternal<T>[],
-    hiddenCols: ColumnInternal<T>[],
-  ): ColumnInternal<T>[] {
-    if (hiddenCols.length === 0) return processedVisible;
-
-    // Build a map of processed visible columns by field for O(1) lookup
-    const processedMap = new Map<string, ColumnInternal<T>>();
-    for (const col of processedVisible) {
-      processedMap.set(col.field, col);
-    }
-
-    // Collect plugin-added columns (not in source) — these go at the end
-    const sourceFields = new Set(sourceColumns.map((c) => c.field));
-    const pluginAdded: ColumnInternal<T>[] = [];
-    for (const col of processedVisible) {
-      if (!sourceFields.has(col.field)) {
-        pluginAdded.push(col);
-      }
-    }
-
-    // Walk sourceColumns in original order, picking from processed (visible) or hidden
-    const result: ColumnInternal<T>[] = [];
-    for (const srcCol of sourceColumns) {
-      const processed = processedMap.get(srcCol.field);
-      if (processed) {
-        // Visible column — use the plugin-processed version
-        result.push(processed);
-      } else if (srcCol.hidden) {
-        // Hidden column — keep at original position
-        result.push(srcCol);
-      }
-      // else: column was removed by plugins — skip
-    }
-
-    // Reinsert plugin-added columns at the position chosen by the plugin.
-    // Anchor each added column before the next source column in the processed
-    // visible order; if there is no following source column, it belongs at the end.
-    for (const added of pluginAdded) {
-      const processedIndex = processedVisible.indexOf(added);
-      const nextSource = processedVisible.slice(processedIndex + 1).find((col) => sourceFields.has(col.field));
-
-      if (!nextSource) {
-        result.push(added);
-        continue;
-      }
-
-      const anchorIndex = result.findIndex((col) => col.field === nextSource.field);
-      if (anchorIndex === -1) {
-        result.push(added);
-      } else {
-        result.splice(anchorIndex, 0, added);
-      }
-    }
-
-    return result;
   }
 
   /** Recompute row model via plugin hooks. */
@@ -2218,12 +2156,18 @@ export class DataGridElement<T = any> extends HTMLElement implements InternalGri
     }
     renderVisibleRows(this, start, end, epoch, this.#renderRowHook);
 
-    // Re-apply loading state for rows that are currently loading.
-    // renderInlineRow clears innerHTML (destroying overlay DOM) and removes the loading class,
-    // so we must re-inject the overlay after row rendering completes.
+    // Re-apply active loading states after row rendering rebuilds pooled DOM.
     if (this.#loadingRows.size > 0) {
       for (const rowId of this.#loadingRows) {
         this.#updateRowLoadingState(rowId, true);
+      }
+    }
+
+    if (this.#loadingCells.size > 0) {
+      for (const [rowId, fields] of this.#loadingCells) {
+        for (const field of fields) {
+          this.#updateCellLoadingState(rowId, field, true);
+        }
       }
     }
   }
@@ -2394,12 +2338,7 @@ export class DataGridElement<T = any> extends HTMLElement implements InternalGri
     adapter?.beginBatch?.(this);
     try {
       for (let r = 0; r < this._rowPool.length; r++) {
-        const rowEl = this._rowPool[r];
-        const cells = rowEl.children;
-        for (let c = 0; c < cells.length; c++) {
-          const cell = cells[c] as HTMLElement;
-          if (cell.firstElementChild) releaseCell(this, cell);
-        }
+        releasePooledRow(adapter, this._rowPool[r]);
       }
       this._rowPool.length = 0;
       if (this._bodyEl) this._bodyEl.innerHTML = '';
@@ -2501,7 +2440,7 @@ export class DataGridElement<T = any> extends HTMLElement implements InternalGri
     const rowEl = this.findRenderedRowElement?.(rowData.index);
     if (!rowEl) return;
 
-    setRowLoadingState(rowEl, loading);
+    setRowLoadingState(rowEl, loading, this.#effectiveConfig?.loadingRenderer, this.__frameworkAdapter);
   }
 
   /**
@@ -2523,10 +2462,13 @@ export class DataGridElement<T = any> extends HTMLElement implements InternalGri
     const colIndex = this._visibleColumns.findIndex((c) => c.field === field);
     if (colIndex < 0) return;
 
-    const cellEl = rowEl.children[colIndex] as HTMLElement | undefined;
+    // Match the `data-col` marker rather than indexing `children`: a plugin-rendered
+    // custom row (responsive card, group header) and the row-loading overlay also live
+    // there, so a positional lookup can land on non-cell DOM.
+    const cellEl = rowEl.querySelector<HTMLElement>(`:scope > .cell[data-col="${colIndex}"]`);
     if (!cellEl) return;
 
-    setCellLoadingState(cellEl, loading);
+    setCellLoadingState(cellEl, loading, this.#effectiveConfig?.loadingRenderer, this.__frameworkAdapter);
   }
 
   /**
@@ -3044,7 +2986,9 @@ export class DataGridElement<T = any> extends HTMLElement implements InternalGri
    *
    * Resolves the row from the full dataset, so a row that is filtered or paged
    * out of the visible view can still be updated. If the ID matches no row at
-   * all, a `TBW041` warning is logged and the call is a no-op (never throws).
+   * all, a `TBW041` warning is logged and the call is a no-op (never throws);
+   * with `source: 'history'` (an undo/redo replay of a since-deleted row) the
+   * no-op is silent.
    *
    * **Filtered/paged-out rows:** the emitted `cell-change.rowIndex` is `-1`
    * (the row is not in the processed view). The update only schedules a
@@ -3071,13 +3015,19 @@ export class DataGridElement<T = any> extends HTMLElement implements InternalGri
     this.#rowManager.updateRow(id, changes, source);
   }
 
+  /** @internal Invalidate core-owned derived values and retained cell contents after a plugin write. */
+  _invalidateRowContent(row: T): void {
+    this.#rowManager.invalidateRowContent(row);
+  }
+
   /**
    * Batch update multiple rows.
    * More efficient than multiple `updateRow()` calls - single render cycle.
    *
    * Each row is resolved from the full dataset, so filtered/paged-out rows are
-   * updated too. An unresolvable ID logs a `TBW041` warning and is skipped
-   * without aborting the rest of the batch (never throws).
+   * updated too. An unresolvable ID logs a `TBW041` warning (silent for
+   * `source: 'history'`) and is skipped without aborting the rest of the batch
+   * (never throws).
    *
    * **Filtered/paged-out rows:** for a row resolved from the source dataset but
    * not currently in the processed view, the emitted `cell-change.rowIndex` is

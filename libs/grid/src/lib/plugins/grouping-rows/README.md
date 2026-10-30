@@ -262,6 +262,18 @@ grid.addEventListener('group-expand', (e) => {
 });
 ```
 
+### `group-load-error`
+
+Fired when the ServerSide `getChildRows()` request for a pre-defined group's rows fails
+(see [Server-Side Data](#server-side-data-unified-datasource)). The group leaves its
+loading state; collapsing and re-expanding it retries the fetch.
+
+```typescript
+grid.addEventListener('group-load-error', (e) => {
+  console.error('Group', e.detail.groupKey, 'failed:', e.detail.error);
+});
+```
+
 ## API Methods
 
 Access via `grid.getPluginByName('groupingRows')`:
@@ -354,10 +366,26 @@ grid.gridConfig = {
 ```
 
 The `ServerSidePlugin` manages data fetching while GroupingRows handles group
-rendering and expand/collapse. When a group is expanded, GroupingRows automatically
+rendering and expand/collapse. Whenever a group is expanded (by the user, `toggle()`,
+`expand()`, `expandAll()`, or `defaultExpanded`), GroupingRows automatically
 fires a `datasource:fetch-children` query — the ServerSide plugin calls
 `getChildRows()` and delivers the results back via `datasource:children`.
-Viewport mapping is handled automatically for correct pagination.
+Viewport mapping is handled automatically for correct pagination: top-level groups
+load in blocks of `pageSize`, unloaded groups render as loading placeholders that
+take up scroll space, and each block's definitions are merged at their `startNode`
+(loaded rows and expansion survive later blocks; `defaultExpanded: true` opens groups
+not shown before, and user-collapsed groups stay collapsed across refetches). A new
+ServerSide cache generation — server sort/filter, `refresh()`, `purgeCache()` —
+replaces the definitions.
+
+If `getChildRows()` rejects, the group leaves its loading state and `group-load-error`
+fires. An in-flight request is aborted (`params.signal`) when new group definitions
+arrive (server sort/filter change, `refresh()`, or `setGroups()`), and when
+`setGroupRows()` / `clearGroupRows()` replaces or clears that group's rows; collapsing
+a group keeps its request. After a server refetch, still-expanded groups whose rows
+were loaded (or loading) request them again. An expanded group without rows gets one
+automatic attempt per set of group definitions (a failing group is not re-requested
+on every render).
 
 ### Imperative API (Without ServerSide)
 

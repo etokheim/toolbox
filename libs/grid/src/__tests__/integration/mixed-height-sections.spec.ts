@@ -150,14 +150,10 @@ describe('production mixed-height section measurement', () => {
       [spacer.style, 'height'],
       [body.style, 'transform'],
     ] as const) {
-      let value = style[property];
-      Object.defineProperty(style, property, {
-        configurable: true,
-        get: () => value,
-        set: (next: string) => {
-          events.push(property);
-          value = next;
-        },
+      const setProperty = style.setProperty.bind(style);
+      vi.spyOn(style, 'setProperty').mockImplementation((name, value, priority) => {
+        if (name === property) events.push(property);
+        setProperty(name, value, priority);
       });
     }
     events.length = 0;

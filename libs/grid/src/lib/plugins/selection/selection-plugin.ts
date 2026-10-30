@@ -14,7 +14,7 @@ import { isDisclosureFocused } from '../../core/internal/control-lifecycle';
 import { CONTROL_RENDER_ERROR, throwDiagnostic } from '../../core/internal/diagnostics';
 import { getPrimaryPointer } from '../../core/internal/pointer-modality';
 import { tryResolveRowId } from '../../core/internal/row-manager';
-import { clearCellFocus, getRowIndexFromCell } from '../../core/internal/utils';
+import { getRowIndexFromCell } from '../../core/internal/utils';
 import type {
   AfterCellRenderContext,
   GridElement,
@@ -37,6 +37,7 @@ import {
   type DragAlternativeAction,
   type DragAlternativeMenu,
 } from '../shared/drag-alternative-menu';
+import { isFormFieldKeyTarget } from '../shared/form-field-target';
 import {
   computeKeyboardExtension,
   fieldsBetween,
@@ -97,12 +98,6 @@ const CHECKBOX_COLUMN_FIELD = '__tbw_checkbox';
 const EXTEND_ITEM_ORDER = 60;
 
 /** Keys that move grid focus — selection reacts to these in cell/range mode. */
-function isFormField(target: EventTarget | null): boolean {
-  if (!(target instanceof HTMLElement)) return false;
-  const tag = target.tagName;
-  return tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA' || target.isContentEditable;
-}
-
 const NAV_KEYS: readonly string[] = [
   'ArrowUp',
   'ArrowDown',
@@ -286,10 +281,18 @@ export class SelectionPlugin<TRow = unknown> extends BaseGridPlugin<SelectionCon
     queries: [
       { type: 'getSelection', description: 'Get the current selection state' },
       { type: 'selectRows', description: 'Select specific rows by index (row mode only)' },
-      { type: 'getSelectedRowIndices', description: 'Get sorted array of selected row indices' },
+      {
+        type: 'getSelectedRowIndices',
+        description: 'Get sorted array of row indices touched by the current selection (works in all modes)',
+      },
       { type: 'getSelectedRows', description: 'Get actual row objects for the current selection (works in all modes)' },
       { type: 'getSelectedColumns', description: 'Get field names of selected columns (column mode only)' },
       { type: 'selectColumns', description: 'Select specific columns by field name (column mode only)' },
+      {
+        type: 'selectContextMenuTarget',
+        description:
+          'Move the selection to the cell a context menu was invoked on unless it is already selected; returns getSelectedRowIndices()',
+      },
       {
         type: 'getContextMenuItems',
         description: 'Contribute the non-dragging range-extension action (WCAG 2.2 SC 2.5.7)',
@@ -364,9 +367,10 @@ export class SelectionPlugin<TRow = unknown> extends BaseGridPlugin<SelectionCon
   #armedCorner: RangeCorner | null = null;
   /**
    * Last cell the user deliberately anchored with a *primary* interaction.
-   * Kept separate from {@link cellAnchor} because a right-click outside the
-   * range re-anchors that one so the menu targets the clicked cell — which
-   * would leave "Extend selection to here" with nothing to extend from.
+   * Kept separate from {@link cellAnchor} because opening a context menu outside
+   * the range re-anchors that one so the menu targets the invoked cell (see
+   * `#selectContextMenuTarget`) — which would leave "Extend selection to here"
+   * with nothing to extend from.
    */
   #extendAnchor: { row: number; col: number } | null = null;
   #extendMenu: DragAlternativeMenu | null = null;
@@ -491,6 +495,10 @@ export class SelectionPlugin<TRow = unknown> extends BaseGridPlugin<SelectionCon
     super.attach(grid);
     this.#checkboxAttached = true;
 
+    // Pooled rows may carry markers painted by another instance while this one
+    // was detached — the first pass after (re)attach must always wipe.
+    this.#paintedMarks = true;
+
     // Resolve the user-supplied mode (string OR array) into a single normalized
     // shape. Throws on invalid combinations (e.g. ['row', 'cell']).
     this.#mode = normalizeMode(this.config.mode);
@@ -593,6 +601,11 @@ export class SelectionPlugin<TRow = unknown> extends BaseGridPlugin<SelectionCon
       const fields = query.context as string[];
       this.#setColumnSelection(fields);
       return true;
+    }
+    if (query.type === 'selectContextMenuTarget') {
+      const { rowIndex, colIndex } = query.context as { rowIndex: number; colIndex: number };
+      this.#selectContextMenuTarget(rowIndex, colIndex);
+      return this.getSelectedRowIndices();
     }
     if (query.type === 'getContextMenuItems') {
       const params = query.context as ContextMenuParams | undefined;
@@ -762,7 +775,11 @@ export class SelectionPlugin<TRow = unknown> extends BaseGridPlugin<SelectionCon
 
   /** Resolve the rendered cell element for a (row, visible-col) pair. */
   #cellFor(row: number, col: number): HTMLElement | null {
-    return this.gridElement?.querySelector<HTMLElement>(`.cell[data-row="${row}"][data-col="${col}"]`) ?? null;
+    const selector = `.cell[data-row="${row}"][data-col="${col}"]`;
+    const body = this.grid._bodyEl;
+    // Own rows only — a nested grid may render the same (row, col) pair.
+    if (body) return body.querySelector<HTMLElement>(`:scope > .data-grid-row > ${selector}`);
+    return this.gridElement?.querySelector<HTMLElement>(selector) ?? null;
   }
 
   /** Resolve the (row, col) of the cell under a viewport coordinate. */
@@ -773,8 +790,10 @@ export class SelectionPlugin<TRow = unknown> extends BaseGridPlugin<SelectionCon
     const cell = (el as Element | null)?.closest?.('.cell[data-row][data-col]');
     // `elementFromPoint` is document-wide: when several grids share a page the
     // drag can wander over a *different* grid's cells. Only accept cells that
-    // belong to this grid instance.
+    // belong to this grid instance — and not to a grid nested inside it.
     if (!cell || !host?.contains?.(cell)) return null;
+    const owner = cell.closest('tbw-grid, [data-tbw-grid]');
+    if (owner && owner !== host && host.contains(owner)) return null;
     const row = parseInt(cell.getAttribute('data-row') ?? '-1', 10);
     const col = parseInt(cell.getAttribute('data-col') ?? '-1', 10);
     return row >= 0 && col >= 0 ? { row, col } : null;
@@ -1137,7 +1156,7 @@ export class SelectionPlugin<TRow = unknown> extends BaseGridPlugin<SelectionCon
     const ctrlOrMeta = event.ctrlKey || event.metaKey;
     if (!ctrlOrMeta) return false;
     // Editors keep their own Ctrl+Space / Ctrl+Shift+Arrow (word selection) behaviour.
-    if (isFormField(event.target) || this.grid.query<boolean>('isEditing').some(Boolean)) return false;
+    if (isFormFieldKeyTarget(event) || this.grid.query<boolean>('isEditing').some(Boolean)) return false;
 
     if (event.key === ' ' || event.key === 'Spacebar') {
       const column = this.visibleColumns[this.grid._focusCol];
@@ -1282,7 +1301,7 @@ export class SelectionPlugin<TRow = unknown> extends BaseGridPlugin<SelectionCon
     else if (ctrlOrMeta && !event.shiftKey && !this.#mode.columnEnabled) axis = 'column';
     else return false;
     if (event.altKey) return false;
-    if (isFormField(event.target)) return false;
+    if (isFormFieldKeyTarget(event)) return false;
     if (this.grid.query<boolean>('isEditing').some(Boolean)) return false;
 
     const rowCount = this.rows.length;
@@ -1363,14 +1382,6 @@ export class SelectionPlugin<TRow = unknown> extends BaseGridPlugin<SelectionCon
 
     this.#rangeFromCoarsePointer = this.#isCoarseEvent(event.originalEvent);
 
-    // Right-click (secondary button) inside an existing range must NOT clear the
-    // selection: this lets the context menu act on the whole range without the
-    // user having to hold Ctrl. Outside any range, fall through to the normal
-    // behavior (clear + select the clicked cell so the menu targets it).
-    if (event.originalEvent.button === 2 && isCellInAnyRange(event.rowIndex, event.colIndex, this.ranges)) {
-      return; // keep selection, don't start a drag
-    }
-
     // Skip utility columns (expander columns, etc.)
     // event.column is already resolved from _visibleColumns in the event builder
     if (event.column && isUtilityColumn(event.column)) {
@@ -1406,12 +1417,12 @@ export class SelectionPlugin<TRow = unknown> extends BaseGridPlugin<SelectionCon
     if (!ctrlKey && this.ranges.length === 1 && rangesEqual(this.ranges[0], newRange)) {
       // Same cell already selected, just update anchor for potential drag
       this.cellAnchor = { row: rowIndex, col: colIndex };
-      this.#setExtendAnchor(event, rowIndex, colIndex);
+      this.#extendAnchor = { row: rowIndex, col: colIndex };
       return true;
     }
 
     this.cellAnchor = { row: rowIndex, col: colIndex };
-    this.#setExtendAnchor(event, rowIndex, colIndex);
+    this.#extendAnchor = { row: rowIndex, col: colIndex };
 
     if (!ctrlKey) {
       this.ranges = [];
@@ -1426,14 +1437,43 @@ export class SelectionPlugin<TRow = unknown> extends BaseGridPlugin<SelectionCon
   }
 
   /**
-   * Remember where a *primary* press anchored the range. A secondary press is
-   * deliberately ignored: right-clicking outside the range re-anchors
-   * {@link cellAnchor} so the menu targets the clicked cell, and reusing that
-   * would make "Extend selection to here" extend from itself.
+   * Point the selection at the cell a context menu was invoked on — however it
+   * was invoked: mouse right-click, touch long-press, Shift+F10, the ContextMenu
+   * key, or a synthesised `contextmenu`. A target already inside the selection
+   * keeps it, so the menu acts on all of it; otherwise the selection moves to
+   * the target row (row mode) or cell (cell/range mode), as file managers and
+   * spreadsheets do. `#extendAnchor` is left alone so "Extend selection to here"
+   * still extends from the last primary anchor rather than from the target.
    */
-  #setExtendAnchor(event: CellMouseEvent, row: number, col: number): void {
-    if (event.originalEvent.button === 2) return;
-    this.#extendAnchor = { row, col };
+  #selectContextMenuTarget(rowIndex: number, colIndex: number): void {
+    if (rowIndex < 0 || !this.isSelectionEnabled()) return;
+    // Column axis (mixed modes): a cell in a selected column is part of the selection.
+    if (this.activeAxis === 'column' && this.selectedColumns.has(this.visibleColumns[colIndex]?.field ?? '')) return;
+    const mode = this.#mode.primary;
+
+    if (mode === 'row') {
+      if (!this.selected.has(rowIndex)) this.selectRows([rowIndex]);
+      return;
+    }
+    if (mode !== 'cell' && mode !== 'range') return;
+
+    const column = this.visibleColumns[colIndex];
+    if (!column || isUtilityColumn(column) || !this.isCellSelectable(rowIndex, colIndex)) return;
+
+    if (mode === 'cell') {
+      const current = this.selectedCell;
+      if (current && current.row === rowIndex && current.col === colIndex) return;
+      this.selectedCell = { row: rowIndex, col: colIndex };
+    } else {
+      if (isCellInAnyRange(rowIndex, colIndex, this.ranges)) return;
+      const range: InternalCellRange = { startRow: rowIndex, startCol: colIndex, endRow: rowIndex, endCol: colIndex };
+      this.ranges = [range];
+      this.activeRange = range;
+      this.cellAnchor = { row: rowIndex, col: colIndex };
+    }
+
+    this.emit<SelectionChangeDetail>('selection-change', this.#buildEvent());
+    this.requestAfterRender();
   }
 
   /** @internal */
@@ -1756,22 +1796,28 @@ export class SelectionPlugin<TRow = unknown> extends BaseGridPlugin<SelectionCon
 
   /**
    * Update checkbox checked states to reflect current selection.
-   * Called from #applySelectionClasses.
+   * Called from #applySelectionClasses; scoped to own rows/header so a nested
+   * grid's checkboxes are left alone. `#createCheckboxColumn()` returns the
+   * input itself as cell content, so it is a DIRECT child of the cell — a
+   * descendant combinator would reach a nested grid rendered inside a cell.
    */
-  #updateCheckboxStates(gridEl: HTMLElement): void {
+  #updateCheckboxStates(scopes: readonly HTMLElement[], header: HTMLElement | null): void {
     this.#refreshCheckboxControls();
-    // Update row checkboxes
-    const rowCheckboxes = gridEl.querySelectorAll('.tbw-select-row-checkbox') as NodeListOf<HTMLInputElement>;
-    rowCheckboxes.forEach((checkbox) => {
-      const cell = checkbox.closest('.cell');
-      const rowIndex = cell ? getRowIndexFromCell(cell) : -1;
-      if (rowIndex >= 0) {
-        checkbox.checked = this.selected.has(rowIndex);
-      }
-    });
+    for (const scope of scopes) {
+      const rowCheckboxes = scope.querySelectorAll<HTMLInputElement>(
+        ':scope > .data-grid-row > .cell > .tbw-select-row-checkbox',
+      );
+      rowCheckboxes.forEach((checkbox) => {
+        const cell = checkbox.closest('.cell');
+        const rowIndex = cell ? SelectionPlugin.#dataRowOf(cell) : -1;
+        if (rowIndex >= 0) {
+          checkbox.checked = this.selected.has(rowIndex);
+        }
+      });
+    }
 
     // Update header select-all checkbox
-    const headerCheckbox = gridEl.querySelector('.tbw-select-all-checkbox') as HTMLInputElement | null;
+    const headerCheckbox = header?.querySelector<HTMLInputElement>('.tbw-select-all-checkbox') ?? null;
     if (headerCheckbox) {
       const selectableCount = this.#selectableRowCount();
       const allSelected = selectableCount > 0 && this.selected.size >= selectableCount;
@@ -1863,6 +1909,78 @@ export class SelectionPlugin<TRow = unknown> extends BaseGridPlugin<SelectionCon
     }
   }
 
+  // #region Selection Class Application
+
+  /**
+   * Whether the previous pass painted any marker (`.selected`, `.row-focus`,
+   * `.column-selected`, edge classes, `data-selectable`) on POOLED rows. This
+   * plugin is the only writer of those, so when it is `false` no pooled element
+   * can carry one and the body wipe is skipped — the common "scroll with nothing
+   * selected" frame then costs one attribute read per row instead of a
+   * full-DOM class walk.
+   *
+   * Starts `true`: a replacement instance (e.g. `gridConfig` swapping a row-mode
+   * plugin for a cell-mode one) inherits pooled rows still carrying the previous
+   * instance's classes, so the first pass must always wipe.
+   *
+   * Does NOT cover the sticky overlay — a cached clone can be re-attached with
+   * stale markers after this went `false`, so that scope is wiped every pass.
+   */
+  #paintedMarks = true;
+
+  /** `data-row` of a cell, or -1 when absent (plugin-rendered rows such as group headers). */
+  static #dataRowOf(cell: Element): number {
+    return parseInt(cell.getAttribute('data-row') ?? '-1', 10);
+  }
+
+  /**
+   * This grid's own row containers: the pooled-row container (`.rows`, a.k.a.
+   * `_bodyEl`) plus StickyRows' `.tbw-sticky-rows` overlay (a `.rows` sibling in
+   * `.rows-viewport`). Sticky clones are `cloneNode` captures of pooled rows —
+   * they keep `.data-grid-row` and `data-row` cells, and a displayed clone is
+   * RETAINED while its source row is scrolled out of the window, so it must be
+   * painted here or it shows a stale selection (PR #582 review).
+   *
+   * Every DOM query in the paint passes MUST be anchored on these with a
+   * `:scope >` child combinator (and on `.header` for header cells). The grid
+   * renders in light DOM, so a nested grid — a master-detail panel or a cell
+   * renderer — sits INSIDE these containers; an unscoped `querySelectorAll('.cell')`
+   * from the host reaches the child grid's cells too and wipes its selection on
+   * every parent render / scroll frame.
+   */
+  #ownScopes(gridEl: HTMLElement): HTMLElement[] {
+    const body = this.grid._bodyEl ?? gridEl.querySelector<HTMLElement>('.rows');
+    if (!body) return [];
+    const sticky = body.parentElement?.querySelector<HTMLElement>(':scope > .tbw-sticky-rows');
+    return sticky ? [body, sticky] : [body];
+  }
+
+  /** Own rows (pooled + sticky clones), in DOM order. Excludes detail rows and nested grids. */
+  static #ownRows(scopes: readonly HTMLElement[]): HTMLElement[] {
+    return scopes.flatMap((scope) => Array.from(scope.querySelectorAll<HTMLElement>(':scope > .data-grid-row')));
+  }
+
+  /** Own data cells, in DOM order. Excludes detail rows and nested grids. */
+  static #ownCells(scopes: readonly HTMLElement[]): HTMLElement[] {
+    return scopes.flatMap((scope) =>
+      Array.from(scope.querySelectorAll<HTMLElement>(':scope > .data-grid-row > .cell')),
+    );
+  }
+
+  /** `clearCellFocus` limited to own cells — the shared util is a descendant query and would reach a nested grid. */
+  static #clearOwnCellFocus(scopes: readonly HTMLElement[]): void {
+    for (const scope of scopes) {
+      for (const cell of scope.querySelectorAll(':scope > .data-grid-row > .cell.cell-focus')) {
+        cell.classList.remove('cell-focus');
+      }
+    }
+  }
+
+  /** Visible-column index from a cell's `data-col`, or -1. */
+  static #colIndexOf(cell: Element): number {
+    return parseInt(cell.getAttribute('data-col') ?? '-1', 10);
+  }
+
   /**
    * Apply CSS selection classes to row/cell elements.
    * Shared by afterRender and onScrollRender.
@@ -1871,6 +1989,8 @@ export class SelectionPlugin<TRow = unknown> extends BaseGridPlugin<SelectionCon
     this.#embeddedCheckboxes?.refresh();
     const gridEl = this.gridElement;
     if (!gridEl) return;
+    const scopes = this.#ownScopes(gridEl);
+    if (scopes.length === 0) return;
 
     const mode = this.#mode.primary;
     const columnEnabled = this.#mode.columnEnabled;
@@ -1882,183 +2002,204 @@ export class SelectionPlugin<TRow = unknown> extends BaseGridPlugin<SelectionCon
     // not the host. `multiSelect` defaults to true; only `false` opts out.
     const rowsBodyEl = gridEl.querySelector('.rows-body');
     if (rowsBodyEl) {
-      const multi = this.config.multiSelect !== false;
-      rowsBodyEl.setAttribute('aria-multiselectable', multi ? 'true' : 'false');
+      const multi = this.config.multiSelect !== false ? 'true' : 'false';
+      if (rowsBodyEl.getAttribute('aria-multiselectable') !== multi) {
+        rowsBodyEl.setAttribute('aria-multiselectable', multi);
+      }
     }
 
-    // Clear all selection classes first (including column-selected).
-    // Also reset stale aria-selected on cells that previously carried a
-    // selection marker — range/column passes set aria-selected="true" on
-    // selected cells, and core only updates the attribute when focus
-    // changes — so without an explicit reset a cell that lost selection
-    // (axis flipped, range shrank, virtualization recycled the node into a
-    // non-selected position) would keep the stale value. We MUST scope the
-    // reset to cells that had `.selected` / `.column-selected` BEFORE the
-    // class wipe — clearing aria-selected unconditionally would also blow
-    // away the focused-cell marker that core's keyboard handler / row
-    // renderer set for the active cell, regressing keyboard a11y.
-    // Header aria-selected is handled in the columnEnabled block below.
-    const allCells = gridEl.querySelectorAll('.cell');
-    allCells.forEach((cell) => {
+    // Own `.header` precedes any nested grid in document order, so the first match is ours.
+    const header = gridEl.querySelector<HTMLElement>('.header');
+    const rows = SelectionPlugin.#ownRows(scopes);
+
+    // Pooled rows are wiped only when the previous pass painted something; the
+    // sticky overlay (scopes[1], ≤ maxStacked rows) is wiped every pass because a
+    // cached clone can be re-attached carrying markers from before the flag reset.
+    const wipeScopes = this.#paintedMarks ? scopes : scopes.slice(1);
+    if (wipeScopes.length > 0) {
+      this.#clearSelectionMarks(wipeScopes, this.#paintedMarks ? header : null, hasSelectableCallback, columnEnabled);
+    }
+
+    // Row baseline — pooled rows keep the attribute across frames, so compare before writing.
+    for (const row of rows) {
+      if (row.getAttribute('aria-selected') !== 'false') row.setAttribute('aria-selected', 'false');
+    }
+
+    let painted = false;
+    if (mode === 'row') {
+      // Row selection takes precedence over cell-focus styling.
+      SelectionPlugin.#clearOwnCellFocus(scopes);
+      painted = this.#paintRowSelection(scopes, header, rows, hasSelectableCallback);
+    } else if ((mode === 'cell' || mode === 'range') && hasSelectableCallback) {
+      // Column-only mode never flags cells: `isSelectable` is not enforced there,
+      // so the disabled styling would lie.
+      painted = this.#paintUnselectableCells(scopes);
+    }
+
+    if (mode === 'range' && this.ranges.length > 0) {
+      // The plugin owns focus styling while a range exists.
+      SelectionPlugin.#clearOwnCellFocus(scopes);
+      painted = this.#paintRanges(scopes) || painted;
+    }
+
+    // CELL MODE: the grid's native .cell-focus styling handles the highlight.
+
+    if (columnEnabled && this.selectedColumns.size > 0) {
+      painted = this.#paintColumnSelection(scopes, header) || painted;
+    }
+
+    this.#paintedMarks = painted;
+  }
+
+  /**
+   * Remove every marker the previous pass painted.
+   *
+   * Stale `aria-selected` is reset ONLY on cells that carried `.selected` /
+   * `.column-selected` before the wipe — range/column passes set
+   * `aria-selected="true"` and core only touches the attribute when focus
+   * moves, so a cell that lost selection would otherwise keep it. Clearing
+   * it unconditionally would also blow away the focused-cell marker core's
+   * keyboard handler / row renderer set, regressing keyboard a11y.
+   */
+  #clearSelectionMarks(
+    scopes: readonly HTMLElement[],
+    header: HTMLElement | null,
+    hasSelectableCallback: boolean,
+    columnEnabled: boolean,
+  ): void {
+    for (const cell of SelectionPlugin.#ownCells(scopes)) {
       const hadSelectionMarker =
         cell.classList.contains(GridClasses.SELECTED) || cell.classList.contains('column-selected');
       cell.classList.remove(GridClasses.SELECTED, 'top', 'bottom', 'first', 'last', 'column-selected');
-      if (hadSelectionMarker) {
-        cell.removeAttribute('aria-selected');
-      }
-      // Clear selectable attribute - will be re-applied below
-      if (hasSelectableCallback) {
-        cell.removeAttribute('data-selectable');
-      }
-    });
-
-    const allRows = gridEl.querySelectorAll('.data-grid-row');
-    allRows.forEach((row) => {
+      if (hadSelectionMarker) cell.removeAttribute('aria-selected');
+      if (hasSelectableCallback) cell.removeAttribute('data-selectable');
+    }
+    for (const row of SelectionPlugin.#ownRows(scopes)) {
       row.classList.remove(GridClasses.SELECTED, 'row-focus');
-      row.setAttribute('aria-selected', 'false');
-      // Clear selectable attribute - will be re-applied below
-      if (hasSelectableCallback) {
-        row.removeAttribute('data-selectable');
-      }
-    });
-
-    // Clear column-selected from header cells too
-    if (columnEnabled) {
-      const headerCells = gridEl.querySelectorAll('.header-row > .cell');
-      headerCells.forEach((cell) => {
+      if (hasSelectableCallback) row.removeAttribute('data-selectable');
+    }
+    if (columnEnabled && header) {
+      for (const cell of header.querySelectorAll('.header-row > .cell')) {
         cell.classList.remove('column-selected');
         cell.removeAttribute('aria-selected');
-      });
-    }
-
-    // ROW MODE: Add row-focus class to selected rows, disable cell-focus, update checkboxes
-    if (mode === 'row') {
-      // In row mode, disable ALL cell-focus styling - row selection takes precedence
-      clearCellFocus(gridEl);
-
-      allRows.forEach((row) => {
-        const firstCell = row.querySelector('.cell[data-row]');
-        const rowIndex = getRowIndexFromCell(firstCell);
-        if (rowIndex >= 0) {
-          // Mark non-selectable rows
-          if (hasSelectableCallback && !this.isRowSelectable(rowIndex)) {
-            row.setAttribute('data-selectable', 'false');
-          }
-          if (this.selected.has(rowIndex)) {
-            row.classList.add(GridClasses.SELECTED, 'row-focus');
-            row.setAttribute('aria-selected', 'true');
-          }
-        }
-      });
-
-      // Update checkbox states if checkbox column is enabled
-      if (this.config.checkbox) {
-        this.#updateCheckboxStates(gridEl);
       }
     }
-
-    // CELL/RANGE MODE: Mark non-selectable cells
-    if ((mode === 'cell' || mode === 'range') && hasSelectableCallback) {
-      const cells = gridEl.querySelectorAll('.cell[data-row][data-col]');
-      cells.forEach((cell) => {
-        const rowIndex = parseInt(cell.getAttribute('data-row') ?? '-1', 10);
-        const colIndex = parseInt(cell.getAttribute('data-col') ?? '-1', 10);
-        if (rowIndex >= 0 && colIndex >= 0) {
-          if (!this.isCellSelectable(rowIndex, colIndex)) {
-            cell.setAttribute('data-selectable', 'false');
-          }
-        }
-      });
-    }
-
-    // RANGE MODE: Add selected and edge classes to cells
-    // Uses neighbor-based edge detection for correct multi-range borders
-    if (mode === 'range' && this.ranges.length > 0) {
-      // Clear all cell-focus first - selection plugin manages focus styling in range mode
-      clearCellFocus(gridEl);
-
-      // Pre-normalize ranges for efficient neighbor checks
-      const normalizedRanges = this.ranges.map(normalizeRange);
-
-      // Fast selection check against pre-normalized ranges
-      const isInSelection = (r: number, c: number): boolean => {
-        for (const range of normalizedRanges) {
-          if (r >= range.startRow && r <= range.endRow && c >= range.startCol && c <= range.endCol) {
-            return true;
-          }
-        }
-        return false;
-      };
-
-      const cells = gridEl.querySelectorAll('.cell[data-row][data-col]');
-      cells.forEach((cell) => {
-        const rowIndex = parseInt(cell.getAttribute('data-row') ?? '-1', 10);
-        const colIndex = parseInt(cell.getAttribute('data-col') ?? '-1', 10);
-        if (rowIndex >= 0 && colIndex >= 0) {
-          // Skip utility columns entirely - don't add any selection classes
-          // colIndex from data-col is a visible-column index
-          const column = this.visibleColumns[colIndex];
-          if (column && isUtilityColumn(column)) {
-            return;
-          }
-
-          if (isInSelection(rowIndex, colIndex)) {
-            cell.classList.add(GridClasses.SELECTED);
-            cell.setAttribute('aria-selected', 'true');
-
-            // Edge detection: add border class where neighbor is not selected
-            // This handles single ranges, multi-range, and irregular selections correctly
-            if (!isInSelection(rowIndex - 1, colIndex)) cell.classList.add('top');
-            if (!isInSelection(rowIndex + 1, colIndex)) cell.classList.add('bottom');
-            if (!isInSelection(rowIndex, colIndex - 1)) cell.classList.add('first');
-            if (!isInSelection(rowIndex, colIndex + 1)) cell.classList.add('last');
-          }
-        }
-      });
-    }
-
-    // CELL MODE: Let the grid's native .cell-focus styling handle cell highlighting
-    // No additional action needed - the grid already manages focus styling
-
-    // COLUMN AXIS: Apply column-selected class + aria-selected to the header cell
-    // and every data cell in the matching column. Identifies columns by their
-    // visible-index (data-col matches the visibleColumns position) so it works
-    // regardless of pinning / reordering — selectedColumns stores fields, not
-    // indices, so the rendering layer resolves them per-render.
-    if (columnEnabled && this.selectedColumns.size > 0) {
-      // Build visible-index → field map once for O(1) lookups.
-      const colFieldByIndex: (string | undefined)[] = this.visibleColumns.map((c) =>
-        typeof c.field === 'string' ? c.field : undefined,
-      );
-
-      // Header cells — the grid renders header cells with data-col attributes.
-      const headerCells = gridEl.querySelectorAll<HTMLElement>('.header-row > .cell[data-col]');
-      headerCells.forEach((cell) => {
-        const colIndex = parseInt(cell.getAttribute('data-col') ?? '-1', 10);
-        const field = colIndex >= 0 ? colFieldByIndex[colIndex] : undefined;
-        if (field && this.selectedColumns.has(field)) {
-          cell.classList.add('column-selected');
-          cell.setAttribute('aria-selected', 'true');
-        }
-      });
-
-      // Data cells.
-      const cells = gridEl.querySelectorAll<HTMLElement>('.cell[data-col]:not(.header-row .cell)');
-      cells.forEach((cell) => {
-        // Skip header cells (filter above isn't reliable for nested .header-row scoping)
-        if (cell.closest('.header-row')) return;
-        const colIndex = parseInt(cell.getAttribute('data-col') ?? '-1', 10);
-        if (colIndex < 0) return;
-        const column = this.visibleColumns[colIndex];
-        if (!column || isUtilityColumn(column)) return;
-        const field = colFieldByIndex[colIndex];
-        if (field && this.selectedColumns.has(field)) {
-          cell.classList.add('column-selected');
-          cell.setAttribute('aria-selected', 'true');
-        }
-      });
-    }
   }
+
+  /** ROW MODE: `.selected .row-focus` + `aria-selected` on selected rows, checkbox sync. */
+  #paintRowSelection(
+    scopes: readonly HTMLElement[],
+    header: HTMLElement | null,
+    rows: readonly HTMLElement[],
+    hasSelectableCallback: boolean,
+  ): boolean {
+    let painted = false;
+    for (const row of rows) {
+      const first = row.querySelector(':scope > .cell[data-row]');
+      // Plugin-rendered rows (group headers) carry no data-row and are never row-selectable.
+      if (!first) continue;
+      const rowIndex = SelectionPlugin.#dataRowOf(first);
+      if (rowIndex < 0) continue;
+      if (hasSelectableCallback && !this.isRowSelectable(rowIndex)) {
+        row.setAttribute('data-selectable', 'false');
+        painted = true;
+      }
+      if (this.selected.has(rowIndex)) {
+        row.classList.add(GridClasses.SELECTED, 'row-focus');
+        row.setAttribute('aria-selected', 'true');
+        painted = true;
+      }
+    }
+    if (this.config.checkbox) this.#updateCheckboxStates(scopes, header);
+    return painted;
+  }
+
+  /**
+   * CELL/RANGE MODE with `isSelectable`: flag cells the callback rejects.
+   * Keys on `data-row` only — `getRowIndexFromCell`'s `aria-rowindex` fallback
+   * would resolve group-header cells and hand synthetic rows to the consumer's
+   * `isSelectable`.
+   */
+  #paintUnselectableCells(scopes: readonly HTMLElement[]): boolean {
+    let painted = false;
+    for (const cell of SelectionPlugin.#ownCells(scopes)) {
+      const rowIndex = SelectionPlugin.#dataRowOf(cell);
+      const colIndex = SelectionPlugin.#colIndexOf(cell);
+      if (rowIndex >= 0 && colIndex >= 0 && !this.isCellSelectable(rowIndex, colIndex)) {
+        cell.setAttribute('data-selectable', 'false');
+        painted = true;
+      }
+    }
+    return painted;
+  }
+
+  /**
+   * RANGE MODE: `.selected` + edge classes. Edges come from neighbour checks so
+   * single, multi and irregular ranges all get correct borders. Only rows
+   * inside the ranges' combined row span are visited; cells without `data-row`
+   * (full-width group headers) never paint.
+   */
+  #paintRanges(scopes: readonly HTMLElement[]): boolean {
+    const normalizedRanges = this.ranges.map(normalizeRange);
+    let minRow = Infinity;
+    let maxRow = -Infinity;
+    for (const r of normalizedRanges) {
+      if (r.startRow < minRow) minRow = r.startRow;
+      if (r.endRow > maxRow) maxRow = r.endRow;
+    }
+    const isInSelection = (r: number, c: number): boolean => {
+      for (const range of normalizedRanges) {
+        if (r >= range.startRow && r <= range.endRow && c >= range.startCol && c <= range.endCol) return true;
+      }
+      return false;
+    };
+
+    let painted = false;
+    for (const cell of SelectionPlugin.#ownCells(scopes)) {
+      const rowIndex = SelectionPlugin.#dataRowOf(cell);
+      if (rowIndex < minRow || rowIndex > maxRow) continue;
+      const colIndex = SelectionPlugin.#colIndexOf(cell);
+      if (colIndex < 0) continue;
+      // colIndex from data-col is a visible-column index; utility columns never paint.
+      const column = this.visibleColumns[colIndex];
+      if (column && isUtilityColumn(column)) continue;
+      if (!isInSelection(rowIndex, colIndex)) continue;
+
+      cell.classList.add(GridClasses.SELECTED);
+      cell.setAttribute('aria-selected', 'true');
+      if (!isInSelection(rowIndex - 1, colIndex)) cell.classList.add('top');
+      if (!isInSelection(rowIndex + 1, colIndex)) cell.classList.add('bottom');
+      if (!isInSelection(rowIndex, colIndex - 1)) cell.classList.add('first');
+      if (!isInSelection(rowIndex, colIndex + 1)) cell.classList.add('last');
+      painted = true;
+    }
+    return painted;
+  }
+
+  /**
+   * COLUMN AXIS: `.column-selected` + `aria-selected` on the header cell and
+   * every data cell of a selected column. Columns are resolved per render from
+   * the visible index (`data-col`) because `selectedColumns` stores fields, so
+   * the paint survives pinning and reordering.
+   */
+  #paintColumnSelection(scopes: readonly HTMLElement[], header: HTMLElement | null): boolean {
+    const selectedByIndex: boolean[] = this.visibleColumns.map(
+      (c) => typeof c.field === 'string' && this.selectedColumns.has(c.field) && !isUtilityColumn(c),
+    );
+    let painted = false;
+    const mark = (cell: Element): void => {
+      const colIndex = SelectionPlugin.#colIndexOf(cell);
+      if (colIndex < 0 || !selectedByIndex[colIndex]) return;
+      cell.classList.add('column-selected');
+      cell.setAttribute('aria-selected', 'true');
+      painted = true;
+    };
+    if (header) for (const cell of header.querySelectorAll('.header-row > .cell[data-col]')) mark(cell);
+    for (const cell of SelectionPlugin.#ownCells(scopes)) mark(cell);
+    return painted;
+  }
+
+  // #endregion
 
   /** @internal */
   override afterRender(): void {
@@ -2295,8 +2436,15 @@ export class SelectionPlugin<TRow = unknown> extends BaseGridPlugin<SelectionCon
   }
 
   /**
-   * Get the indices of all selected rows (convenience for row mode).
+   * Get the indices of all rows touched by the current selection.
    * Returns indices sorted in ascending order.
+   *
+   * Works across all selection modes:
+   * - **Row mode**: The selected row indices.
+   * - **Cell mode**: The row index of the selected cell, or `[]`.
+   * - **Range mode**: The unique row indices that intersect any selected range.
+   *
+   * Indices refer to the grid's processed (sorted/filtered) row array.
    *
    * @example
    * ```ts
@@ -2305,7 +2453,39 @@ export class SelectionPlugin<TRow = unknown> extends BaseGridPlugin<SelectionCon
    * ```
    */
   getSelectedRowIndices(): number[] {
-    return [...this.selected].sort((a, b) => a - b);
+    const mode = this.#mode.primary;
+
+    if (mode === 'row') {
+      return [...this.selected].sort((a, b) => a - b);
+    }
+
+    const rowCount = this.rows.length;
+
+    if (mode === 'cell' && this.selectedCell) {
+      const { row } = this.selectedCell;
+      return row >= 0 && row < rowCount ? [row] : [];
+    }
+
+    if (mode === 'range' && this.ranges.length > 0) {
+      // Merge clamped row intervals instead of Set + sort — a select-all range on a
+      // large grid is read on every context-menu invocation / drag start (#541).
+      const intervals: Array<[number, number]> = [];
+      for (const range of this.ranges) {
+        const minRow = Math.max(0, Math.min(range.startRow, range.endRow));
+        const maxRow = Math.min(rowCount - 1, Math.max(range.startRow, range.endRow));
+        if (minRow <= maxRow) intervals.push([minRow, maxRow]);
+      }
+      intervals.sort((a, b) => a[0] - b[0]);
+      const result: number[] = [];
+      let next = 0;
+      for (const [minRow, maxRow] of intervals) {
+        for (let r = Math.max(minRow, next); r <= maxRow; r++) result.push(r);
+        next = Math.max(next, maxRow + 1);
+      }
+      return result;
+    }
+
+    return [];
   }
 
   /**
@@ -2326,34 +2506,10 @@ export class SelectionPlugin<TRow = unknown> extends BaseGridPlugin<SelectionCon
    * ```
    */
   getSelectedRows<T = unknown>(): T[] {
-    const mode = this.#mode.primary;
     const rows = this.rows;
-
-    if (mode === 'row') {
-      return this.getSelectedRowIndices()
-        .filter((i) => i >= 0 && i < rows.length)
-        .map((i) => rows[i]) as T[];
-    }
-
-    if (mode === 'cell' && this.selectedCell) {
-      const { row } = this.selectedCell;
-      return row >= 0 && row < rows.length ? [rows[row] as T] : [];
-    }
-
-    if (mode === 'range' && this.ranges.length > 0) {
-      // Collect unique row indices across all ranges
-      const rowIndices = new Set<number>();
-      for (const range of this.ranges) {
-        const minRow = Math.max(0, Math.min(range.startRow, range.endRow));
-        const maxRow = Math.min(rows.length - 1, Math.max(range.startRow, range.endRow));
-        for (let r = minRow; r <= maxRow; r++) {
-          rowIndices.add(r);
-        }
-      }
-      return [...rowIndices].sort((a, b) => a - b).map((i) => rows[i]) as T[];
-    }
-
-    return [];
+    return this.getSelectedRowIndices()
+      .filter((i) => i >= 0 && i < rows.length)
+      .map((i) => rows[i]) as T[];
   }
 
   /**

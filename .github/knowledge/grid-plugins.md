@@ -5,7 +5,7 @@ related: [grid-plugins-catalog-data, grid-plugins-catalog-ui, grid-plugins-shell
 
 # Grid Plugin System — Mental Model
 
-> Per-plugin OWNS/HOOKS/DECIDED → grid-plugins-catalog-data.md (row/column model, sorting, filtering, pinned rows, clipboard/export/print), grid-plugins-hierarchy.md (Hierarchy, Tree, GroupingRows), grid-plugins-catalog-ui.md (selection, master-detail, reordering, display), grid-plugin-responsive.md (responsive/card layout) and grid-plugins-editing.md (editing, undo). Shell plugin → grid-plugins-shell.md. This file = the SYSTEM (manager, lifecycle, hooks, communication, manifest, scroll, compatibility).
+> Per-plugin OWNS/HOOKS/DECIDED → grid-plugins-catalog-data.md (row/column model, sorting, filtering, pinned rows, clipboard/export/print), grid-plugins-hierarchy.md (Hierarchy, Tree, GroupingRows), grid-plugin-selection.md (selection, context menu), grid-plugins-catalog-ui.md (master-detail, reordering, display), grid-plugin-responsive.md (responsive/card layout) and grid-plugins-editing.md (editing, undo). Shell plugin → grid-plugins-shell.md. This file = the SYSTEM (manager, lifecycle, hooks, communication, manifest, scroll, compatibility).
 
 ## plugin-manager
 
@@ -18,7 +18,7 @@ related: [grid-plugins-catalog-data, grid-plugins-catalog-ui, grid-plugins-shell
 ## plugin-lifecycle
 
 - FLOW: `attach(grid)` → merge defaults + user config → store grid ref → `onPluginAttached()` notifications → [runtime hooks] → `detach()` → abort signal fires → cleanup.
-- INVARIANT: `disconnectSignal` (AbortSignal) fires on detach — use it for ALL event-listener cleanup.
+- INVARIANT: `disconnectSignal` (AbortSignal) fires on detach — use it for ALL event-listener cleanup. GUARANTEED by `PluginManager.detachAll()` calling `plugin.__releaseDisconnectSignal()` (idempotent; base `detach()` calls it too) AFTER `plugin.detach()` — 7 plugins (clipboard, context-menu, filtering, grouping-columns, reorder, selection, visibility) override `detach()` without `super.detach()` and leaked host listeners until PR #525. Tests: `integration/plugin-detach-signal.spec.ts`.
 - INVARIANT: `plugin.grid` is available after `attach()`, null after `detach()`.
 - INVARIANT: `plugin.grid` (typed `GridElement`) is the object plugins read internal state from (`_sortState`, `_visibleColumns`, `_virtualization`, …). Do **NOT** re-route those reads through `this.gridElement` / `grid._hostElement`. Production satisfies `_hostElement === this` (`grid.ts` `get _hostElement() { return this; }`), but plugin specs mock `grid` as a plain object with **no** `_hostElement`, so the swap yields `undefined` at runtime. Verified: 73 failures across 7 specs (tree, undo-redo, reorder-columns, multi-sort, grouping-rows, row-drag-drop, server-side).
 - DECIDED (Aug 2026, #465): plugin grid types form one narrowing chain `PublicGrid<T>` → `InternalGrid<T>` → `GridElementRef<T>` → `GridElement`, with the **plugin-facing type at the bottom**. `GridElementRef<T = any> extends Omit<InternalGrid<T>, Exclude<keyof GridConfig<T>, ElementBackedConfigKey> | DomRedeclaredKey>, HTMLElement` (`core/plugin/types.ts`). WHY: the post-`attach()` view is the _most specific_ one, and `GridElementRef`/`GridElement` are **not exported from `public.ts`**, so all narrowing lands on types no consumer can name ⇒ zero public-API change, non-breaking. Deleted all ~13 `this.grid as unknown as GridHost` casts; bundle byte-identical (155.72 kB / 46.13 kB gz).
@@ -37,6 +37,7 @@ related: [grid-plugins-catalog-data, grid-plugins-catalog-ui, grid-plugins-shell
 
 | Hook              | Phase        | Purpose                                  | Returns          |
 | ----------------- | ------------ | ---------------------------------------- | ---------------- |
+| `orderColumns`    | COLUMNS      | reorder FULL list, hidden incl. (#512)   | `ColumnConfig[]` |
 | `processColumns`  | COLUMNS      | transform column array                   | `ColumnConfig[]` |
 | `processRows`     | ROWS         | transform row array (filter/sort/expand) | `any[]`          |
 | `afterCellRender` | per-cell     | cell styling, badges                     | void             |
@@ -54,7 +55,7 @@ related: [grid-plugins-catalog-data, grid-plugins-catalog-ui, grid-plugins-shell
 | ---------------------------- | ------------------------------------------------------------------- |
 | `getRowHeight`               | synthetic row height (detail panels, tree)                          |
 | `adjustVirtualStart`         | render extra rows above the viewport                                |
-| `renderRow`                  | custom row DOM (bypasses the default renderer)                      |
+| `renderRow`                  | custom row DOM, bypasses default renderer; `hookPriority` order     |
 | `getHorizontalScrollOffsets` | pinned-column spacing for keyboard navigation (PinnedColumnsPlugin) |
 | `getVerticalScrollOffsets`   | overlay height above/below rows viewport (StickyRowsPlugin)         |
 
@@ -64,12 +65,14 @@ related: [grid-plugins-catalog-data, grid-plugins-catalog-ui, grid-plugins-shell
 - Consumers clamp with `Math.max(0, …)` and bail when `usableHeight <= 0` — a malformed report can't invert the band or yield NaN.
 
 - INVARIANT (`renderRow` contract): when a plugin's `renderRow` takes over cell creation (Pivot, GroupingRows, Tree custom rows, MasterDetail panels), the grid's normal cell pipeline is **skipped entirely** — `format`, `cellRenderer`, `cellClass`, value-accessor caching and sanitize wrapping MUST be re-applied manually. Canonical pattern: the cell render path in [rows.ts](libs/grid/src/lib/core/internal/rows.ts). Forgetting = silent formatter loss inside grouped/pivot rows.
+- DECIDED (#548): `column.format(value, row)` keeps its required-row type — pass a REAL row where one exists (set filter: first row per value, `getUniqueValues(…, rowsByValue)`). No row (`valuesHandler` values, Pivot aggregates) → `plugins/shared/format-value.ts#tryFormat` with `row` undefined: throw → raw value + one TBW062 (warn-once state on the plugin, e.g. Pivot `formatErrorFields`, since `buildValueFormatters` reruns per `processRows`). Never fake a row (`{}`) or `undefined as never`. WHY: `TRow | undefined` breaks row-reading formats; a row-free 2nd formatter = two callbacks per column.
+- INVARIANT (PR #553): `BLANK_FILTER_VALUE` is the ONLY blank `compileSetPredicate` matches → `valuesHandler` results go through `normalizeValuesHandlerResult`: `null`/`undefined` (+ `''` if no `filterValue`/`valueAccessor` extractor) → sentinel, labels re-keyed, dupes dropped (raw `null` became `notIn: [null]`, never hiding blanks). The panel never formats the sentinel.
 
 ### State-persistence hooks
 
 - `getColumnState()` → plugin's column state for save; `applyColumnState()` → restore.
 - INVARIANT: a plugin owning sort (MultiSortPlugin) MUST broadcast `sort-change` from `applyColumnState`, deferred via microtask to batch per-column calls.
-- DECIDED (Apr 2026, plugin-side render trigger): when a plugin owns state that core's `#applyColumnState` width-only fast path cannot observe (plugin nulled `_sortState`), the PLUGIN — not core — forces the re-render. MultiSortPlugin snapshots the model at batch start, compares in the deferred microtask, and on change broadcasts `sort-change` AND calls `this.requestRender()` (ROWS). Covers sort-add (core fast path bypassed via `incomingHasSort`) and sort-removal. WHY not a core `hasOwnedSort` query: ~30 bytes over budget. RULE: any plugin mutating owned state during `applyColumnState` must self-trigger the render.
+- DECIDED (Apr 2026, plugin-side render trigger): plugin state that core's `#applyColumnState` width-only fast path can't observe (plugin nulled `_sortState`) → the PLUGIN forces the re-render. MultiSortPlugin snapshots the model at batch start, compares in the deferred microtask, and on change broadcasts `sort-change` + `this.requestRender()` (ROWS); covers sort-add (`incomingHasSort` bypass) and removal. WHY not a core `hasOwnedSort` query: ~30 bytes over budget. RULE: a plugin mutating owned state in `applyColumnState` self-triggers the render.
 
 ## inter-plugin communication
 
@@ -131,6 +134,7 @@ modifiesRowStructure — affects the render scheduler
 | GroupingRows  | `onHeaderClick`  | -1       | intercept group headers before MultiSort   |
 | Tree          | `processRows`    | 10       | after ServerSide, before others            |
 | GroupingRows  | `processRows`    | 10       | after ServerSide                           |
+| Editing       | `processRows`    | 50       | final rows → edit index before reconcile   |
 | Pivot         | `processRows`    | 100      | after MultiSort, apply aggregation         |
 
 ## scroll dispatch

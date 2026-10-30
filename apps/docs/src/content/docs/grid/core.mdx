@@ -52,6 +52,9 @@ The grid implements [ARIA grid keyboard patterns](https://www.w3.org/WAI/ARIA/ap
 | <kbd>⇥ Tab</kbd> / <kbd>⇧ Shift</kbd> + <kbd>⇥ Tab</kbd> | Move to next/previous editable cell |
 
 For the full keyboard shortcut reference, see the [Accessibility guide](/grid/guides/accessibility/).
+Selected-cell Delete/Backspace is off by default; enable
+[CellEntry's clearing option](/grid/plugins/cell-entry/#selected-cell-clearing)
+with Editing, cell/range Selection and UndoRedo.
 
 ### RTL (Right-to-Left) Support
 
@@ -514,9 +517,9 @@ Then define the CSS class in your stylesheet:
 :::note
 `rowClass` is applied to custom-rendered rows too — a Responsive `cardRenderer` card gets the
 same classes as the table row it replaces. It is only skipped for rows a plugin both synthesizes
-**and** renders itself (group headers, pivot rows, grouped loading placeholders), since those are
-not your data. Server-side `{ __loading: true }` placeholder rows are *not* skipped, so guard on
-`__loading` if your callback reads fields off the row.
+**and** renders itself (group headers, pivot rows, loading placeholders), since those are not your
+data. Server-side placeholders reach `rowClass` only if you opt in with
+`placeholderRendering: 'columns'`.
 
 The callback runs during rendering, so a class that depends on state outside the row object
 (a selected id, for example) only updates on the next render — call `grid.requestRender()` when
@@ -1509,7 +1512,7 @@ try {
 
 The `loading` attribute also works in HTML: `<tbw-grid loading></tbw-grid>`.
 
-**Row-level** — Shows a spinner on a specific row (requires `getRowId`):
+**Row-level** — Shows a spinner on a specific row, or your `loadingRenderer` with `size: 'small'` (requires `getRowId`):
 
 ```typescript
 grid.setRowLoading('row-42', true);
@@ -1517,7 +1520,7 @@ grid.setRowLoading('row-42', true);
 grid.setRowLoading('row-42', false);
 ```
 
-**Cell-level** — Shows a spinner on a specific cell:
+**Cell-level** — Shows a spinner or your `loadingRenderer` with `size: 'small'` on a specific cell:
 
 ```typescript
 grid.setCellLoading('row-42', 'status', true);
@@ -1640,7 +1643,7 @@ export class MyGridComponent {
   </TabItem>
 </Tabs>
 
-The `LoadingContext` provides a `size` property: `'large'` for the grid-wide overlay (up to 48×48 px) and `'small'` for row/cell indicators (sized to the row height).
+The `LoadingContext` provides a `size` property: `'large'` for the grid-wide overlay (up to 48×48 px) and `'small'` for row loading (`setRowLoading()` and Server-Side placeholders) and cell loading (`setCellLoading()`).
 
 <ShowSource file="demos/CustomLoadingRendererDemo.astro">
   <CustomLoadingRendererDemo />

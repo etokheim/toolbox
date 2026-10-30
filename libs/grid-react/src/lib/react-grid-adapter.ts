@@ -1017,6 +1017,7 @@ export class GridAdapter implements FrameworkAdapter {
       removeFromContainer(key);
       this.untrackPortal(key);
     }
+    cleanupConfigRootsIn(container);
   }
 
   /**

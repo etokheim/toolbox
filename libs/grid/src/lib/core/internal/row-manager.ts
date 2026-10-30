@@ -70,6 +70,12 @@ export class RowManager<T = any> {
     }
   }
 
+  /** Invalidate the core-owned caches even when an independently bundled plugin wrote the value. */
+  invalidateRowContent(row: T): void {
+    invalidateAccessorCache(row as object);
+    this.#invalidateRetainedContent(row);
+  }
+
   /**
    * Apply a set of field changes to a single already-resolved row, routing each
    * change through data plugins (e.g. editing) so validation, dirty tracking,
@@ -120,10 +126,9 @@ export class RowManager<T = any> {
       }
       // Accessors can depend on any field. Core owns its cache even when a
       // separately bundled data plugin applied and tracked the value.
-      invalidateAccessorCache(row as object);
+      this.invalidateRowContent(row);
 
       changedFields.push({ field, oldValue, newValue });
-      this.#invalidateRetainedContent(row);
 
       grid.dispatchEvent(
         new CustomEvent('cell-change', {
@@ -153,12 +158,15 @@ export class RowManager<T = any> {
     const entry = grid._getSourceRowEntry(id);
     if (!entry) {
       // The row exists in neither the view nor the source data. Warn instead of
-      // throwing so a single stale ID can never crash the grid.
-      warnDiagnostic(
-        ROW_NOT_FOUND,
-        `Row with ID "${id}" not found. ` + `Ensure the row exists and getRowId is correctly configured.`,
-        grid.id,
-      );
+      // throwing so a single stale ID can never crash the grid. Undo/redo replays
+      // ('history') legitimately outlive deleted rows, so they skip silently.
+      if (source !== 'history') {
+        warnDiagnostic(
+          ROW_NOT_FOUND,
+          `Row with ID "${id}" not found. ` + `Ensure the row exists and getRowId is correctly configured.`,
+          grid.id,
+        );
+      }
       return;
     }
 
@@ -188,12 +196,14 @@ export class RowManager<T = any> {
       const entry = grid._getSourceRowEntry(id);
       if (!entry) {
         // Warn and skip this row instead of throwing — the rest of the batch
-        // (and the grid) must survive an unresolvable ID.
-        warnDiagnostic(
-          ROW_NOT_FOUND,
-          `Row with ID "${id}" not found. ` + `Ensure the row exists and getRowId is correctly configured.`,
-          grid.id,
-        );
+        // (and the grid) must survive an unresolvable ID. 'history' skips silently.
+        if (source !== 'history') {
+          warnDiagnostic(
+            ROW_NOT_FOUND,
+            `Row with ID "${id}" not found. ` + `Ensure the row exists and getRowId is correctly configured.`,
+            grid.id,
+          );
+        }
         continue;
       }
 

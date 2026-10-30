@@ -7,6 +7,7 @@
  */
 
 import { announce, getA11yMessage } from '../../core/internal/aria';
+import { FORMAT_ERROR } from '../../core/internal/diagnostics';
 import {
   BaseGridPlugin,
   HeaderClickEvent,
@@ -15,6 +16,8 @@ import {
   type PluginQuery,
 } from '../../core/plugin/base-plugin';
 import type { ColumnConfig } from '../../core/types';
+import { isFormFieldKeyTarget } from '../shared/form-field-target';
+import { tryFormat } from '../shared/format-value';
 import type { ToolPanelDefinition } from '../shell/types';
 import {
   buildPivot,
@@ -195,6 +198,8 @@ export class PivotPlugin extends BaseGridPlugin<PivotConfig> {
   private keysToAnimate = new Set<string>();
   /** Cached value formatters keyed by value field name */
   private valueFormatters: Map<number, (value: number) => string> = new Map();
+  /** Value fields whose column `format` already logged TBW062 (warn once per field, not per rebuild) */
+  private formatErrorFields = new Set<string>();
   /** Column totals for percentage mode */
   private columnTotals: Record<string, number> = {};
   /** Current interactive sort state for pivot columns (managed by onHeaderClick) */
@@ -234,6 +239,7 @@ export class PivotPlugin extends BaseGridPlugin<PivotConfig> {
     this.keysToAnimate.clear();
     this.userHasToggledExpand = false;
     this.valueFormatters.clear();
+    this.formatErrorFields.clear();
     this.columnTotals = {};
     this.activeSortField = null;
     this.activeSortDir = null;
@@ -475,6 +481,8 @@ export class PivotPlugin extends BaseGridPlugin<PivotConfig> {
     // SPACE toggles expansion on pivot group rows
     if (event.key !== ' ') return;
     if (!this.isActive) return;
+    // Inputs (e.g. the pivot tool panel or a custom renderer) own Space (#546).
+    if (isFormFieldKeyTarget(event)) return;
 
     const focusRow = this.grid._focusRow;
     const row = this.rows[focusRow] as Record<string, unknown> | undefined;
@@ -1256,7 +1264,14 @@ export class PivotPlugin extends BaseGridPlugin<PivotConfig> {
             { field: string; format?: (value: unknown, row: unknown) => string } | undefined;
           if (col?.format) {
             const fmt = col.format;
-            this.valueFormatters.set(index, (v: number) => fmt(v, {}));
+            // Aggregates have no source row, so `row` is undefined; a row-reading
+            // formatter falls back to the raw number (warned once per value field).
+            const onError = (error: unknown) => {
+              if (this.formatErrorFields.has(vf.field)) return;
+              this.formatErrorFields.add(vf.field);
+              this.warn(FORMAT_ERROR, `Format error in column '${vf.field}' while formatting pivot values: ${error}`);
+            };
+            this.valueFormatters.set(index, (v: number) => tryFormat(fmt, v, undefined, onError) ?? String(v));
           }
         }
       }

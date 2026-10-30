@@ -1,64 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import {
-  collapseDetailRow,
-  createDetailElement,
-  expandDetailRow,
-  isDetailExpanded,
-  toggleDetailRow,
-} from './master-detail';
+import { collapseDetailRow, createDetailElement, expandDetailRow, isDetailExpanded } from './master-detail';
 import { MasterDetailPlugin } from './master-detail-plugin';
 
 // Tests use `any` for flexibility with test row data.
 
 describe('masterDetail', () => {
-  describe('toggleDetailRow', () => {
-    it('should expand a collapsed row', () => {
-      const expanded = new Set<number>();
-      const result = toggleDetailRow(expanded, 0);
-
-      expect(result.has(0)).toBe(true);
-      expect(result.size).toBe(1);
-    });
-
-    it('should collapse an expanded row', () => {
-      const expanded = new Set<number>([0]);
-      const result = toggleDetailRow(expanded, 0);
-
-      expect(result.has(0)).toBe(false);
-      expect(result.size).toBe(0);
-    });
-
-    it('should toggle same row twice back to original state', () => {
-      const expanded = new Set<number>();
-      const afterExpand = toggleDetailRow(expanded, 2);
-      expect(afterExpand.has(2)).toBe(true);
-
-      const afterCollapse = toggleDetailRow(afterExpand, 2);
-      expect(afterCollapse.has(2)).toBe(false);
-      expect(afterCollapse).toBe(expanded);
-    });
-
-    it('should mutate the original Set in-place for O(1) performance', () => {
-      const expanded = new Set<number>([1, 2]);
-      const result = toggleDetailRow(expanded, 3);
-
-      expect(result).toBe(expanded);
-      expect(expanded.size).toBe(3);
-      expect(result.has(3)).toBe(true);
-    });
-
-    it('should handle multiple expanded rows', () => {
-      const expanded = new Set<number>([0, 2, 4]);
-      const result = toggleDetailRow(expanded, 3);
-
-      expect(result.has(0)).toBe(true);
-      expect(result.has(2)).toBe(true);
-      expect(result.has(3)).toBe(true);
-      expect(result.has(4)).toBe(true);
-      expect(result.size).toBe(4);
-    });
-  });
-
   describe('expandDetailRow', () => {
     it('should expand a row', () => {
       const expanded = new Set<number>();
@@ -347,6 +293,68 @@ describe('masterDetail', () => {
       // Start calculated as index 7 (200 / 28 = ~7.14 => floor to 7)
       // Should extend start to 1 (row 1's detail is still visible at scroll 200)
       expect(plugin.adjustVirtualStart(7, 200, 28)).toBe(1);
+    });
+
+    describe('with a position cache (variable heights)', () => {
+      // 28px rows; an expanded row's entry includes its 100px detail.
+      const withPositionCache = (rows: any[], expanded: (i: number) => boolean) => {
+        const grid = createMockGrid(rows);
+        let offset = 0;
+        grid._virtualization = {
+          positionCache: rows.map((_, i) => {
+            const entry = { offset, height: expanded(i) ? 128 : 28 };
+            offset += entry.height;
+            return entry;
+          }),
+        };
+        return grid;
+      };
+      const makeRows = (n: number) => Array.from({ length: n }, (_, id) => ({ id }));
+
+      it('extends start to an expanded row whose detail still reaches scrollTop', () => {
+        const rows = makeRows(6);
+        const plugin = new MasterDetailPlugin({ detailHeight: 100, detailRenderer: () => 'test' });
+        plugin.attach(withPositionCache(rows, (i) => i === 0));
+        plugin['expandedRows'].add(rows[0]);
+
+        expect(plugin.adjustVirtualStart(1, 100, 28)).toBe(0); // row 0 bottom 128 > 100
+        expect(plugin.adjustVirtualStart(1, 150, 28)).toBe(1); // row 0 bottom 128 <= 150
+      });
+
+      it('uses derived expansion under expandAll() and honours explicitly collapsed rows', () => {
+        const rows = makeRows(6);
+        const plugin = new MasterDetailPlugin({ detailHeight: 100, detailRenderer: () => 'test' });
+        const grid = withPositionCache(rows, () => true);
+        plugin.attach(grid);
+        plugin.expandAll();
+
+        // Bottoms: 128, 256, 384, … — row 1 reaches 200, row 0 does not.
+        expect(plugin.adjustVirtualStart(2, 200, 28)).toBe(1);
+
+        plugin.collapse(1);
+        grid._virtualization = withPositionCache(rows, (i) => i !== 1)._virtualization;
+        // Row 1 (bottom 156) still reaches 140 but is collapsed; row 0 (bottom 128) does not.
+        expect(plugin.adjustVirtualStart(2, 140, 28)).toBe(2);
+      });
+
+      it('only inspects the rows directly above start under expandAll() (scroll hot path)', () => {
+        const rows = makeRows(10_000);
+        let reads = 0;
+        const counted = new Proxy(rows, {
+          get(target, key, receiver) {
+            if (typeof key === 'string' && /^\d+$/.test(key)) reads++;
+            return Reflect.get(target, key, receiver);
+          },
+        });
+        const plugin = new MasterDetailPlugin({ detailHeight: 100, detailRenderer: () => 'test' });
+        plugin.attach(withPositionCache(counted, () => true));
+        plugin.expandAll();
+        reads = 0;
+
+        // Bottoms are (i + 1) × 128: only row 8999 (bottom 1_152_000) still reaches scrollTop.
+        expect(plugin.adjustVirtualStart(9000, 1_151_990, 28)).toBe(8999);
+        expect(reads).toBeLessThanOrEqual(2);
+      });
     });
   });
 
@@ -772,7 +780,7 @@ describe('masterDetail', () => {
 
         plugin.expandAll();
 
-        expect(plugin['expandedRows'].size).toBe(3);
+        expect(plugin.getExpandedRows()).toEqual([0, 1, 2]);
         expect(plugin.isExpanded(0)).toBe(true);
         expect(plugin.isExpanded(1)).toBe(true);
         expect(plugin.isExpanded(2)).toBe(true);
@@ -1216,6 +1224,55 @@ describe('masterDetail', () => {
       expect(unmountSpy).toHaveBeenCalledWith(detailContainer);
     });
 
+    it('should call adapter.unmount when datasource:children/error invalidates a rendered detail (#531)', () => {
+      const rows = [{ id: 1 }];
+      const { gridEl, unmountSpy } = createGridWithAdapter(rows);
+      const listeners = new Map<string, (detail: unknown) => void>();
+      Object.defineProperties(gridEl, {
+        query: { value: (type: string) => type === 'datasource:is-active' },
+        _pluginManager: {
+          value: {
+            subscribe: (_p: unknown, type: string, cb: (detail: unknown) => void) => listeners.set(type, cb),
+            unsubscribe: vi.fn(),
+            emitPluginEvent: vi.fn(),
+          },
+        },
+      });
+
+      const containers: HTMLElement[] = [];
+      const plugin = new MasterDetailPlugin({
+        detailRenderer: () => {
+          const c = document.createElement('div');
+          containers.push(c);
+          return c;
+        },
+      });
+      plugin.attach(gridEl);
+
+      // Expand via the fetching path, render the (loading) detail, then fail the load.
+      plugin['toggleAndEmit'](rows[0], 0);
+      plugin.afterRender();
+      listeners.get('datasource:error')?.({
+        error: new Error('boom'),
+        context: { source: 'master-detail', row: rows[0], rowIndex: 0 },
+      });
+      expect(unmountSpy).toHaveBeenCalledTimes(1);
+      expect(unmountSpy).toHaveBeenLastCalledWith(containers[0]);
+      expect(plugin['detailElements'].has(rows[0])).toBe(false);
+
+      // Retry, render, and land data — the loading panel is torn down the same way.
+      plugin['toggleAndEmit'](rows[0], 0);
+      plugin['toggleAndEmit'](rows[0], 0);
+      plugin.afterRender();
+      listeners.get('datasource:children')?.({
+        rows: [{ id: 10 }],
+        context: { source: 'master-detail', row: rows[0], rowIndex: 0 },
+        claimed: false,
+      });
+      expect(unmountSpy).toHaveBeenCalledTimes(2);
+      expect(unmountSpy).toHaveBeenLastCalledWith(containers[1]);
+    });
+
     it('should not call adapter.unmount when no adapter is registered', () => {
       const rows = [{ id: 1 }];
       const { gridEl } = createGridWithAdapter(rows);
@@ -1332,6 +1389,11 @@ describe('masterDetail', () => {
       expect(plugin.getDetailData(0)).toBeUndefined();
       expect(plugin.getRowHeight(rows[0], 0)).toBeUndefined();
       plugin['toggleAndEmit'](rows[0], 0);
+      eventListeners.get('datasource:error')?.({
+        error: new Error('retired request'),
+        context: firstRequest.context,
+      });
+      expect(plugin.isDetailLoading(0)).toBe(true);
       eventListeners.get('datasource:children')?.({
         rows: [{ id: 10 }],
         context: firstRequest.context,
@@ -1344,9 +1406,12 @@ describe('masterDetail', () => {
       });
       expect(plugin.getDetailData(0)).toEqual([{ id: 11 }]);
       plugin.collapse(0);
-      rows[0].eligible = false;
+      const cachedRow = rows[0];
+      rows.splice(0, 1);
+      cachedRow.eligible = false;
       plugin.processRows(rows);
-      rows[0].eligible = true;
+      rows.unshift(cachedRow);
+      cachedRow.eligible = true;
       expect(plugin.getDetailData(0)).toBeUndefined();
     });
 
@@ -1429,6 +1494,25 @@ describe('masterDetail', () => {
       expect(plugin.isDetailLoading(0)).toBe(false);
     });
 
+    it('releases the loading state when children arrive for a row that is no longer expanded', () => {
+      const rows = [{ id: 1 }];
+      const { gridEl, eventListeners } = createMockGridWithEvents(rows);
+      const plugin = new MasterDetailPlugin({ detailRenderer: () => '<div>Detail</div>' });
+      plugin.attach(gridEl as any);
+      plugin['toggleAndEmit'](rows[0], 0);
+      // Drop the expansion without the collapse path's cancellation.
+      plugin['expandedRows'].delete(rows[0]);
+
+      eventListeners.get('datasource:children')?.({
+        rows: [{ id: 10 }],
+        context: { source: 'master-detail', row: rows[0], rowIndex: 0 },
+        claimed: false,
+      });
+
+      expect(plugin.isDetailLoading(0)).toBe(false);
+      expect(plugin.getDetailData(0)).toBeUndefined();
+    });
+
     it('should not fire fetch-children when ServerSide is not active', () => {
       const rows = [{ id: 1 }];
       const { gridEl, queryCalls } = createMockGridWithEvents(rows);
@@ -1452,6 +1536,357 @@ describe('masterDetail', () => {
       const fetchQuery = queryCalls.find((q) => q.type === 'datasource:fetch-children');
       expect(fetchQuery).toBeUndefined();
       expect(plugin.isDetailLoading(0)).toBe(false);
+    });
+
+    describe('getChildRows failure and cancellation (#531)', () => {
+      function setup() {
+        const rows = [{ id: 1, name: 'Alice' }];
+        const harness = createMockGridWithEvents(rows);
+        const plugin = new MasterDetailPlugin({ detailRenderer: () => '<div>Detail</div>' });
+        plugin.attach(harness.gridEl as any);
+        const errors: unknown[] = [];
+        harness.gridEl.addEventListener('detail-load-error', (e) => errors.push((e as CustomEvent).detail));
+        const fetchSignal = (): AbortSignal =>
+          (harness.queryCalls.filter((q) => q.type === 'datasource:fetch-children').at(-1)!.context as any).signal;
+        const fail = (error = new Error('boom')) =>
+          harness.eventListeners.get('datasource:error')?.({
+            error,
+            context: { source: 'master-detail', row: rows[0], rowIndex: 0 },
+          });
+        return { ...harness, rows, plugin, errors, fetchSignal, fail };
+      }
+
+      it('releases the loading state and emits detail-load-error on datasource:error', () => {
+        const { rows, plugin, errors, fail } = setup();
+        plugin['toggleAndEmit'](rows[0], 0);
+        expect(plugin.isDetailLoading(0)).toBe(true);
+
+        const error = new Error('boom');
+        fail(error);
+
+        expect(plugin.isDetailLoading(0)).toBe(false);
+        expect(plugin.isExpanded(0)).toBe(true);
+        expect(errors).toEqual([{ rowIndex: 0, row: rows[0], error }]);
+      });
+
+      it('retries the fetch when the row is collapsed and re-expanded after an error', () => {
+        const { rows, plugin, queryCalls, fail } = setup();
+        plugin['toggleAndEmit'](rows[0], 0);
+        fail();
+        plugin['toggleAndEmit'](rows[0], 0);
+        plugin['toggleAndEmit'](rows[0], 0);
+
+        expect(queryCalls.filter((q) => q.type === 'datasource:fetch-children')).toHaveLength(2);
+        expect(plugin.isDetailLoading(0)).toBe(true);
+      });
+
+      it('retries the fetch when collapseAll() follows an error', () => {
+        const { plugin, queryCalls, fail } = setup();
+        plugin.expandAll();
+        fail();
+        plugin.collapseAll();
+        plugin.expandAll();
+
+        expect(queryCalls.filter((q) => q.type === 'datasource:fetch-children')).toHaveLength(2);
+        expect(plugin.isDetailLoading(0)).toBe(true);
+      });
+
+      it('ignores datasource:error for other sources and for rows it is not loading', () => {
+        const { rows, plugin, errors, eventListeners, fail } = setup();
+        fail(); // never requested
+        plugin['toggleAndEmit'](rows[0], 0);
+        eventListeners.get('datasource:error')?.({ error: new Error('x'), context: { source: 'tree' } });
+
+        expect(errors).toHaveLength(0);
+        expect(plugin.isDetailLoading(0)).toBe(true);
+      });
+
+      it('passes a FetchChildrenQuery.signal that collapsing aborts', () => {
+        const { rows, plugin, errors, fetchSignal, fail } = setup();
+        plugin['toggleAndEmit'](rows[0], 0);
+        const signal = fetchSignal();
+        expect(signal.aborted).toBe(false);
+
+        plugin['toggleAndEmit'](rows[0], 0);
+        expect(signal.aborted).toBe(true);
+
+        fail(); // a late error for the collapsed row is not reported
+        expect(errors).toHaveLength(0);
+      });
+
+      it('aborts in-flight loads on collapse(), collapseAll() and detach()', () => {
+        const { rows, plugin, fetchSignal } = setup();
+        plugin['toggleAndEmit'](rows[0], 0);
+        const first = fetchSignal();
+        plugin.collapse(0);
+        expect(first.aborted).toBe(true);
+
+        plugin['toggleAndEmit'](rows[0], 0);
+        const second = fetchSignal();
+        plugin.collapseAll();
+        expect(second.aborted).toBe(true);
+        expect(plugin.isDetailLoading(0)).toBe(false);
+
+        plugin['toggleAndEmit'](rows[0], 0);
+        const third = fetchSignal();
+        plugin.detach();
+        expect(third.aborted).toBe(true);
+      });
+    });
+
+    describe('programmatic expand fetches detail data (#532)', () => {
+      function setup(rows: any[] = [{ id: 1 }, { id: 2 }]) {
+        const harness = createMockGridWithEvents(rows);
+        const plugin = new MasterDetailPlugin({ detailRenderer: () => '<div>Detail</div>' });
+        plugin.attach(harness.gridEl as any);
+        const fetches = () =>
+          harness.queryCalls
+            .filter((q) => q.type === 'datasource:fetch-children')
+            .map((q) => (q.context as any).context);
+        return { ...harness, rows, plugin, fetches };
+      }
+
+      it('expand() requests detail data and tracks loading', () => {
+        const { rows, plugin, fetches } = setup();
+        plugin.expand(1);
+
+        expect(fetches()).toEqual([{ source: 'master-detail', row: rows[1], rowIndex: 1 }]);
+        expect(plugin.isDetailLoading(1)).toBe(true);
+      });
+
+      it('expand() on an already expanded or loading row does not request again', () => {
+        const { plugin, fetches } = setup();
+        plugin.expand(0);
+        plugin.expand(0);
+
+        expect(fetches()).toHaveLength(1);
+      });
+
+      it('toggle() requests on expand and aborts on collapse', () => {
+        const { plugin, queryCalls, fetches } = setup();
+        plugin.toggle(0);
+        expect(fetches()).toHaveLength(1);
+        const signal = (queryCalls.find((q) => q.type === 'datasource:fetch-children')!.context as any)
+          .signal as AbortSignal;
+
+        plugin.toggle(0);
+        expect(signal.aborted).toBe(true);
+        expect(plugin.isDetailLoading(0)).toBe(false);
+      });
+
+      it('expandAll() requests every newly expanded row and skips group rows and loading placeholders', () => {
+        const rows = [{ id: 1 }, { __isGroupRow: true }, { __loading: true, __index: 2 }, { id: 3 }];
+        const { plugin, fetches } = setup(rows);
+        plugin.expand(0);
+        plugin.expandAll();
+
+        expect(fetches().map((c) => c.rowIndex)).toEqual([0, 3]);
+        expect(plugin.isDetailLoading(3)).toBe(true);
+        expect(plugin.isDetailLoading(2)).toBe(false);
+      });
+
+      it('does not request rows whose detail data is already cached', () => {
+        const { rows, plugin, eventListeners, fetches } = setup();
+        plugin.expand(0);
+        eventListeners.get('datasource:children')?.({
+          rows: [{ id: 10 }],
+          context: { source: 'master-detail', row: rows[0], rowIndex: 0 },
+          claimed: false,
+        });
+        plugin.collapse(0);
+        plugin.expand(0);
+
+        expect(fetches()).toHaveLength(1);
+        expect(plugin.getDetailData(0)).toEqual([{ id: 10 }]);
+      });
+    });
+
+    describe('loading placeholders and expandAll() mode (#535)', () => {
+      function setup(rows: any[]) {
+        const harness = createMockGridWithEvents(rows);
+        Object.defineProperty(harness.gridEl, '_hostElement', { value: harness.gridEl, configurable: true });
+        const rendered: any[] = [];
+        const plugin = new MasterDetailPlugin({ detailRenderer: (row) => (rendered.push(row), '<div>Detail</div>') });
+        plugin.attach(harness.gridEl as any);
+        const body = harness.gridEl.querySelector('.rows')!;
+        /** Render a row element per row so `afterRender` sees them as visible. */
+        const renderRows = () => {
+          body.replaceChildren();
+          rows.forEach((_, i) => {
+            const rowEl = document.createElement('div');
+            rowEl.className = 'data-grid-row';
+            rowEl.innerHTML = `<div class="cell" data-row="${i}"></div>`;
+            body.appendChild(rowEl);
+          });
+          plugin.afterRender();
+        };
+        const fetches = () =>
+          harness.queryCalls
+            .filter((q) => q.type === 'datasource:fetch-children')
+            .map((q) => (q.context as any).context);
+        const emit = (type: string, detail: unknown) => harness.eventListeners.get(type)?.(detail);
+        return { ...harness, plugin, rendered, renderRows, fetches, emit };
+      }
+      const placeholder = (i: number) => ({ __loading: true, __index: i });
+
+      it('expand(), toggle() and the expander ignore loading placeholders', () => {
+        const rows = [placeholder(0)];
+        const { plugin, fetches } = setup(rows);
+        plugin.expand(0);
+        plugin.toggle(0);
+        plugin['toggleAndEmit'](rows[0], 0);
+
+        expect(plugin.isExpanded(0)).toBe(false);
+        expect(fetches()).toHaveLength(0);
+      });
+
+      it('never renders a detail panel for a placeholder, even if one is in the expanded set', () => {
+        const rows: any[] = [{ id: 1 }, placeholder(1)];
+        const { plugin, rendered, renderRows } = setup(rows);
+        plugin['expandedRows'].add(rows[0]);
+        plugin['expandedRows'].add(rows[1]);
+        renderRows();
+
+        expect(rendered).toEqual([rows[0]]);
+        expect(plugin.getDetailElement(1)).toBeUndefined();
+      });
+
+      it('expands rows that replace a placeholder and fetches their detail once they render', () => {
+        const rows: any[] = [{ id: 1 }, placeholder(1)];
+        const { plugin, fetches, renderRows } = setup(rows);
+        plugin.expandAll();
+        expect(fetches().map((c) => c.rowIndex)).toEqual([0]);
+
+        rows[1] = { id: 2 };
+        expect(plugin.isExpanded(1)).toBe(true);
+        expect(fetches()).toHaveLength(1);
+
+        renderRows();
+        expect(fetches().map((c) => c.rowIndex)).toEqual([0, 1]);
+        renderRows();
+        expect(fetches()).toHaveLength(2);
+      });
+
+      it('does not expand rows that appear without expandAll(), after collapseAll() or after detach()', () => {
+        const rows: any[] = [placeholder(0)];
+        const { plugin } = setup(rows);
+        const deliver = () => (rows[0] = { id: Math.random() });
+        deliver();
+        expect(plugin.isExpanded(0)).toBe(false);
+
+        plugin.expandAll();
+        plugin.collapseAll();
+        deliver();
+        expect(plugin.isExpanded(0)).toBe(false);
+
+        plugin.expandAll();
+        plugin.detach();
+        deliver();
+        expect(plugin.isExpanded(0)).toBe(false);
+      });
+
+      it('expands hierarchy children that become display rows, but never synthetic rows', () => {
+        const rows: any[] = [{ id: 1 }];
+        const { plugin, emit } = setup(rows);
+        plugin.expandAll();
+
+        // Tree/GroupingRows claim these and flatten them into the display rows.
+        const child = { id: 2 };
+        const groupHeader = { __isGroupRow: true };
+        emit('datasource:children', { rows: [child, groupHeader], context: { source: 'tree' }, claimed: false });
+        const detailRow = { id: 99 };
+        emit('datasource:children', {
+          rows: [detailRow],
+          context: { source: 'master-detail', row: rows[0], rowIndex: 0 },
+          claimed: false,
+        });
+
+        rows.push(child, groupHeader);
+        expect(plugin.isExpanded(1)).toBe(true);
+        expect(plugin.isExpanded(2)).toBe(false);
+        // Detail data stays out of the display rows.
+        expect(plugin.getDetailData(0)).toEqual([detailRow]);
+      });
+
+      it('does not retain replaced rows in the expansion set or the row-keyed caches', () => {
+        const rows: any[] = [placeholder(0), placeholder(1)];
+        const { plugin, emit, renderRows } = setup(rows);
+        plugin.expandAll();
+
+        for (let generation = 0; generation < 50; generation++) {
+          rows[0] = { id: `a${generation}` };
+          rows[1] = { id: `b${generation}` };
+          renderRows();
+          // Complete each row's detail request so the caches actually fill up.
+          rows.forEach((row, rowIndex) =>
+            emit('datasource:children', {
+              rows: [{ gen: generation }],
+              context: { source: 'master-detail', row, rowIndex },
+              claimed: false,
+            }),
+          );
+          renderRows();
+
+          expect(plugin.getExpandedRows()).toEqual([0, 1]);
+          expect(plugin.getDetailData(0)).toEqual([{ gen: generation }]);
+        }
+
+        expect(plugin['expandedRows'].size).toBe(0);
+        expect(plugin['detailElements'].size).toBeLessThanOrEqual(rows.length);
+        // WeakMap retention is not observable from a test, so assert the cache
+        // kind — a strong Map here would pin every discarded generation.
+        expect(plugin['detailDataMap']).toBeInstanceOf(WeakMap);
+        expect(plugin['measuredDetailHeights']).toBeInstanceOf(WeakMap);
+      });
+
+      it('collapsing a row expanded by expandAll() keeps it collapsed and cancels its fetch', () => {
+        const rows: any[] = [placeholder(0)];
+        const { plugin, fetches, renderRows } = setup(rows);
+        plugin.expandAll();
+        rows[0] = { id: 1 };
+
+        plugin.collapse(0);
+        renderRows();
+        expect(plugin.isExpanded(0)).toBe(false);
+        expect(fetches()).toHaveLength(0);
+      });
+
+      describe('discarded pending detail loads (#539)', () => {
+        /** Expand both rows, then drop row 1 from the row model. */
+        function dropSecondRow() {
+          const rows: any[] = [{ id: 1 }, { id: 2 }];
+          const harness = setup(rows);
+          harness.plugin.expandAll();
+          harness.renderRows();
+          expect(harness.plugin['detailLoads'].size).toBe(2);
+          const dropped = rows[1];
+          rows.splice(1, 1);
+          return { ...harness, rows, dropped };
+        }
+
+        it('aborts loads for rows discarded by an unclaimed root-data replacement', () => {
+          const { plugin, emit, renderRows, rows, dropped } = dropSecondRow();
+          const signal = plugin['detailLoads'].get(dropped)!.signal;
+
+          emit('datasource:data', { rows, totalNodeCount: 1, startNode: 0, endNode: 1, claimed: false });
+          renderRows();
+
+          expect(plugin['detailLoads'].has(dropped)).toBe(false);
+          expect(signal.aborted).toBe(true);
+        });
+
+        it('keeps loads for hidden hierarchy rows when the replacement was claimed', () => {
+          const { plugin, emit, renderRows, rows, dropped } = dropSecondRow();
+
+          // A hierarchy plugin derives its own row model, so a collapsed child is
+          // absent from `rows` while still live — absence is not proof of discard.
+          emit('datasource:data', { rows, totalNodeCount: 1, startNode: 0, endNode: 1, claimed: true });
+          renderRows();
+
+          expect(plugin['detailLoads'].has(dropped)).toBe(true);
+          expect(plugin['detailLoads'].get(dropped)!.signal.aborted).toBe(false);
+        });
+      });
     });
   });
 });

@@ -11,6 +11,7 @@ import { useGridOverlay } from '../lib/use-grid-overlay';
 import './cell-entry';
 import './editing';
 import './selection';
+import './undo-redo';
 
 type Row = { id: number; first: string; last: string };
 let root: Root | undefined;
@@ -62,6 +63,59 @@ function ControlledEditor({
 }
 
 describe('React cellEntry feature', () => {
+  it.each(['props', 'config'])('clears with typed outcomes and one undo via %s', async (entry) => {
+    const container = document.createElement('div');
+    document.body.append(container);
+    root = createRoot(container);
+    const rows: Row[] = [{ id: 1, first: 'Alice', last: 'Example' }];
+    const onClear = vi.fn();
+    const features = {
+      selection: { mode: 'range' as const },
+      editing: { editOn: 'manual' as const },
+      undoRedo: true,
+      cellEntry: { clearOnDelete: true },
+    };
+    const config: GridConfig<Row> = {
+      columns: [
+        {
+          field: 'first',
+          type: 'string',
+          editable: true,
+          clearValue: ({ row }) => ({ value: row.id === 1 ? '' : 'kept' }),
+        },
+        { field: 'last', type: 'string', editable: true },
+      ],
+      features: entry === 'config' ? features : undefined,
+    };
+    await act(async () =>
+      root!.render(
+        <DataGrid
+          rows={rows}
+          gridConfig={config}
+          {...(entry === 'props' ? features : {})}
+          onCellClear={(detail) => {
+            const name: string | undefined = detail.cells[0]?.row.first;
+            onClear(detail, name);
+          }}
+        />,
+      ),
+    );
+    const grid = container.querySelector('tbw-grid') as DataGridElement<Row>;
+    await grid.ready();
+    await act(async () => {
+      grid.getPluginByName('selection')!.setRanges([{ from: { row: 0, col: 0 }, to: { row: 0, col: 1 } }]);
+      grid.dispatchEvent(new KeyboardEvent('keydown', { key: 'Delete', bubbles: true, cancelable: true }));
+    });
+    expect(rows[0]).toEqual({ id: 1, first: '', last: '' });
+    expect(onClear).toHaveBeenCalledTimes(1);
+    expect(grid.getPluginByName('undoRedo')!.getUndoStack()).toHaveLength(1);
+    await act(async () => {
+      grid.getPluginByName('undoRedo')!.undo();
+    });
+    expect(rows[0].first).toBe('Alice');
+    expect(rows[0].last).toBe('Example');
+  });
+
   it.each(['config', 'child'])('replaces %s-based portal editors without losing a controlled value', async (source) => {
     const container = document.createElement('div');
     document.body.append(container);
