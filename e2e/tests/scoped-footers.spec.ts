@@ -51,6 +51,91 @@ test.beforeAll(async () => {
   fixture = chunk.code;
 });
 
+for (const fallback of [false, true]) {
+  test(`ancestor ordering preserves overlapping React controls fallback=${fallback}`, async ({ page }) => {
+    const errors: string[] = [];
+    page.on('pageerror', (error) => errors.push(error.message));
+    await mount(page, {
+      external: false,
+      compact: true,
+      canonical: true,
+      flat: true,
+      rowCount: 80,
+      customEditor: true,
+    });
+    await page.evaluate((fallback) => {
+      const grid = document.querySelector('tbw-grid')!;
+      if (fallback) Object.defineProperty(grid._bodyEl, 'moveBefore', { value: undefined });
+      else if (typeof grid._bodyEl.moveBefore !== 'function') throw new Error('Native moveBefore is required');
+      grid._virtualization.container!.scrollTop = 500;
+      grid.refreshVirtualWindow(false);
+    }, fallback);
+    await expect(page.locator('[data-row-control]').nth(5)).toBeVisible();
+    const rowId = await page.evaluate(() => {
+      const grid = document.querySelector('tbw-grid')!;
+      return grid._bodyEl
+        .querySelectorAll<HTMLButtonElement>('[data-row-control]')[5]
+        .getAttribute('data-row-control')!;
+    });
+    await page.locator(`[data-row-control="${rowId}"]`).click();
+    const input = page.locator(`[data-row-note="${rowId}"]`);
+    await input.fill('kept draft');
+    await input.evaluate((element: HTMLInputElement) => element.setSelectionRange(2, 6));
+    const result = await page.evaluate(async () => {
+      const grid = document.querySelector('tbw-grid')!;
+      const body = grid._bodyEl;
+      const before = new Map(grid._rowPool.map((row) => [row.__rowDataRef, row]));
+      const active = document.activeElement as HTMLInputElement;
+      const focusedRow = active.closest('.data-grid-row')!;
+      const focusedContents = Array.from(focusedRow.querySelectorAll('*'));
+      const selected = focusedRow.getAttribute('aria-selected');
+      const observer = new MutationObserver(() => undefined);
+      observer.observe(body, { childList: true });
+      grid._virtualization.container!.scrollTop -= 48;
+      grid.refreshVirtualWindow(false);
+      const records = observer.takeRecords();
+      observer.disconnect();
+      const overlap = grid._rowPool.filter((row) => before.has(row.__rowDataRef));
+      const moved = records
+        .flatMap((record) => Array.from(record.removedNodes))
+        .filter((node) => overlap.some((row) => row === node));
+      const order = Array.from(body.children)
+        .filter((child) => child.classList.contains('data-grid-row'))
+        .map((child) => Number(child.getAttribute('aria-rowindex')));
+      await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+      return {
+        overlap: overlap.length,
+        entrants: grid._rowPool.length - overlap.length,
+        departures: before.size - overlap.length,
+        sameRows: overlap.every((row) => before.get(row.__rowDataRef) === row),
+        retainedMoves: moved.length,
+        ordered: order.every((value, i) => i === 0 || value > order[i - 1]),
+        focused: document.activeElement === active,
+        sameContents: Array.from(focusedRow.querySelectorAll('*')).every((node, i) => node === focusedContents[i]),
+        contentCount: focusedRow.querySelectorAll('*').length === focusedContents.length,
+        selected: focusedRow.getAttribute('aria-selected') === selected,
+        draft: active.value,
+        range: [active.selectionStart, active.selectionEnd],
+      };
+    });
+    expect(result.overlap).toBeGreaterThan(5);
+    expect(result.entrants).toBeGreaterThan(0);
+    expect(result.departures).toBeGreaterThan(0);
+    expect(result).toMatchObject({
+      sameRows: true,
+      retainedMoves: 0,
+      ordered: true,
+      focused: true,
+      sameContents: true,
+      contentCount: true,
+      selected: true,
+      draft: 'kept draft',
+      range: [2, 6],
+    });
+    expect(errors).toEqual([]);
+  });
+}
+
 for (const canonical of [false, true]) {
   test(`live viewport ownership preserves editing and Undo canonical=${canonical}`, async ({ page }) => {
     const errors: string[] = [];

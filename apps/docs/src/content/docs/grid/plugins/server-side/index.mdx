@@ -220,7 +220,9 @@ envelope:
 
 :::note
 `data-src` is read **once at attach time** and fetches the entire dataset (it caches
-the result and slices it per block). A JS `dataSource` always takes precedence. For
+the result and slices it per block), so sorting and filtering always run in the
+browser, as if `sortMode` and `filterMode` were `'local'`. A JS `dataSource` always
+takes precedence. For
 true server-side pagination, remote sort/filter, or per-block fetching, provide a
 `dataSource` callback as shown above instead.
 
@@ -281,6 +283,9 @@ When a mode is `'local'`:
 - The plugin no longer refetches on `sort-change` / `filter-change` — it just requests a re-render.
 - The corresponding `sortModel` / `filterModel` is **omitted** from `GetRowsParams` so scroll-triggered block fetches don't leak local state to the backend.
 - Already-loading placeholder rows are pinned to the end of the sort order so the in-progress fetch stays visually grouped.
+- Under `filterMode: 'local'`, placeholder rows always pass the filter, so they keep their slots (and the scroll height that triggers the next fetch). Each block is filtered when it arrives.
+
+Under the default `filterMode: 'server'`, the FilteringPlugin does **not** re-filter rows in the browser. Likewise, under the default `sortMode: 'server'`, neither the MultiSortPlugin nor the TreePlugin re-sorts them. Your `getRows()` result is shown as-is (and, for trees, `getChildRows()` children in the order they arrive), so server-side semantics (analysed text, joins on other data, server collation, computed sort keys) are preserved, and loading placeholders keep their block positions.
 
 | Use case                                      | `sortMode` | `filterMode` |
 | --------------------------------------------- | ---------- | ------------ |
@@ -294,12 +299,12 @@ Local filtering only filters rows currently in the cache. With virtual scrolling
 :::
 
 :::note
-A column with a custom `sortComparator` is treated as user-owned: loading placeholder rows are **not** auto-pinned. Pin them yourself in your comparator if you want the same behaviour.
+A column with a custom `sortComparator` is treated as user-owned: loading placeholder rows are **not** auto-pinned. Pin them yourself in your comparator (detect them with `isLoadingPlaceholder()`) if you want the same behaviour.
 :::
 
 ### Prefetching with `loadThreshold`
 
-By default the plugin only fetches a block when the **visible viewport** enters it. This also applies on the initial load: if the grid is taller than one block, every block the viewport covers is requested as soon as the first one has rendered, with no scroll needed. On gentle scrolling, users see placeholder rows for the duration of the network round-trip. Set `loadThreshold` to prefetch the next block(s) before the user scrolls into them:
+By default the plugin only fetches a block when the **visible viewport** enters it. This also applies on the initial load: if the grid is taller than one block, every block the viewport covers is requested as soon as the first one has rendered (up to `maxConcurrentRequests` at a time; the rest follow as those land), with no scroll needed. On gentle scrolling, users see placeholder rows for the duration of the network round-trip. Set `loadThreshold` to prefetch the next block(s) before the user scrolls into them:
 
 ```ts
 serverSide: {
@@ -394,16 +399,36 @@ The plugin uses a **block-based caching strategy**:
 5. Grid re-renders with new data
 
 **Loading state:**
-Rows that haven't loaded yet are represented with placeholder objects:
-```ts
-{ __loading: true, __index: 42 }
-```
+Rows that haven't loaded yet are placeholder objects (`{ __loading: true, __index: 42 }`). By default the
+grid renders each one itself, as a full-width row in the core [row-loading state](/grid/core/#loading-states):
+the `.tbw-row-loading` class, `aria-busy="true"` and the row spinner overlay. A custom `loadingRenderer` styles
+it too. When the block arrives the row is rebuilt with real data and the loading state is cleared.
 
-You can detect loading rows via a custom cell renderer and style them accordingly:
+Your code does not have to know about placeholders:
+
+- Column renderers, `format`, `cellClass`, `rowClass` and a Responsive `cardRenderer` are never called for them while the grid renders.
+- `valueAccessor` and `filterValue` are never called for them, so local sorting and filtering (`sortMode: 'local'`, `filterMode: 'local'`) are safe while a block is still loading. Placeholders resolve to `undefined` and sort to the end.
+- A `rowHeight` function is never called for them either; a placeholder uses the default row height. In Responsive card mode it takes the height of a real card, so nothing shifts when the data arrives.
+- The context menu does not open on them, whether by right-click or by keyboard (<kbd>Shift</kbd>+<kbd>F10</kbd>, the <kbd>ContextMenu</kbd> key).
+- `getRowId` is never called with one. The grid gives each placeholder an internal id, `__loading:<index>`.
+
+Placeholders still appear in `grid.rows`; in a custom `sortComparator` or `gridConfig.sortHandler` under
+`sortMode: 'local'`, where they arrive with an `undefined` value; and in Export (`mode: 'formatted'` runs
+`format` and `processCell` on every row) and Clipboard copy. Use the exported `isLoadingPlaceholder()` guard
+to detect them there.
+
+To draw your own loading look instead, set `placeholderRendering: 'columns'`. Placeholders then take the
+normal cell render path, as they did before 3.9.1. `valueAccessor` and `filterValue` are still never called with one, so read placeholder state from `row`, not `value`:
+
 ```ts
+import { isLoadingPlaceholder } from '@toolbox-web/grid/plugins/server-side';
+
+features: {
+  serverSide: { dataSource, placeholderRendering: 'columns' },
+},
 columns: [{
   field: 'name',
-  renderer: (value, row) => row.__loading ? '<span class="loading">Loading…</span>' : value,
+  renderer: ({ row, value }) => (isLoadingPlaceholder(row) ? 'Loading…' : value),
 }]
 ```
 
@@ -748,7 +773,7 @@ flowchart TB
 
 ### getChildRows() Interface
 
-When composing with Tree, Row Grouping, or Master-Detail, implement `getChildRows()` on the data source. The `context.source` discriminator tells you which plugin is requesting children:
+When composing with Tree, Row Grouping, or Master-Detail, implement `getChildRows()` on the data source. The `context.source` discriminator tells you which plugin is requesting children. `params.signal` is aborted when the requesting plugin supersedes the request or the grid is torn down, and the result of an aborted request is discarded. Tree aborts when a refetch replaced the parent row before its children arrived. Row Grouping aborts when new group definitions arrive (sort/filter change, `refresh()`). Master-Detail aborts when the row is collapsed. If `getChildRows()` rejects, the requesting plugin leaves its loading state and fires its own error event (`tree-load-error`, `group-load-error`, or `detail-load-error`) alongside `datasource:error`.
 
 ```typescript
 import type { GetChildRowsParams, GetChildRowsResult } from '@toolbox-web/grid/plugins/server-side';
@@ -758,19 +783,19 @@ async getChildRows(params: GetChildRowsParams): Promise<GetChildRowsResult> {
 
   if (source === 'tree') {
     const { parentNode } = params.context;
-    const res = await fetch(`/api/tree/${parentNode.id}/children`);
+    const res = await fetch(`/api/tree/${parentNode.id}/children`, { signal: params.signal });
     return { rows: await res.json() };
   }
 
   if (source === 'grouping-rows') {
     const { groupKey } = params.context;
-    const res = await fetch(`/api/groups/${groupKey}/rows`);
+    const res = await fetch(`/api/groups/${groupKey}/rows`, { signal: params.signal });
     return { rows: await res.json() };
   }
 
   if (source === 'master-detail') {
     const { row } = params.context;
-    const res = await fetch(`/api/orders/${row.id}/items`);
+    const res = await fetch(`/api/orders/${row.id}/items`, { signal: params.signal });
     return { rows: await res.json() };
   }
 
@@ -786,7 +811,7 @@ See the [Tree plugin docs](/grid/plugins/tree/#server-side-data) for full detail
 
 ### ServerSide + Row Grouping
 
-ServerSidePlugin fetches group definitions as root data. When a group is expanded, GroupingRowsPlugin fires `datasource:fetch-children` to load the group's rows.
+ServerSidePlugin fetches group definitions as root data, in blocks of `pageSize` top-level groups (unloaded groups are placeholders that load on scroll). When a group is expanded, GroupingRowsPlugin fires `datasource:fetch-children` to load the group's rows.
 
 See the [Row Grouping plugin docs](/grid/plugins/grouping-rows/#server-side-data) for full details and examples.
 
@@ -808,12 +833,14 @@ The Server-Side plugin **cannot** be used with:
 
 | Event / Query | Direction | Description |
 | --- | --- | --- |
-| `datasource:data` | ServerSide → plugins | Root data block loaded. Structural plugins may claim it; unclaimed data is rendered as flat rows |
+| `datasource:data` | ServerSide → plugins | Root data block loaded (`startNode`/`endNode`, and a `generation` that changes whenever the cache is discarded — blocks of one generation belong to one dataset). Structural plugins may claim it; unclaimed data is rendered as flat rows |
 | `datasource:children` | ServerSide → plugins | Child data loaded. Filtered by `context.source` |
 | `datasource:loading` | ServerSide → plugins | Loading state changed (with optional context) |
 | `datasource:error` | ServerSide → plugins | Fetch failed (with optional context) |
 | `datasource:fetch-children` | Plugins → ServerSide | Query requesting child rows for a context |
 | `datasource:is-active` | Plugins → ServerSide | Query checking if a data source is configured |
+| `datasource:filter-mode` | Plugins → ServerSide | Query returning who filters rows while a data source is active: `'server'` (the data source; FilteringPlugin passes rows through) or `'local'` (the grid; placeholders pass until their block loads) |
+| `datasource:sort-mode` | Plugins → ServerSide | Query returning who sorts rows while a data source is active: `'server'` (the data source; MultiSortPlugin and TreePlugin pass rows through) or `'local'` (the grid sorts the loaded rows) |
 | `datasource:viewport-mapping` | ServerSide → plugins | Query mapping viewport indices to node-space indices |
 
 ## Diagnostic Codes
@@ -822,7 +849,7 @@ The Server-Side plugin **cannot** be used with:
 | --- | --- | --- |
 | `TBW140` | error | `getRows()` fetch failed |
 | `TBW141` | error | `getChildRows()` fetch failed |
-| `TBW142` | warn | Plugin requested children but `getChildRows()` is not implemented |
+| `TBW142` | warn | Plugin requested children but `getChildRows()` is not implemented (the request is settled as a failure, so the requester leaves its loading state) |
 | `TBW143` | info | `datasource:data` was not claimed by any structural plugin (flat grid mode) |
 
 ## Limitations

@@ -24,11 +24,14 @@ function createMockGrid(
 
   Object.assign(grid, {
     rows,
+    sourceRows: rows,
+    effectiveConfig: { getRowId: opts.getRowId },
     gridConfig: {},
     disconnectSignal: new AbortController().signal,
     requestRender: vi.fn(),
     requestRenderWithFocus: vi.fn(),
     requestAfterRender: vi.fn(),
+    _invalidateRowContent: vi.fn(),
     getPlugin: vi.fn(),
     getPluginByName: vi.fn(),
     query: vi.fn().mockReturnValue([]),
@@ -39,9 +42,18 @@ function createMockGrid(
     _focusRow: -1,
     _focusCol: -1,
     findRenderedRowElement: vi.fn().mockReturnValue(null),
+    // Internal id lookups used by #applyValue / #focusActionCell (mock: rows are both view and source)
+    _getRowEntry: vi.fn((id: string) => {
+      const index = rows.findIndex((r) => String(r['id']) === id);
+      return index >= 0 ? { row: rows[index], index } : undefined;
+    }),
+    _getSourceRowEntry: vi.fn((id: string) => {
+      const index = rows.findIndex((r) => String(r['id']) === id);
+      return index >= 0 ? { row: rows[index], index } : undefined;
+    }),
     // updateRow: mutates the row in-place (simulating the real grid behavior)
     updateRow: vi.fn((id: string, changes: Record<string, unknown>) => {
-      const row = rows.find((r) => String(r['id']) === id);
+      const row = rows.find((r) => (opts.getRowId?.(r) ?? String(r['id'] ?? r['_id'])) === id);
       if (row) Object.assign(row, changes);
     }),
     getRowId:
@@ -158,22 +170,17 @@ describe('UndoRedoPlugin', () => {
   // #region Fallback to direct mutation
 
   describe('falls back to direct mutation when no row ID', () => {
-    it('should mutate directly when getRowId throws', () => {
-      const noIdGrid = createMockGrid(rows, {
-        getRowId: () => {
-          throw new Error('No getRowId configured');
-        },
-      });
+    it('should mutate the original object directly when no ID is configured or present', () => {
+      const noIdRows = [{ name: 'Changed' }];
+      const noIdGrid = createMockGrid(noIdRows);
       const p = new UndoRedoPlugin();
       p.attach(noIdGrid);
 
       p.recordEdit(0, 'name', 'Alpha', 'Changed');
-      rows[0]['name'] = 'Changed';
-
       p.undo();
 
       expect(noIdGrid.updateRow).not.toHaveBeenCalled();
-      expect(rows[0]['name']).toBe('Alpha');
+      expect(noIdRows[0].name).toBe('Alpha');
 
       p.detach();
     });
@@ -199,34 +206,353 @@ describe('UndoRedoPlugin', () => {
 
   // #endregion
 
+  describe('recorded row ownership', () => {
+    it('follows row and field identity after reordering rows and columns', () => {
+      plugin.recordEdit(0, 'name', 'Alpha', 'Changed');
+      const edited = rows[0];
+      edited['name'] = 'Changed';
+      rows.reverse();
+      grid._visibleColumns = [{ field: 'price' }, { field: 'id' }, { field: 'name' }];
+
+      plugin.undo();
+      plugin.afterRender();
+      expect(edited['name']).toBe('Alpha');
+      expect(rows[0]['name']).toBe('Beta');
+      expect(grid._focusRow).toBe(1);
+      expect(grid._focusCol).toBe(2);
+      expect(plugin.getRedoStack()[0]).toMatchObject({ rowIndex: 0, field: 'name' });
+      rows.reverse();
+      plugin.redo();
+      plugin.afterRender();
+      expect(edited['name']).toBe('Changed');
+      expect(grid._focusRow).toBe(0);
+    });
+
+    it('updates a filtered-out source row without focusing its old view position', () => {
+      plugin.recordEdit(0, 'name', 'Alpha', 'Changed');
+      const edited = rows[0];
+      edited['name'] = 'Changed';
+      grid.rows = [rows[1]];
+
+      plugin.undo();
+      expect(edited['name']).toBe('Alpha');
+      expect(grid.rows[0]['name']).toBe('Beta');
+      expect(grid._focusRow).toBe(-1);
+      plugin.redo();
+      expect(edited['name']).toBe('Changed');
+    });
+
+    it('follows unique IDs across immutable replacements', () => {
+      plugin.recordEdit(0, 'name', 'Alpha', 'Changed');
+      const previous = rows[0];
+      previous['name'] = 'Changed';
+      rows[0] = { ...previous };
+
+      plugin.undo();
+      expect(rows[0]['name']).toBe('Alpha');
+      expect(previous['name']).toBe('Changed');
+      rows[0] = { ...rows[0] };
+      plugin.redo();
+      expect(rows[0]['name']).toBe('Changed');
+    });
+
+    it('warns and skips a removed target but applies the remaining compound edit', () => {
+      const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      plugin.beginTransaction();
+      plugin.recordEdit(1, 'price', 20, 50);
+      plugin.recordEdit(0, 'name', 'Alpha', 'Changed');
+      plugin.endTransaction();
+      rows[0]['name'] = 'Changed';
+      rows[1]['price'] = 50;
+      rows.shift();
+
+      expect(plugin.undo()?.type).toBe('compound');
+      expect(rows[0]).toMatchObject({ name: 'Beta', price: 20 });
+      expect(plugin.canUndo()).toBe(false);
+      expect(plugin.canRedo()).toBe(true);
+      expect(grid._focusRow).toBe(-1);
+      expect(warning).toHaveBeenCalledWith(expect.stringContaining('Skipping this edit.'));
+      plugin.redo();
+      expect(rows[0]['price']).toBe(50);
+      expect(plugin.getUndoStack()).toHaveLength(1);
+      warning.mockRestore();
+    });
+
+    it.each(['record', 'replay'])('rejects duplicate IDs introduced at %s time', (when) => {
+      const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      if (when === 'record') rows[1]['id'] = rows[0]['id'];
+      plugin.recordEdit(0, 'name', 'Alpha', 'Changed');
+      rows[0]['name'] = 'Changed';
+      if (when === 'replay') rows[1]['id'] = rows[0]['id'];
+      else rows[1]['id'] = 2; // Ambiguous capture must not gain identity later.
+
+      plugin.undo();
+      expect(rows.map((row) => row['name'])).toEqual(['Changed', 'Beta']);
+      expect(grid.updateRow).not.toHaveBeenCalled();
+      expect(warning).toHaveBeenCalled();
+      warning.mockRestore();
+    });
+
+    it('does not hide duplicate source IDs behind a filtered view', () => {
+      const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      plugin.recordEdit(0, 'name', 'Alpha', 'Changed');
+      rows[0]['name'] = 'Changed';
+      rows[1]['id'] = rows[0]['id'];
+      grid.rows = [rows[0]];
+      plugin.undo();
+      expect(rows[0]['name']).toBe('Changed');
+      expect(grid.updateRow).not.toHaveBeenCalled();
+      expect(warning).toHaveBeenCalled();
+      warning.mockRestore();
+    });
+
+    it('does not reinterpret recorded IDs after resolver replacement', () => {
+      const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      plugin.recordEdit(0, 'name', 'Alpha', 'Changed');
+      rows[0]['name'] = 'Changed';
+      grid.effectiveConfig.getRowId = (row: { id: number }) => String(row.id);
+      plugin.undo();
+      expect(rows[0]['name']).toBe('Changed');
+      expect(grid.updateRow).not.toHaveBeenCalled();
+      expect(warning).toHaveBeenCalled();
+      warning.mockRestore();
+    });
+
+    it('uses the committed event owner even when the reported view index is stale or absent', () => {
+      const commit = grid._pluginManager.subscribe.mock.calls.find(
+        (call: unknown[]) => call[1] === 'cell-edit-committed',
+      )?.[2] as (detail: {
+        row: unknown;
+        rowIndex: number;
+        field: string;
+        oldValue: unknown;
+        newValue: unknown;
+      }) => void;
+      const edited = rows[0];
+      edited['name'] = 'Changed';
+      grid.rows = [rows[1]];
+      commit({ row: edited, rowIndex: -1, field: 'name', oldValue: 'Alpha', newValue: 'Changed' });
+      plugin.undo();
+      expect(edited['name']).toBe('Alpha');
+      expect(rows[1]['name']).toBe('Beta');
+    });
+
+    it('keeps no-ID history tied to the original object, never its replacement', () => {
+      const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      const owners = [{ name: 'Changed' }, { name: 'Other' }];
+      const noIdGrid = createMockGrid(owners);
+      const history = new UndoRedoPlugin();
+      history.attach(noIdGrid);
+      history.recordEdit(0, 'name', 'Original', 'Changed');
+      owners.reverse();
+      history.undo();
+      expect(owners[1].name).toBe('Original');
+      owners[1] = { name: 'Replacement' };
+      history.redo();
+      expect(owners.map((row) => row.name)).toEqual(['Other', 'Replacement']);
+      expect(noIdGrid.updateRow).not.toHaveBeenCalled();
+      expect(warning).toHaveBeenCalled();
+      history.detach();
+      warning.mockRestore();
+    });
+
+    it('delegates no-ID invalidation to the cache-owning core', () => {
+      const owner = { name: 'Changed' };
+      const noIdGrid = createMockGrid([owner]);
+      const history = new UndoRedoPlugin();
+      history.attach(noIdGrid);
+      history.recordEdit(0, 'name', 'Original', 'Changed');
+      history.undo();
+      expect(owner.name).toBe('Original');
+      expect(noIdGrid._invalidateRowContent).toHaveBeenCalledWith(owner);
+      history.detach();
+    });
+
+    it('uses conventional _id and configured IDs without changing dotted field identity', () => {
+      for (const getRowId of [undefined, (row: unknown) => String((row as { _id: string })._id)]) {
+        const owner = { _id: 'stable', nested: { value: 'Changed' } };
+        const ownGrid = createMockGrid([owner], { getRowId });
+        const history = new UndoRedoPlugin();
+        history.attach(ownGrid);
+        history.recordEdit(0, 'nested.value', 'Original', 'Changed');
+        history.undo();
+        expect(ownGrid.updateRow).toHaveBeenCalledWith('stable', { 'nested.value': 'Original' }, 'history');
+        history.detach();
+      }
+    });
+
+    it('propagates resolver errors instead of treating them as missing IDs', () => {
+      const brokenGrid = createMockGrid(rows, {
+        getRowId: () => {
+          throw new Error('resolver failed');
+        },
+      });
+      const history = new UndoRedoPlugin();
+      history.attach(brokenGrid);
+      expect(() => history.recordEdit(0, 'name', 'Alpha', 'Changed')).toThrow('resolver failed');
+      expect(history.canUndo()).toBe(false);
+      history.detach();
+    });
+
+    it('restores recording when a history write throws', () => {
+      plugin.recordEdit(0, 'name', 'Alpha', 'Changed');
+      grid.updateRow.mockImplementationOnce(() => {
+        throw new Error('write failed');
+      });
+      expect(() => plugin.undo()).toThrow('write failed');
+      const commit = grid._pluginManager.subscribe.mock.calls.find(
+        (call: unknown[]) => call[1] === 'cell-edit-committed',
+      )?.[2] as (detail: { rowIndex: number; field: string; oldValue: unknown; newValue: unknown }) => void;
+      commit({ rowIndex: 1, field: 'price', oldValue: 20, newValue: 30 });
+      expect(plugin.getUndoStack()).toHaveLength(2);
+    });
+  });
+
   // #region Event emission
 
   describe('events', () => {
-    it('should emit undo event on Ctrl+Z', () => {
-      const events: CustomEvent[] = [];
-      grid.addEventListener('undo', (e: Event) => events.push(e as CustomEvent));
+    const collect = (name: 'undo' | 'redo') => {
+      const details: unknown[] = [];
+      grid.addEventListener(name, (e: Event) => details.push((e as CustomEvent).detail));
+      return details;
+    };
 
+    // #563 — programmatic and keyboard undo/redo must be indistinguishable to listeners
+    const trigger = {
+      keyboard: { undo: () => plugin.onKeyDown(ctrlZ()), redo: () => plugin.onKeyDown(ctrlY()) },
+      programmatic: { undo: () => plugin.undo(), redo: () => plugin.redo() },
+    };
+
+    it.each(['keyboard', 'programmatic'] as const)('should emit undo with the undone action (%s)', (via) => {
+      const events = collect('undo');
       plugin.recordEdit(0, 'name', 'Alpha', 'Changed');
-      rows[0]['name'] = 'Changed';
+      const [action] = plugin.getUndoStack();
 
-      plugin.onKeyDown(ctrlZ());
+      trigger[via].undo();
 
-      expect(events).toHaveLength(1);
-      expect(events[0].detail).toMatchObject({ type: 'undo' });
+      expect(events).toEqual([{ action, type: 'undo' }]);
     });
 
-    it('should emit redo event on Ctrl+Y', () => {
-      const events: CustomEvent[] = [];
-      grid.addEventListener('redo', (e: Event) => events.push(e as CustomEvent));
+    it.each(['keyboard', 'programmatic'] as const)('should emit redo with the redone action (%s)', (via) => {
+      const events = collect('redo');
+      plugin.recordEdit(0, 'name', 'Alpha', 'Changed');
+      const [action] = plugin.getUndoStack();
+
+      trigger[via].undo();
+      trigger[via].redo();
+
+      expect(events).toEqual([{ action, type: 'redo' }]);
+    });
+
+    it('should not emit undo/redo when there is nothing to undo/redo', () => {
+      const spy = vi.fn();
+      grid.addEventListener('undo', spy);
+      grid.addEventListener('redo', spy);
+
+      expect(plugin.undo()).toBeNull();
+      expect(plugin.redo()).toBeNull();
+      expect(spy).not.toHaveBeenCalled();
+    });
+
+    it('should update the stacks before the undo event fires', () => {
+      let seen: { canUndo: boolean; canRedo: boolean } | undefined;
+      grid.addEventListener('undo', () => (seen = { canUndo: plugin.canUndo(), canRedo: plugin.canRedo() }));
 
       plugin.recordEdit(0, 'name', 'Alpha', 'Changed');
-      rows[0]['name'] = 'Changed';
+      plugin.undo();
 
+      expect(seen).toEqual({ canUndo: false, canRedo: true });
+    });
+  });
+
+  // #endregion
+
+  // #region history-change (#563)
+
+  describe('history-change event', () => {
+    let changes: { canUndo: boolean; canRedo: boolean }[];
+
+    beforeEach(() => {
+      changes = [];
+      grid.addEventListener('history-change', (e: Event) => changes.push((e as CustomEvent).detail));
+    });
+
+    it('fires on recordEdit', () => {
+      plugin.recordEdit(0, 'name', 'Alpha', 'Changed');
+      expect(changes).toEqual([{ canUndo: true, canRedo: false }]);
+    });
+
+    it('fires on programmatic undo() and redo()', () => {
+      plugin.recordEdit(0, 'name', 'Alpha', 'Changed');
+      plugin.undo();
+      plugin.redo();
+      expect(changes).toEqual([
+        { canUndo: true, canRedo: false },
+        { canUndo: false, canRedo: true },
+        { canUndo: true, canRedo: false },
+      ]);
+    });
+
+    it('fires on keyboard undo / redo', () => {
+      plugin.recordEdit(0, 'name', 'Alpha', 'Changed');
       plugin.onKeyDown(ctrlZ());
       plugin.onKeyDown(ctrlY());
+      expect(changes.slice(1)).toEqual([
+        { canUndo: false, canRedo: true },
+        { canUndo: true, canRedo: false },
+      ]);
+    });
 
-      expect(events).toHaveLength(1);
-      expect(events[0].detail).toMatchObject({ type: 'redo' });
+    it('fires after the undo event so listeners see consistent state', () => {
+      const order: string[] = [];
+      grid.addEventListener('undo', () => order.push('undo'));
+      grid.addEventListener('history-change', () => order.push('history-change'));
+
+      plugin.recordEdit(0, 'name', 'Alpha', 'Changed');
+      order.length = 0;
+      plugin.undo();
+
+      expect(order).toEqual(['undo', 'history-change']);
+    });
+
+    it('fires on clearHistory when there was history', () => {
+      plugin.recordEdit(0, 'name', 'Alpha', 'Changed');
+      plugin.clearHistory();
+      expect(changes.at(-1)).toEqual({ canUndo: false, canRedo: false });
+    });
+
+    it('does not fire on clearHistory of an empty history', () => {
+      plugin.clearHistory();
+      expect(changes).toEqual([]);
+    });
+
+    it('does not fire for no-op undo / redo', () => {
+      plugin.undo();
+      plugin.redo();
+      expect(changes).toEqual([]);
+    });
+
+    it('fires once on endTransaction, not for buffered edits', () => {
+      plugin.beginTransaction();
+      plugin.recordEdit(0, 'name', 'Alpha', 'A');
+      plugin.recordEdit(0, 'price', 10, 11);
+      expect(changes).toEqual([]);
+
+      plugin.endTransaction();
+      expect(changes).toEqual([{ canUndo: true, canRedo: false }]);
+    });
+
+    it('does not fire on an empty endTransaction', () => {
+      plugin.beginTransaction();
+      plugin.endTransaction();
+      expect(changes).toEqual([]);
+    });
+
+    it('fires when a new edit clears the redo stack', () => {
+      plugin.recordEdit(0, 'name', 'Alpha', 'A');
+      plugin.undo();
+      plugin.recordEdit(0, 'name', 'Alpha', 'B');
+      expect(changes.at(-1)).toEqual({ canUndo: true, canRedo: false });
     });
   });
 
@@ -300,6 +626,113 @@ describe('UndoRedoPlugin', () => {
       grid.requestRenderWithFocus.mockClear();
       plugin.redo();
       expect(grid.requestRenderWithFocus).toHaveBeenCalled();
+    });
+  });
+
+  // #endregion
+
+  // #region Row identity (#526)
+
+  describe('row identity (#526)', () => {
+    it('captures the row id when recording', () => {
+      plugin.recordEdit(1, 'name', 'Beta', 'Changed');
+      expect(plugin.getUndoStack()[0]).toMatchObject({ rowIndex: 1, rowId: '2' });
+    });
+
+    it('omits rowId when the row has no resolvable id', () => {
+      const emptyIdGrid = createMockGrid(rows, { getRowId: () => '' });
+      const p = new UndoRedoPlugin();
+      p.attach(emptyIdGrid);
+      p.recordEdit(0, 'name', 'Alpha', 'Changed');
+      expect(p.getUndoStack()[0]).not.toHaveProperty('rowId');
+      p.detach();
+    });
+
+    it('undoes the recorded row after the view reorders', () => {
+      plugin.recordEdit(0, 'name', 'Alpha', 'Changed');
+      rows[0]['name'] = 'Changed';
+      rows.reverse(); // row 1 now at index 1; index 0 is row 2
+
+      plugin.undo();
+
+      expect(grid.updateRow).toHaveBeenCalledWith('1', { name: 'Alpha' }, 'history');
+      expect(rows.find((r) => r['id'] === 2)?.['name']).toBe('Beta');
+    });
+
+    it('warns and skips a removed owner while advancing history', () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      plugin.recordEdit(0, 'name', 'Alpha', 'Changed');
+      rows.splice(0, 1);
+
+      expect(plugin.undo()).not.toBeNull();
+      expect(grid.updateRow).not.toHaveBeenCalled();
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('TBW041'));
+      expect(plugin.canRedo()).toBe(true);
+      expect(rows[0]['name']).toBe('Beta');
+      warn.mockRestore();
+    });
+
+    it('defers focus to afterRender and targets the row at its post-render index', () => {
+      plugin.recordEdit(0, 'price', 10, 99);
+
+      plugin.undo();
+      expect(grid._focusRow).toBe(-1); // nothing applied before the render
+
+      rows.reverse(); // the render re-sorts the view
+      plugin.afterRender();
+
+      expect(grid._focusRow).toBe(1);
+      expect(grid._focusCol).toBe(2);
+    });
+
+    it('applies the deferred focus only once', () => {
+      plugin.recordEdit(0, 'price', 10, 99);
+      plugin.undo();
+      plugin.afterRender();
+      grid._focusRow = 0;
+
+      plugin.afterRender();
+
+      expect(grid._focusRow).toBe(0);
+    });
+
+    it('does not move focus when the row is not in the view after render', () => {
+      plugin.recordEdit(0, 'price', 10, 99);
+      grid.rows = [rows[1]];
+
+      plugin.undo();
+      plugin.afterRender();
+
+      expect(grid._focusRow).toBe(-1);
+    });
+
+    it('detach drops a pending focus', () => {
+      plugin.recordEdit(0, 'price', 10, 99);
+      plugin.undo();
+      plugin.detach();
+
+      plugin.afterRender();
+
+      expect(grid._focusRow).toBe(-1);
+    });
+
+    it('recordEdit uses an explicit rowId for a row outside the view', () => {
+      plugin.recordEdit(-1, 'name', 'Beta', 'Changed', '2');
+      expect(plugin.getUndoStack()[0]).toMatchObject({ rowIndex: -1, rowId: '2' });
+
+      plugin.undo();
+      expect(grid.updateRow).toHaveBeenCalledWith('2', { name: 'Beta' }, 'history');
+    });
+
+    it('prefers the rowId carried by cell-edit-committed over the display index', () => {
+      const commitHandler = grid._pluginManager.subscribe.mock.calls.find(
+        (c: unknown[]) => c[1] === 'cell-edit-committed',
+      )?.[2] as (d: Record<string, unknown>) => void;
+
+      // rowIndex -1: Editing committed a row that is filtered out of view (updateRow path)
+      commitHandler({ rowIndex: -1, rowId: '2', field: 'name', oldValue: 'Beta', newValue: 'X' });
+
+      expect(plugin.getUndoStack()[0]).toMatchObject({ rowIndex: -1, rowId: '2' });
     });
   });
 
@@ -534,11 +967,14 @@ describe('UndoRedoPlugin', () => {
   // #region Focus management after undo/redo
 
   describe('focus management', () => {
+    // Focus is applied in afterRender (after the render requestRenderWithFocus schedules);
+    // the mock grid never renders, so each test runs the hook explicitly.
     it('should set _focusRow and _focusCol after undo', () => {
       plugin.recordEdit(0, 'name', 'Alpha', 'Changed');
       rows[0]['name'] = 'Changed';
 
       plugin.undo();
+      plugin.afterRender();
 
       // 'name' is at index 1 in _visibleColumns [id, name, price]
       expect(grid._focusRow).toBe(0);
@@ -551,6 +987,7 @@ describe('UndoRedoPlugin', () => {
 
       plugin.undo();
       plugin.redo();
+      plugin.afterRender();
 
       // 'price' is at index 2 in _visibleColumns [id, name, price]
       expect(grid._focusRow).toBe(1);
@@ -562,6 +999,7 @@ describe('UndoRedoPlugin', () => {
       rows[0]['price'] = 99;
 
       plugin.onKeyDown(ctrlZ());
+      plugin.afterRender();
 
       expect(grid._focusRow).toBe(0);
       expect(grid._focusCol).toBe(2);
@@ -573,6 +1011,7 @@ describe('UndoRedoPlugin', () => {
 
       plugin.onKeyDown(ctrlZ());
       plugin.onKeyDown(ctrlY());
+      plugin.afterRender();
 
       expect(grid._focusRow).toBe(0);
       expect(grid._focusCol).toBe(1);
@@ -583,11 +1022,12 @@ describe('UndoRedoPlugin', () => {
 
       // Should not throw, focus should not be set
       expect(() => plugin.undo()).not.toThrow();
+      plugin.afterRender();
       expect(grid._focusRow).toBe(-1);
       expect(grid._focusCol).toBe(-1);
     });
 
-    it('should focus editor input when cell is in editing mode', async () => {
+    it('should focus editor input when cell is in editing mode', () => {
       // Create a mock row element with an editing cell containing an input
       const input = document.createElement('input');
       const focusSpy = vi.spyOn(input, 'focus');
@@ -604,14 +1044,12 @@ describe('UndoRedoPlugin', () => {
       rows[0]['name'] = 'Changed';
 
       plugin.undo();
-
-      // The focus happens in a queueMicrotask, so we need to wait
-      await new Promise((r) => queueMicrotask(r));
+      plugin.afterRender();
 
       expect(focusSpy).toHaveBeenCalledWith({ preventScroll: true });
     });
 
-    it('should not focus editor when cell is not in editing mode', async () => {
+    it('should not focus editor when cell is not in editing mode', () => {
       const input = document.createElement('input');
       const focusSpy = vi.spyOn(input, 'focus');
       const cellEl = document.createElement('div');
@@ -627,9 +1065,9 @@ describe('UndoRedoPlugin', () => {
       rows[0]['name'] = 'Changed';
 
       plugin.undo();
+      plugin.afterRender();
 
-      await new Promise((r) => queueMicrotask(r));
-
+      expect(grid.findRenderedRowElement).toHaveBeenCalledWith(0);
       expect(focusSpy).not.toHaveBeenCalled();
     });
   });
@@ -820,6 +1258,7 @@ describe('UndoRedoPlugin', () => {
       plugin.endTransaction();
 
       plugin.undo();
+      plugin.afterRender();
 
       // Last action is 'price' at _visibleColumns index 2 (the primary field
       // when using beginTransaction + queueMicrotask endTransaction pattern)

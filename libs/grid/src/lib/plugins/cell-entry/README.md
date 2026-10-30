@@ -60,14 +60,59 @@ grid with CellEntry. Use row checkboxes with Editing without CellEntry; independ
 batch-checkbox and cell/range selection are not provided. Custom Tree/MasterDetail
 disclosures retain control activation and navigation without opening cell editors.
 
-Printable-key seeding, Delete/Backspace clearing, fill handles and new history
-behaviour are not provided.
+## Selected-cell clearing
+
+Delete/Backspace clearing is separately opt-in: import `features/undo-redo`, enable
+`features.undoRedo: true`, and set `features.cellEntry: { clearOnDelete: true }`.
+Manual plugin users add `UndoRedoPlugin` before `CellEntryPlugin`. Existing entry
+defaults are unchanged.
+
+A plain Delete or Backspace clears the selected cell/range, not rows. Overlapping
+ranges are deduplicated and the **10,000 unique selected-cell limit** is checked
+before rules, validation or writes. An oversized action is rejected entirely.
+Read-only/ineligible cells count toward the limit but are skipped.
+
+Value policy, in precedence order:
+
+1. `column.clearValue(context)` returns `{ value }` or `{ reject: 'reason' }`.
+2. Explicit `nullable: true` clears to `null`.
+3. Non-nullable string/text cells clear to `''`.
+4. Other types are skipped without an explicit rule; no zero/today inference.
+
+Accepted values run through Editing's synchronous `cell-commit` path with
+`source: 'clear'`; `preventDefault()` **or `setInvalid()`** rejects that cell.
+Use that normal programmatic-commit contract for validation; no native/custom
+editor is mounted to run editor-only validation. Accepted edits (and normal
+cascades) form one nested-safe Undo step. This is partial acceptance, **not an
+atomic transaction** or rollback of arbitrary callback side effects.
+
+`cell-clear` reports `{ cells, limitExceeded }`. Each cell has its original
+`rowIndex`, field, row, `status` (`cleared`, `skipped`, `rejected`) and optional
+reason/message. Reasons include readonly, unavailable, unsupported-type,
+unchanged, rule and validation. Oversize rejection has an empty `cells` array.
+`CellClearContext`, `CellClearValue`, `CellClearResult` and `CellClearDetail` are
+exported from the plugin entry point.
+
+Owners and fields are captured before writes, then checked around callbacks.
+Unique IDs follow settled immutable replacements; ID-less rows require the
+original live object. Missing/ambiguous targets warn and skip. A source/config
+replacement queued during a callback makes remaining targets temporarily
+unavailable; neither detached objects nor replacement cells at old indices are
+written. Columns/owners changed while evaluating a rule or validating a cell are
+skipped/rejected rather than silently retargeted.
+
+Active editors, native controls, contenteditable, IME, prevented events, repeated
+keys and modifier chords retain their existing behavior. Printable-key seeding
+and fill handles are not provided.
 
 ## Accessibility
 
 [SC 2.1.1 Keyboard](https://www.w3.org/WAI/WCAG22/Understanding/keyboard.html):
 Enter/F2 provides the keyboard alternative to single-click entry; Escape cancels.
 Existing Editing supplies editor names from column headers and edit announcements.
+Opt-in clearing announces its accepted/not-cleared counts or whole-action limit
+rejection. Localize `a11y.messages.cellsCleared` and `cellClearLimitExceeded`;
+`a11y.announcements: false` disables announcements.
 
 [SC 2.1.2 No Keyboard Trap](https://www.w3.org/WAI/WCAG22/Understanding/no-keyboard-trap.html):
 with `tabToEdit`, Tab and Shift+Tab leave the grid at their respective boundaries.

@@ -24,6 +24,7 @@
 import type {
   CellActivateDetail,
   CellChangeDetail,
+  CellClearDetail,
   CellClickDetail,
   CellCommitDetail,
   ChangedRowsResetDetail,
@@ -33,10 +34,13 @@ import type {
   CopyDetail,
   DataGridEventMap,
   DetailExpandDetail,
+  DetailLoadErrorDetail,
   ExportCompleteDetail,
   FilterChangeDetail,
   GridColumnState,
+  GroupLoadErrorDetail,
   GroupToggleDetail,
+  HistoryChangeDetail,
   PasteDetail,
   PasteRejectedDetail,
   PrintCompleteDetail,
@@ -109,6 +113,9 @@ export interface EventProps<TRow = unknown> {
    * ```
    */
   onCellActivate?: EventHandler<CellActivateDetail<TRow>>;
+
+  /** Selected-cell clear outcomes. @since 2.7.0 */
+  onCellClear?: EventHandler<CellClearDetail<TRow>>;
 
   /**
    * Fired when a cell value changes (before commit).
@@ -421,6 +428,15 @@ export interface EventProps<TRow = unknown> {
    */
   onGroupCollapse?: EventHandler<DataGridEventMap<TRow>['group-collapse']>;
 
+  /**
+   * Fired when loading a pre-defined group's rows through the ServerSide data
+   * source (`getChildRows()`) fails. Re-expanding the group retries the fetch.
+   *
+   * @requires `import '@toolbox-web/grid-react/features/grouping-rows';`
+   * @since 2.7.0
+   */
+  onGroupLoadError?: EventHandler<GroupLoadErrorDetail>;
+
   // ═══════════════════════════════════════════════════════════════════
   // CONTEXT MENU EVENTS
   // ═══════════════════════════════════════════════════════════════════
@@ -484,6 +500,15 @@ export interface EventProps<TRow = unknown> {
    * ```
    */
   onDetailExpand?: EventHandler<DetailExpandDetail>;
+
+  /**
+   * Fired when loading detail data through the ServerSide data source
+   * (`getChildRows()`) fails. Re-expanding the row retries the fetch.
+   *
+   * @requires `import '@toolbox-web/grid-react/features/master-detail';`
+   * @since 2.7.0
+   */
+  onDetailLoadError?: EventHandler<DetailLoadErrorDetail>;
 
   // ═══════════════════════════════════════════════════════════════════
   // RESPONSIVE EVENTS
@@ -549,28 +574,42 @@ export interface EventProps<TRow = unknown> {
   // ═══════════════════════════════════════════════════════════════════
 
   /**
-   * Fired when an undo action is performed.
+   * Fired when an undo action is performed (Ctrl+Z or programmatic `undo()`).
    *
    * @requires `import '@toolbox-web/grid-react/features/undo-redo';`
    *
    * @example
    * ```tsx
-   * onUndo={(detail) => console.log('Undid:', detail.action.type, '- Can undo:', detail.canUndo)}
+   * onUndo={(detail) => console.log('Undid:', detail.action.type)}
    * ```
    */
   onUndo?: EventHandler<UndoRedoDetail>;
 
   /**
-   * Fired when a redo action is performed.
+   * Fired when a redo action is performed (Ctrl+Y or programmatic `redo()`).
    *
    * @requires `import '@toolbox-web/grid-react/features/undo-redo';`
    *
    * @example
    * ```tsx
-   * onRedo={(detail) => console.log('Redid:', detail.action.type, '- Can redo:', detail.canRedo)}
+   * onRedo={(detail) => console.log('Redid:', detail.action.type)}
    * ```
    */
   onRedo?: EventHandler<UndoRedoDetail>;
+
+  /**
+   * Fired whenever the undo/redo history changes (edit recorded, undo, redo, history cleared).
+   * Use it to keep external Undo/Redo buttons' enabled state in sync.
+   *
+   * @requires `import '@toolbox-web/grid-react/features/undo-redo';`
+   *
+   * @example
+   * ```tsx
+   * onHistoryChange={({ canUndo, canRedo }) => setToolbar({ canUndo, canRedo })}
+   * ```
+   * @since 2.6.4
+   */
+  onHistoryChange?: EventHandler<HistoryChangeDetail>;
 
   // ═══════════════════════════════════════════════════════════════════
   // EXPORT EVENTS
@@ -677,6 +716,7 @@ export const EVENT_PROP_MAP = {
   onCellClick: 'cell-click',
   onRowClick: 'row-click',
   onCellActivate: 'cell-activate',
+  onCellClear: 'cell-clear',
   onCellChange: 'cell-change',
   onCellCommit: 'cell-commit',
   onCellCancel: 'cell-cancel',
@@ -704,11 +744,13 @@ export const EVENT_PROP_MAP = {
   onGroupToggle: 'group-toggle',
   onGroupExpand: 'group-expand',
   onGroupCollapse: 'group-collapse',
+  onGroupLoadError: 'group-load-error',
   onTreeExpand: 'tree-expand',
   onTreeLoadStart: 'tree-load-start',
   onTreeLoadEnd: 'tree-load-end',
   onTreeLoadError: 'tree-load-error',
   onDetailExpand: 'detail-expand',
+  onDetailLoadError: 'detail-load-error',
   onResponsiveChange: 'responsive-change',
   onContextMenuOpen: 'context-menu-open',
   onCopy: 'copy',
@@ -716,6 +758,7 @@ export const EVENT_PROP_MAP = {
   onPasteRejected: 'paste-rejected',
   onUndo: 'undo',
   onRedo: 'redo',
+  onHistoryChange: 'history-change',
   onExportComplete: 'export-complete',
   onPrintStart: 'print-start',
   onPrintComplete: 'print-complete',

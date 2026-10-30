@@ -65,13 +65,13 @@ This covers grid, grid-angular, grid-react, and grid-vue. All targets must pass:
 
 ### 2. Check Bundle Size Budget
 
-Step 1's build enforces `tools/core-bundle-budget.ts`: core ≤170 KiB raw / ≤52 KiB gzip using authoritative Bun default gzip, including Node-hosted builds. To read exact bytes and enforce the same core limit, run:
+Step 1's build enforces `tools/core-bundle-budget.ts`: core ≤175 KiB raw / ≤52 KiB gzip using authoritative Bun default gzip, including Node-hosted builds. To read exact bytes and enforce the same core limit, run:
 
 ```bash
 bun run tools/build-size-report.ts
 ```
 
-Confirm core is ≤174080 raw / ≤53248 gzip bytes (soft warning at 46080 gzip bytes). The report exits nonzero on core failure; other entry limits remain enforced by owning builds. Follow `bundle-check` for investigation or a documented increase under standing user permission, never select a favorable runtime compressor.
+Confirm core is ≤179200 raw / ≤53248 gzip bytes (soft warning at 46080 gzip bytes). The report exits nonzero on core failure; other entry limits remain enforced by owning builds. Follow `bundle-check` for investigation or a documented increase under standing user permission, never select a favorable runtime compressor.
 
 ### 3. Review CHANGELOG
 

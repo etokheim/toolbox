@@ -98,7 +98,7 @@ EVENT: scroll on .rows-viewport
   │   │   heights) or scrollTop / rowHeight (uniform)
   │   ├─ calculate new start/end indices
   │   └─ if window changed: renderVisibleRows(start, end)
-  │       ├─ per row: get/create pooled element, set data-row-index, render cells
+  │       ├─ per row: get/create pooled element, set aria-rowindex, render cells
   │       │   (reuse or create), afterCellRender, afterRowRender, onScrollRender hooks
   │       └─ recycle unused row elements back to pool
   └─ pluginManager.onScroll(event)
@@ -162,7 +162,8 @@ SCROLL RECYCLE:
 
 ```
 EVENT: click on tree expander cell
-  ├─ Tree.onCellClick(detail)
+  ├─ Tree.onCellClick(detail)   — hookPriority -10: runs before Editing/Selection (#565)
+  │   ├─ dblclick (core routes it here too) → return true, no toggle (#568)
   │   ├─ toggle expandedKeys set (add or remove row key)
   │   ├─ IF expanding AND lazy children (truthy non-array childrenField):
   │   │   ├─ query datasource:is-active → ServerSide responds true
@@ -179,7 +180,8 @@ RAF:
   │   ├─ Tree.processRows(10) — query sort:get-model (hierarchical sort), flatten tree
   │   │   (include children of expanded keys), set __treeLevel/__isExpanded/__hasChildren
   │   ├─ MultiSort.processRows — sort flattened tree respecting hierarchy
-  │   └─ Filtering.processRows — filter respecting tree structure
+  │   ├─ Filtering.processRows — filter respecting tree structure
+  │   └─ Editing.processRows(50) — LAST: move edit index to the final row (before reconcile)
   ├─ virtualization recalculates (row count changed) → initializePositionCache
   │   (variable heights) → refreshVirtualWindow → renderVisibleRows
   └─ _schedulerAfterRender() → Tree.afterCellRender — indent styling, expander icon state

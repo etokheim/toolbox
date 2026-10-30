@@ -10,6 +10,8 @@ import {
   warnDiagnostic,
 } from './diagnostics';
 import { ensureCellVisible } from './keyboard';
+import { parkCellLoadingOverlay, setCellLoadingState, setRowLoadingState } from './loading';
+import { clearRowForRebuild, releasePooledRow } from './row-teardown';
 import { evalTemplateString, finalCellScrub, setSanitizedHTML } from './sanitize';
 import { booleanCellHTML, clearCellFocus, formatDateValue, getRowIndexFromCell } from './utils';
 import { resolveCellValue } from './value-accessor';
@@ -234,6 +236,10 @@ function resolveHeaderRowCount(grid: GridHost): number {
 /**
  * Grow / shrink the recyclable row pool to exactly `needed` elements.
  *
+ * The live edit row is relocated between the grow and the shrink, so an edit
+ * element sitting in a trailing slot is moved into the window instead of being
+ * released (#572).
+ *
  * Excess elements are released BEFORE detaching so framework adapters (React
  * portals, Vue teleports, Angular EmbeddedViewRefs) can unmount cleanly.
  * Skipping this leaves portals tracked against detached containers, causing
@@ -241,12 +247,13 @@ function resolveHeaderRowCount(grid: GridHost): number {
  * in `beginBatch` / `endBatch` so adapters can defer per-cell sync commits to a
  * single render at the end (#330).
  */
-function syncRowPool(grid: GridHost, needed: number, bodyEl: HTMLElement | null): void {
+function syncRowPool(grid: GridHost, start: number, needed: number, bodyEl: HTMLElement | null): void {
   // Note: click/dblclick handlers are delegated at grid level, so pooled rows
   // need no per-element listeners. Template cloning beats createElement 3-4x.
   while (grid._rowPool.length < needed) {
     grid._rowPool.push(createRowFromTemplate());
   }
+  if (!getRowWindow(grid)) relocateEditRow(grid, start, needed, bodyEl);
   if (grid._rowPool.length <= needed) return;
 
   const adapter = grid.__frameworkAdapter;
@@ -254,14 +261,34 @@ function syncRowPool(grid: GridHost, needed: number, bodyEl: HTMLElement | null)
   try {
     for (let i = needed; i < grid._rowPool.length; i++) {
       const el = grid._rowPool[i];
-      const cells = el.children;
-      for (let c = 0; c < cells.length; c++) {
-        const cell = cells[c] as HTMLElement;
-        if (cell.firstElementChild) releaseCell(grid, cell);
-      }
+      releasePooledRow(adapter, el);
       if (el.parentNode === bodyEl) el.remove();
     }
     grid._rowPool.length = needed;
+  } finally {
+    adapter?.endBatch?.(grid);
+  }
+}
+
+/**
+ * Clear loading state from a pooled row's cells, releasing adapter-mounted loader
+ * content before those cells are reused or discarded.
+ *
+ * Wrapped in `beginBatch`/`endBatch` like the pool-shrink and rebuild paths: each
+ * `unmount` can force a synchronous framework commit, and a scroll render can
+ * recycle many loading cells at once (#330).
+ */
+function releaseLoadingCells(grid: GridHost, rowEl: RowElementInternal, cells: ArrayLike<Element>): void {
+  const adapter = grid.__frameworkAdapter;
+  adapter?.beginBatch?.(grid);
+  try {
+    for (let i = 0; i < cells.length; i++) {
+      const cell = cells[i] as HTMLElement;
+      if (cell.classList.contains('tbw-cell-loading')) {
+        setCellLoadingState(cell, false, undefined, adapter);
+      }
+    }
+    rowEl.__hasCellLoading = false;
   } finally {
     adapter?.endBatch?.(grid);
   }
@@ -323,7 +350,12 @@ function reconcileRow(
   // In grid edit mode every row carries editors — but only rows that were NOT
   // recycled (same data ref) still own them. A recycled row must rebuild so
   // afterCellRender can re-evaluate per-cell editability for the new row data.
-  const isActivelyEditedRow = (!!grid._isGridEditMode && !dataRefChanged) || grid._activeEditRows === rowIndex;
+  // In row mode, an element still bound to the same row keeps its editors too:
+  // `relocateEditRow` moved it here, and `_activeEditRows` can lag behind when
+  // rows were spliced without running processRows (insertRow/removeRow, #572).
+  const isActivelyEditedRow =
+    (!dataRefChanged && (!!grid._isGridEditMode || (grid._activeEditRows ?? -1) >= 0)) ||
+    grid._activeEditRows === rowIndex;
 
   if (!structureValid) {
     if (hasEditing && isActivelyEditedRow) {
@@ -351,6 +383,51 @@ function reconcileRow(
 
   fastPatchRow(grid, rowEl, rowData, rowIndex, !!getRowWindow(grid) && !dataRefChanged);
   if (dataRefChanged) rowEl.__rowDataRef = rowData;
+}
+
+/**
+ * Move the pooled element holding the live row-mode editors to the slot its row
+ * renders at now (#572). The pool is positional (`_rowPool[i]` ↔ `_rows[start + i]`),
+ * so when the edit row changes index (reorder, insert/remove above it, scroll) its
+ * editors — and the user's uncommitted draft — would otherwise be cleared and
+ * re-injected from the committed row data.
+ *
+ * The neighbours are moved in the DOM, never the edit element: detaching it would
+ * blur a focused editor. Keyed on the element's row reference rather than
+ * `_activeEditRows`, which lags on paths that skip processRows. Also moves the
+ * grid's focus row along with the editor, even when the pool slot is unchanged.
+ */
+function relocateEditRow(grid: GridHost, start: number, needed: number, bodyEl: HTMLElement | null): void {
+  if (grid._isGridEditMode || (grid._activeEditRows ?? -1) < 0 || !bodyEl) return;
+  const pool = grid._rowPool;
+  const rows = grid._rows;
+  // Scan the whole pool: a shrinking window leaves the edit element in a trailing slot.
+  let from = 0;
+  while (from < pool.length && !hasEditingCells(pool[from])) from++;
+  if (from === pool.length) return;
+  const editEl = pool[from];
+  const ref = editEl.__rowDataRef;
+  if (editEl.parentNode !== bodyEl) return;
+  let to = 0;
+  while (to < needed && rows[start + to] !== ref) to++;
+  // Row left the window (or the data): normal recycling clears the editors.
+  if (to === needed) return;
+
+  // The focus cursor follows the editor that holds DOM focus — moved BEFORE the
+  // cells are patched, so `cell-focus`/`aria-selected` land on the right row. Its
+  // cells still carry the index it was last rendered at. Runs even when the slot
+  // is unchanged: the row index and the window start can shift by the same offset.
+  if (grid._focusRow === Number(editEl.firstElementChild?.getAttribute('data-row'))) grid._focusRow = start + to;
+  if (from === to) return;
+
+  pool.splice(from, 1);
+  pool.splice(to, 0, editEl);
+  if (from < to) {
+    for (let i = from; i < to; i++) bodyEl.insertBefore(pool[i], editEl);
+  } else {
+    const next = editEl.nextSibling;
+    for (let i = to + 1; i <= from; i++) bodyEl.insertBefore(pool[i], next);
+  }
 }
 
 /** Toggle the `changed` class from EditingPlugin's dirty-row id set. */
@@ -420,7 +497,7 @@ export function renderVisibleRows(
   const headerRowCount = resolveHeaderRowCount(grid);
 
   if (window) grid._rowPool = window.reconcile(grid._rowPool, createRowFromTemplate);
-  syncRowPool(grid, needed, bodyEl);
+  syncRowPool(grid, start, needed, bodyEl);
 
   // Check if any plugin has a renderRow hook (cache this)
   const hasRenderRowPlugins = renderRowHook && grid.__hasRenderRowPlugins !== false;
@@ -454,7 +531,7 @@ export function renderVisibleRows(
 
     // Structural rows must use the same height as the authoritative position cache.
     if (varHeightFn) {
-      const h = varHeightFn(rowData, rowIndex);
+      const h = rowData?.__loading === true ? undefined : varHeightFn(rowData, rowIndex);
       if (h !== undefined && h > 0) {
         rowEl.style.setProperty('--tbw-row-height', `${h}px`);
       } else {
@@ -463,14 +540,39 @@ export function renderVisibleRows(
     }
 
     // Let plugins handle custom row rendering (e.g., group rows)
-    if (hasRenderRowPlugins && renderRowHook!(rowData, rowEl, rowIndex)) {
-      rowEl.__epoch = epoch;
-      rowEl.__rowDataRef = rowData;
-      // Custom renderers assign `className` wholesale (responsive cards, pivot rows), so
-      // rowClass has to run AFTER the hook — it would otherwise be wiped, or never applied.
-      if (hasRowClass && !isSyntheticRow(rowData)) applyRowClass(grid, rowEl, rowData);
-      if (rowEl.parentNode !== bodyEl) bodyEl.appendChild(rowEl);
-      continue;
+    const dataRefChanged = rowEl.__rowDataRef !== rowData;
+    if (dataRefChanged && rowEl.__hasCellLoading) {
+      releaseLoadingCells(grid, rowEl, rowEl.children);
+    }
+
+    if (hasRenderRowPlugins) {
+      // Custom renderers wipe the row via replaceChildren(), so a cell holding an
+      // adapter-mounted loader has to be released first — even when the row object is
+      // unchanged (e.g. toggling ResponsivePlugin's card layout). The hook may still
+      // decline the row, so snapshot the cells now and only release once it claims it.
+      const loadingCells = rowEl.__hasCellLoading ? Array.from(rowEl.children) : undefined;
+      const wasBusy = rowEl.hasAttribute('aria-busy');
+      // A recycled element can still carry the previous row's loading state (a
+      // placeholder's spinner + aria-busy). Custom renderers replace children and
+      // classes but don't own it; grid.setRowLoading() state is re-applied after render.
+      if (dataRefChanged && wasBusy) setRowLoadingState(rowEl, false, undefined, grid.__frameworkAdapter);
+      // An active `setRowLoading()` overlay is wiped by the same replaceChildren(); the
+      // post-pass replay mounts a fresh one, so the wiped loader must be unmounted.
+      const rowLoader =
+        wasBusy && rowEl.hasAttribute('aria-busy')
+          ? rowEl.querySelector<HTMLElement>(':scope > .tbw-row-loading-overlay')
+          : null;
+      if (renderRowHook!(rowData, rowEl, rowIndex)) {
+        if (loadingCells) releaseLoadingCells(grid, rowEl, loadingCells);
+        if (rowLoader && rowLoader.parentNode !== rowEl) grid.__frameworkAdapter?.unmount?.(rowLoader);
+        rowEl.__epoch = epoch;
+        rowEl.__rowDataRef = rowData;
+        // Custom renderers assign `className` wholesale (responsive cards, pivot rows), so
+        // rowClass has to run AFTER the hook — it would otherwise be wiped, or never applied.
+        if (hasRowClass && !isSyntheticRow(rowData)) applyRowClass(grid, rowEl, rowData);
+        if (rowEl.parentNode !== bodyEl) bodyEl.appendChild(rowEl);
+        continue;
+      }
     }
 
     let cellCount = rowEl.children.length;
@@ -480,8 +582,9 @@ export function renderVisibleRows(
       cellCount--;
     }
 
-    const dataRefChanged = rowEl.__rowDataRef !== rowData;
-    let structureValid = rowEl.__epoch === epoch && cellCount === colLen;
+    // A plugin-rendered custom row (group header, loading placeholder) has foreign
+    // cell structure even when its cell count happens to match (single-column grids).
+    let structureValid = rowEl.__epoch === epoch && cellCount === colLen && !rowEl.__isCustomRow;
     // A valid-looking structure can still have lost an external-view placeholder
     // when the element was recycled for a different row.
     if (structureValid && dataRefChanged && hasMissingExternalView(rowEl, columns, colLen)) {
@@ -593,14 +696,23 @@ function patchPlainCells(
 ): void {
   const focusRow = grid._focusRow;
   const focusCol = grid._focusCol;
+  const hasLoaders = (rowEl as RowElementInternal).__hasCellLoading === true;
 
   for (let i = 0; i < minLen; i++) {
     const cell = children[i] as HTMLElement;
+
+    // Update data-row for click handling — editing cells too: a relocated edit
+    // row (#572) must report its new index, or a click restarts the edit elsewhere.
+    if (cell.getAttribute('data-row') !== rowIndexStr) {
+      cell.setAttribute('data-row', rowIndexStr);
+    }
 
     // Skip cells in edit mode - they have editors that must be preserved
     if (cell.classList.contains(GridClasses.EDITING)) continue;
     consumeCellContentInvalidation(cell);
 
+    // Same row object: an active loader is kept, not remounted.
+    const loader = hasLoaders ? parkCellLoadingOverlay(cell) : null;
     // Release editor views if cell has element children (indicating prior editor/renderer DOM).
     // Plain text cells (textContent-only) have no element children, so this is a fast O(1) skip.
     if (cell.firstElementChild) releaseCell(grid, cell);
@@ -608,10 +720,7 @@ function patchPlainCells(
     const col = columns[i];
     const value = resolveCellValue(rowData, col, rowIndex);
     cell.textContent = value == null ? '' : String(value);
-    // Update data-row for click handling
-    if (cell.getAttribute('data-row') !== rowIndexStr) {
-      cell.setAttribute('data-row', rowIndexStr);
-    }
+    if (loader) cell.appendChild(loader);
     // aria-selected only valid for gridcell, not checkbox (but this path has no special cols)
     patchCellFocus(cell, focusRow === rowIndex && focusCol === i);
 
@@ -738,6 +847,9 @@ function patchCellContent(
   // Renderer priority chain: column → typeDefaults → adapter → built-in.
   const cellRenderer = resolveRenderer(grid, col);
   let value: unknown;
+  // Same row object: an active loader is kept, not remounted. The row breadcrumb
+  // skips the per-cell DOM query for rows that never showed a cell loader.
+  const loader = (rowEl as RowElementInternal).__hasCellLoading ? parkCellLoadingOverlay(cell) : null;
 
   if (cellRenderer) {
     // Must re-invoke to get updated content.
@@ -756,11 +868,13 @@ function patchCellContent(
     applyTemplateOutput(grid, cell, html);
   } else if (col.externalView) {
     // External view cells are mounted once and manage their own state.
+    if (loader) cell.appendChild(loader);
     return;
   } else {
     value = resolveCellValue(rowData, col, rowIndex);
     applyFormattedValue(grid, cell, col, rowData, value);
   }
+  if (loader) cell.appendChild(loader);
 
   if (hasCellHook) emitAfterCellRender(grid, rowEl, cell, col, colIndex, rowData, rowIndex, value);
 }
@@ -842,29 +956,6 @@ function fastPatchRow(
  * `innerHTML = ''` detaches every cell as a group, letting adapters defer
  * per-cell sync commits to a single render once detachment completes (#330).
  */
-function clearRowForRebuild(grid: GridHost, rowEl: HTMLElement, retained?: Set<HTMLElement>): void {
-  // Clear loading state before rebuild — grid re-applies it after render for
-  // actually-loading rows. Prevents a stale tbw-row-loading class from
-  // persisting when pool elements are recycled.
-  rowEl.classList.remove('tbw-row-loading');
-  rowEl.removeAttribute('aria-busy');
-
-  const adapter = grid.__frameworkAdapter;
-  adapter?.beginBatch?.(grid);
-  try {
-    const children = rowEl.children;
-    for (let i = children.length - 1; i >= 0; i--) {
-      const cell = children[i] as HTMLElement;
-      if (retained?.has(cell)) continue;
-      releaseCell(grid, cell);
-      if (retained) cell.remove();
-    }
-    if (!retained) rowEl.innerHTML = '';
-  } finally {
-    adapter?.endBatch?.(grid);
-  }
-}
-
 const utilityViewOptions = new WeakMap<
   HTMLElement,
   {

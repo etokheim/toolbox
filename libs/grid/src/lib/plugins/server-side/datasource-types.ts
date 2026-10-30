@@ -109,6 +109,17 @@ export interface GetChildRowsParams extends DataRequestModel {
    * ServerSide does not interpret this object.
    */
   context: { source: string; [key: string]: unknown };
+  /**
+   * Cancellation signal for the request. Aborted when:
+   * - the requesting plugin supersedes the request (TreePlugin: the parent row was
+   *   replaced by a refetch and the replacement rendered before the children arrived)
+   * - the plugin detaches or the grid disconnects
+   *
+   * A result for an aborted request is discarded. Pass it to `fetch(url, { signal })`
+   * to cancel the HTTP request; data sources that ignore it keep working.
+   * @since 3.9.2
+   */
+  signal: AbortSignal;
 }
 
 /**
@@ -227,6 +238,16 @@ export interface DataSourceDataDetail<TRow = unknown> {
   endNode: number;
   /** Mutable flag — structural plugins set this to `true` when they consume the data. */
   claimed: boolean;
+  /**
+   * Cache generation the block belongs to. It changes whenever ServerSide discards its
+   * cache (`setDataSource()`, `refresh()`, `purgeCache()`, a server-side sort/filter
+   * change). Blocks with the same generation are slices of one dataset that a consumer
+   * merges at `startNode`; a changed generation means every earlier block is gone.
+   * Omitted by emitters that predate it — treat such a block as a full replacement.
+   *
+   * @since 3.9.2
+   */
+  generation?: number;
 }
 
 /**
@@ -293,6 +314,13 @@ export interface ViewportMappingResponse {
  */
 export interface FetchChildrenQuery {
   context: { source: string; [key: string]: unknown };
+  /**
+   * Requester-owned cancellation. Aborting it aborts the
+   * {@link GetChildRowsParams.signal} and discards the result (no
+   * `datasource:children` / `datasource:error` broadcast).
+   * @since 3.9.2
+   */
+  signal?: AbortSignal;
 }
 
 // #endregion

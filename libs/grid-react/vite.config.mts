@@ -6,6 +6,17 @@ import { defineConfig, type Plugin } from 'vite';
 import dts from 'vite-plugin-dts';
 import { bundleBudget } from '../../tools/vite-bundle-budget';
 
+// These options were migrated by @nx/vite:convert-to-inferred from the project.json file.
+const configValues = { default: {}, development: {}, production: {} };
+
+// Determine the correct configValue to use based on the configuration
+const nxConfiguration = process.env.NX_TASK_TARGET_CONFIGURATION ?? 'default';
+
+const options = {
+  ...configValues.default,
+  ...(configValues[nxConfiguration] ?? {}),
+};
+
 const outDir = path.resolve(import.meta.dirname, '../../dist/libs/grid-react');
 
 // Resolve @toolbox-web/grid paths for tests (source, so tests pass without building grid first)
@@ -145,7 +156,7 @@ export default defineConfig(() => ({
         ]
       : ['default'],
     coverage: {
-      reportsDirectory: './test-output/vitest/coverage',
+      reportsDirectory: '../../coverage/libs/grid-react',
       provider: 'v8' as const,
       reporter: ['text', 'json-summary'],
       thresholds: { statements: 70, branches: 70, functions: 70, lines: 70 },

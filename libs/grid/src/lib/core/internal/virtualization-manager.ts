@@ -214,7 +214,10 @@ export class VirtualizationManager<T = any> {
   #resolveRowHeight(row: T, index: number): number | undefined {
     const pluginHeight = this.#grid._getPluginRowHeight(row, index);
     if (pluginHeight !== undefined) return pluginHeight;
-    return resolveConfiguredRowHeight(this.#grid.effectiveConfig?.rowHeight, row, index);
+    const configured = this.#grid.effectiveConfig?.rowHeight;
+    if (typeof configured === 'function' && (row as { __loading?: unknown } | null)?.__loading === true)
+      return undefined;
+    return resolveConfiguredRowHeight(configured, row, index);
   }
 
   /**
@@ -284,6 +287,7 @@ export class VirtualizationManager<T = any> {
     const bodyEl = grid._bodyEl;
     if (!bodyEl) return false;
 
+    // Direct children only — a nested grid (e.g. in a detail panel) has its own local aria-rowindex values.
     const rowElements = bodyEl.querySelectorAll(':scope > .data-grid-row');
     const getRowId = grid.effectiveConfig?.getRowId;
     const rows = grid._rows;

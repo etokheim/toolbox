@@ -175,6 +175,26 @@ See [`UndoRedoConfig`](./interfaces/undoredoconfig/) for the full list of option
 
 ## Programmatic API
 
+### Row identity and unavailable edits
+
+History records the edited row's existing ID (`getRowId`, or `id`/`_id`) and field
+name, rather than replaying against its old view position. Unique IDs follow
+immutable row replacements; filtered-out source rows remain updatable. Rows
+without IDs retain history only for the original object while it remains in the
+source or processed rows.
+
+Removed, unresolved or ambiguous targets produce a `TBW041` warning and are
+skipped; other edits in a compound action still apply. The action moves between
+the stacks normally, even if some edits were skipped. Replacing the `getRowId`
+function also invalidates previously recorded targets. History does not recreate
+removed rows, and grouping edits into one undo step does not make them atomic.
+Queued row replacements temporarily make targets unavailable until
+processing settles, rather than allowing replay through a superseded view.
+
+For manual `recordEdit(rowIndex, ...)`, pass the current processed-view index at
+recording time. An action's exposed `rowIndex` remains its original coordinate;
+replay and focus use its recorded owner and field.
+
 ```ts
 const plugin = grid.getPluginByName('undoRedo');
 
@@ -185,19 +205,36 @@ const canRedo = plugin.canRedo();
 plugin.clearHistory();
 ```
 
+### Row identity
+
+Each recorded edit stores the row's ID (from [`getRowId`](/grid/api/core/interfaces/gridconfig/#getrowid) or `row.id`) alongside its
+display index. Undo and redo find the row by that ID, so they still target the right row after the
+grid is sorted or filtered, even when the row is filtered out of view. If a row has no ID, the
+plugin falls back to the display index captured when the edit was made. That index goes stale once
+the view changes, so configure `getRowId` when you combine undo/redo with sorting or filtering.
+
+`recordEdit(rowIndex, field, oldValue, newValue, rowId?)` reads the ID from the row currently shown at
+`rowIndex`, so call it while that index still points at the edited row. If the row may not be in
+view, pass `rowId` yourself. For example, a `cell-commit` raised by `updateRow()` on a filtered-out
+row reports `rowIndex: -1`, but its `detail.rowId` is still set.
+
+After an undo or redo, focus moves to the restored cell once the grid has re-rendered, so it lands
+on the row's new position after any re-sort or re-filter. If the row is filtered out, focus stays
+where it was. Undoing an edit on a row that has since been deleted does nothing.
+
 ### Compound Actions (Transactions)
 
 When a user edit cascades programmatic changes to other fields, group them into
 a single undo step so Ctrl+Z reverts everything at once:
 
 ```ts
-grid.on('cell-commit', () => {
+grid.on('cell-commit', ({ row, rowId, rowIndex }) => {
   const undoRedo = grid.getPluginByName('undoRedo');
   undoRedo.beginTransaction();
 
-  // Record cascaded updates manually
+  // Record cascaded updates manually (pass rowId so off-screen rows are targeted correctly)
   const oldTotal = row.total;
-  undoRedo.recordEdit(rowIndex, 'total', oldTotal, newTotal);
+  undoRedo.recordEdit(rowIndex, 'total', oldTotal, newTotal, rowId);
   grid.updateRow(rowId, { total: newTotal });
 
   // End after the auto-recorded original edit is captured
@@ -219,19 +256,44 @@ grid.on('cell-commit', () => {
 
 ### undo / redo
 
-Fired after an undo or redo action is applied:
+Fired after an undo or redo action is applied, whether it came from the keyboard or from
+`plugin.undo()` / `plugin.redo()`. If your app keeps rows in its own state, replay the action
+from these events so a toolbar button and Ctrl+Z update that state the same way:
 
 ```ts
 grid.on('undo', ({ action, type }) => {
-  console.log(`${type}: reverted ${action.field} on row ${action.rowIndex}`);
+  // `action` is a single 'cell-edit' or a 'compound' group (see Compound Actions above)
+  if (action.type === 'cell-edit') {
+    console.log(`${type}: reverted ${action.field} on row ${action.rowId ?? action.rowIndex}`);
+  }
 });
 
 grid.on('redo', ({ action, type }) => {
-  console.log(`${type}: reapplied ${action.field} on row ${action.rowIndex}`);
+  if (action.type === 'cell-edit') {
+    console.log(`${type}: reapplied ${action.field} on row ${action.rowId ?? action.rowIndex}`);
+  }
 });
 ```
 
 See [`UndoRedoDetail`](./interfaces/undoredodetail/) for the full event payload type.
+
+### history-change
+
+Fired whenever the history changes: an edit is recorded outside a transaction, a non-empty
+transaction ends, an undo or redo runs, or `clearHistory()` empties a non-empty history. Bind your
+toolbar buttons to it:
+
+```ts
+grid.on('history-change', ({ canUndo, canRedo }) => {
+  undoButton.disabled = !canUndo;
+  redoButton.disabled = !canRedo;
+});
+```
+
+See [`HistoryChangeDetail`](./interfaces/historychangedetail/) for the payload type. In the
+framework adapters, `onHistoryChange` (React), `@history-change` (Vue) and `(historyChange)`
+(Angular) expose the same event; `useGridUndoRedo()` / `injectGridUndoRedo()` already refresh
+`canUndo()` / `canRedo()` from it.
 
 ## See Also
 

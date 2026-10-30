@@ -4,7 +4,7 @@ import { registerFeature } from './registry';
 
 declare module '../core/types' {
   interface FeatureConfig {
-    /** Single-cell keyboard and optional click entry. @since 3.9.0 */
+    /** Single-cell entry with separately opt-in selected-cell clearing. @since 3.9.0 */
     cellEntry?: boolean | CellEntryConfig;
   }
 }

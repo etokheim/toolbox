@@ -12,6 +12,7 @@ vi.mock('./columns', async (importOriginal) => {
   };
 });
 
+import { setCellLoadingState, setRowLoadingState } from './loading';
 import { handleRowClick, renderVisibleRows } from './rows';
 
 /**
@@ -999,6 +1000,253 @@ describe('releaseCell lifecycle', () => {
     expect(releaseSpy).toHaveBeenCalled();
   });
 
+  it('clears loading state when the virtual window recycles a pooled row', () => {
+    const g = makeGrid();
+    const unmount = vi.fn((_container: HTMLElement) => undefined);
+    g.__frameworkAdapter = { unmount };
+    g._rows = [
+      { id: 1, name: 'Alpha' },
+      { id: 2, name: 'Beta' },
+      { id: 3, name: 'Gamma' },
+    ];
+
+    renderVisibleRows(g, 0, 2, 1);
+    const recycledCell = (g._rowPool[0] as HTMLElement).children[1] as HTMLElement;
+    setCellLoadingState(
+      recycledCell,
+      true,
+      () => {
+        const loader = document.createElement('span');
+        loader.className = 'custom-cell-loader';
+        return loader;
+      },
+      g.__frameworkAdapter,
+    );
+    const overlay = recycledCell.querySelector(':scope > .tbw-cell-loading-overlay');
+
+    renderVisibleRows(g, 1, 3, 1);
+
+    expect((g._rowPool[0] as HTMLElement).children[1]).toBe(recycledCell);
+    expect(recycledCell.classList.contains('tbw-cell-loading')).toBe(false);
+    expect(recycledCell.classList.contains('tbw-cell-loading-custom')).toBe(false);
+    expect(recycledCell.getAttribute('aria-busy')).toBeNull();
+    expect(recycledCell.querySelector('.tbw-cell-loading-overlay')).toBeNull();
+    expect(unmount).toHaveBeenCalledWith(overlay);
+  });
+
+  it('batches loader unmounts when the virtual window recycles several loading cells (#330)', () => {
+    const order: string[] = [];
+    const g = makeGrid();
+    g.__frameworkAdapter = {
+      unmount: () => order.push('unmount'),
+      beginBatch: () => order.push('begin'),
+      endBatch: () => order.push('end'),
+    };
+    g._rows = [
+      { id: 1, name: 'Alpha' },
+      { id: 2, name: 'Beta' },
+      { id: 3, name: 'Gamma' },
+    ];
+
+    renderVisibleRows(g, 0, 2, 1);
+    const renderer = () => document.createElement('span');
+    for (const cell of Array.from((g._rowPool[0] as HTMLElement).children)) {
+      setCellLoadingState(cell as HTMLElement, true, renderer, g.__frameworkAdapter);
+    }
+    order.length = 0;
+
+    renderVisibleRows(g, 1, 3, 1);
+
+    let depth = 0;
+    let unmounts = 0;
+    let unbatched = 0;
+    for (const ev of order) {
+      if (ev === 'begin') depth++;
+      else if (ev === 'end') depth--;
+      else if (++unmounts && depth === 0) unbatched++;
+    }
+    expect(unmounts).toBeGreaterThanOrEqual(2);
+    expect(unbatched).toBe(0);
+    expect(depth).toBe(0);
+  });
+
+  it('unmounts a loading renderer when a row is rebuilt', () => {
+    const g = makeGrid();
+    const unmount = vi.fn((_container: HTMLElement) => undefined);
+    g.__frameworkAdapter = { unmount };
+    g._rows = [{ id: 1, name: 'Alpha' }];
+    g._columns = [{ field: 'name' }];
+
+    renderVisibleRows(g, 0, 1, 1);
+    const cell = (g._rowPool[0] as HTMLElement).children[0] as HTMLElement;
+    setCellLoadingState(cell, true, () => document.createElement('span'), g.__frameworkAdapter);
+    const overlay = cell.querySelector(':scope > .tbw-cell-loading-overlay');
+
+    renderVisibleRows(g, 0, 1, 2);
+
+    expect(unmount).toHaveBeenCalledWith(overlay);
+  });
+
+  it('keeps a loading renderer mounted while patching a plain cell', () => {
+    const g = makeGrid();
+    const unmount = vi.fn((_container: HTMLElement) => undefined);
+    g.__frameworkAdapter = { unmount };
+    g._rows = [{ id: 1, name: 'Alpha' }];
+    g._columns = [{ field: 'name' }];
+    g.__hasSpecialColumns = false;
+
+    renderVisibleRows(g, 0, 1, 1);
+    const cell = (g._rowPool[0] as HTMLElement).children[0] as HTMLElement;
+    setCellLoadingState(cell, true, () => document.createElement('span'), g.__frameworkAdapter);
+    const overlay = cell.querySelector(':scope > .tbw-cell-loading-overlay');
+    g._rows[0].name = 'Updated';
+
+    renderVisibleRows(g, 0, 1, 1);
+
+    expect(unmount).not.toHaveBeenCalled();
+    expect(cell.lastElementChild).toBe(overlay);
+    expect(cell.firstChild?.textContent).toBe('Updated');
+  });
+
+  it('keeps loaders mounted and connected when same-identity rows patch special cells', () => {
+    const g = makeGrid();
+    const overlays: Element[] = [];
+    const releasedWithLoader: boolean[] = [];
+    const disconnectedLoaders: boolean[] = [];
+    const unmount = vi.fn((_container: HTMLElement) => undefined);
+    g.__frameworkAdapter = {
+      unmount,
+      releaseCell: (cell: HTMLElement) => {
+        releasedWithLoader.push(!!cell.querySelector('.tbw-cell-loading-overlay'));
+        disconnectedLoaders.push(overlays.some((o) => !o.isConnected));
+      },
+    };
+    g._rows = [
+      { id: 1, name: 'Alpha', status: 'active' },
+      { id: 2, name: 'Beta', status: 'idle' },
+    ];
+    g._columns = [
+      { field: 'name', format: (v: unknown) => `#${v}` },
+      { field: 'status', renderer: ({ value }: { value: unknown }) => `<b>${value}</b>` },
+    ];
+    document.body.appendChild(g._bodyEl);
+
+    renderVisibleRows(g, 0, 2, 1);
+    for (const rowEl of g._rowPool as HTMLElement[]) {
+      for (const cell of Array.from(rowEl.children) as HTMLElement[]) {
+        setCellLoadingState(cell, true, () => document.createElement('span'), g.__frameworkAdapter);
+        overlays.push(cell.querySelector(':scope > .tbw-cell-loading-overlay')!);
+      }
+    }
+
+    // Unchanged row objects and column structure: only the patch pass runs.
+    releasedWithLoader.length = 0;
+    renderVisibleRows(g, 0, 2, 1);
+
+    expect(unmount).not.toHaveBeenCalled();
+    expect(releasedWithLoader.length).toBeGreaterThan(0);
+    expect(releasedWithLoader.every((v) => !v)).toBe(true);
+    expect(disconnectedLoaders.every((v) => !v)).toBe(true);
+    const cells = (g._rowPool as HTMLElement[]).flatMap((r) => Array.from(r.children) as HTMLElement[]);
+    expect(cells.map((c) => c.lastElementChild)).toEqual(overlays);
+    expect(cells[1].querySelector('b')?.textContent).toBe('active');
+    g._bodyEl.remove();
+  });
+
+  it('unmounts a loading renderer when a custom row renderer replaces an unchanged row', () => {
+    const g = makeGrid();
+    const unmount = vi.fn((_container: HTMLElement) => undefined);
+    g.__frameworkAdapter = { unmount };
+    g._rows = [{ id: 1, name: 'Alpha' }];
+    g._columns = [{ field: 'name' }];
+
+    renderVisibleRows(g, 0, 1, 1);
+    const cell = (g._rowPool[0] as HTMLElement).children[0] as HTMLElement;
+    setCellLoadingState(cell, true, () => document.createElement('span'), g.__frameworkAdapter);
+    const overlay = cell.querySelector(':scope > .tbw-cell-loading-overlay');
+
+    // Same row object, same epoch: only the switch to a card renderer changes.
+    const renderRowHook = vi.fn((_row: unknown, rowEl: HTMLElement) => {
+      rowEl.replaceChildren(document.createElement('article'));
+      return true;
+    });
+    renderVisibleRows(g, 0, 1, 1, renderRowHook);
+
+    expect(renderRowHook).toHaveBeenCalled();
+    expect(unmount).toHaveBeenCalledWith(overlay);
+  });
+
+  it('keeps a cell loader alive when the custom row renderer declines the row', () => {
+    const g = makeGrid();
+    const unmount = vi.fn((_container: HTMLElement) => undefined);
+    g.__frameworkAdapter = { unmount };
+    g._rows = [{ id: 1, name: 'Alpha' }];
+    g._columns = [{ field: 'name' }];
+
+    renderVisibleRows(g, 0, 1, 1);
+    const rowEl = g._rowPool[0] as HTMLElement;
+    const cell = rowEl.children[0] as HTMLElement;
+    setCellLoadingState(cell, true, () => document.createElement('span'), g.__frameworkAdapter);
+
+    // Declining hook must not consume the snapshot — the regular patch path owns
+    // the cell from here, and the row keeps its loading breadcrumb.
+    renderVisibleRows(g, 0, 1, 1, () => false);
+
+    expect((rowEl as HTMLElement & { __hasCellLoading?: boolean }).__hasCellLoading).toBe(true);
+  });
+
+  it('unmounts an active row loader wiped by a custom row renderer on an unchanged row', () => {
+    const g = makeGrid();
+    const unmount = vi.fn((_container: HTMLElement) => undefined);
+    g.__frameworkAdapter = { unmount };
+    g._rows = [{ id: 1, name: 'Alpha' }];
+    g._columns = [{ field: 'name' }];
+
+    renderVisibleRows(g, 0, 1, 1);
+    const rowEl = g._rowPool[0] as HTMLElement;
+    setRowLoadingState(rowEl, true, () => document.createElement('span'), g.__frameworkAdapter);
+    const overlay = rowEl.querySelector(':scope > .tbw-row-loading-overlay');
+
+    // Same row object: a card renderer (ResponsivePlugin) wipes the row on every pass.
+    renderVisibleRows(g, 0, 1, 1, (_row, el) => {
+      el.replaceChildren(document.createElement('article'));
+      return true;
+    });
+
+    expect(unmount).toHaveBeenCalledExactlyOnceWith(overlay);
+  });
+
+  it('keeps an active row loader mounted when the custom row renderer leaves it in place', () => {
+    const g = makeGrid();
+    const unmount = vi.fn((_container: HTMLElement) => undefined);
+    g.__frameworkAdapter = { unmount };
+    g._rows = [{ id: 1, name: 'Alpha' }];
+    g._columns = [{ field: 'name' }];
+
+    renderVisibleRows(g, 0, 1, 1);
+    const rowEl = g._rowPool[0] as HTMLElement;
+    setRowLoadingState(rowEl, true, () => document.createElement('span'), g.__frameworkAdapter);
+
+    renderVisibleRows(g, 0, 1, 1, () => true);
+
+    expect(unmount).not.toHaveBeenCalled();
+  });
+
+  it('skips the loader lookup on patch passes for rows that never showed a cell loader', () => {
+    const g = makeGrid();
+    g._rows = [{ id: 1, name: 'Alpha' }];
+    g._columns = [{ field: 'name', renderer: ({ value }: { value: unknown }) => `<b>${value}</b>` }];
+
+    renderVisibleRows(g, 0, 1, 1);
+    const cell = (g._rowPool[0] as HTMLElement).children[0] as HTMLElement;
+    const querySpy = vi.spyOn(cell, 'querySelector');
+
+    renderVisibleRows(g, 0, 1, 1);
+
+    expect(querySpy).not.toHaveBeenCalledWith(':scope > .tbw-cell-loading-overlay');
+    expect(cell.querySelector('b')?.textContent).toBe('Alpha');
+  });
+
   it('calls adapter.releaseCell in fastPatchRow standard path for format-only cells with editor children', () => {
     const releaseSpy = vi.fn();
     const g = makeGrid();
@@ -1390,6 +1638,142 @@ describe('renderVisibleRows — epoch-based row reuse', () => {
     expect(firstCell.classList.contains('cell-focus')).toBe(true);
     // Second cell should NOT have cell-focus
     expect(secondCell.classList.contains('cell-focus')).toBe(false);
+  });
+});
+
+describe('renderVisibleRows — edit row relocation (#572)', () => {
+  const makeRows = (n: number) => Array.from({ length: n }, (_, i) => ({ id: i, name: `R${i}` }));
+
+  function setup(rowCount: number) {
+    const g = makeGrid();
+    g._columns = [{ field: 'id' }, { field: 'name' }];
+    g._rows = makeRows(rowCount);
+    return g;
+  }
+
+  /** Put a live editor holding `draft` into the name cell of `rowEl` (as EditingPlugin would). */
+  function markEditing(rowEl: HTMLElement, draft: string): HTMLInputElement {
+    const cell = rowEl.querySelector('.cell[data-col="1"]') as HTMLElement;
+    cell.classList.add('editing');
+    (rowEl as any).__editingCellCount = 1;
+    const input = document.createElement('input');
+    input.value = draft;
+    cell.replaceChildren(input);
+    return input;
+  }
+
+  /** DOM order and pool order agree, and every row shows its own id. */
+  function expectAligned(g: any, start: number) {
+    const domRows = [...g._bodyEl.querySelectorAll('.data-grid-row')];
+    expect(domRows).toEqual(g._rowPool);
+    domRows.forEach((el, i) => {
+      expect(el.querySelector('.cell[data-col="0"]')?.textContent).toBe(String(g._rows[start + i].id));
+    });
+  }
+
+  it('keeps the edit element with its row when the virtual window shifts (scroll)', () => {
+    const g = setup(6);
+    renderVisibleRows(g, 0, 4, 1);
+    const editEl = g._rowPool[2];
+    const input = markEditing(editEl, 'draft');
+    g._activeEditRows = 2;
+    g._focusRow = 3; // on another row: a scroll must not drag it along
+
+    renderVisibleRows(g, 1, 5, 1);
+
+    expect(g._rowPool[1]).toBe(editEl);
+    expect(editEl.querySelector('input')).toBe(input);
+    expect(input.value).toBe('draft');
+    expect(g._focusRow).toBe(3);
+    expectAligned(g, 1);
+  });
+
+  it('moves the edit element down when rows are inserted above it', () => {
+    const g = setup(3);
+    renderVisibleRows(g, 0, 3, 1);
+    const editEl = g._rowPool[0];
+    const input = markEditing(editEl, 'draft');
+    g._activeEditRows = 0; // stale — insertRow-style paths skip processRows
+    g._focusRow = 0;
+    g._focusCol = 0;
+
+    const [r0, r1, r2] = g._rows;
+    g._rows = [r1, r2, r0];
+    renderVisibleRows(g, 0, 3, 1);
+
+    expect(g._rowPool[2]).toBe(editEl);
+    expect(editEl.querySelector('input')).toBe(input);
+    // The focus cursor follows the editor, before the cells are patched.
+    expect(g._focusRow).toBe(2);
+    expect(editEl.querySelector('.cell[data-col="0"]')?.classList.contains('cell-focus')).toBe(true);
+    expectAligned(g, 0);
+  });
+
+  it('moves the focus cursor when the edit row stays in the same pool slot', () => {
+    // Row 2 → index 4 while the window start moves 0 → 2: same slot, no DOM move needed,
+    // but the focus cursor must still follow the editor.
+    const g = setup(6);
+    renderVisibleRows(g, 0, 4, 1);
+    const editEl = g._rowPool[2];
+    const input = markEditing(editEl, 'draft');
+    g._activeEditRows = 2;
+    g._focusRow = 2;
+    g._focusCol = 0;
+
+    const [r0, r1, r2, r3, r4, r5] = g._rows;
+    g._rows = [r0, r1, r3, r4, r2, r5];
+    renderVisibleRows(g, 2, 6, 1);
+
+    expect(g._rowPool[2]).toBe(editEl);
+    expect(editEl.querySelector('input')).toBe(input);
+    expect(g._focusRow).toBe(4);
+    const ring = [...g._bodyEl.querySelectorAll('.cell-focus')];
+    expect(ring.length).toBe(1);
+    expect(ring[0].closest('.data-grid-row')).toBe(editEl);
+    expectAligned(g, 2);
+  });
+
+  it('rescues the edit element from a trailing slot when the window shrinks', () => {
+    const g = setup(2);
+    renderVisibleRows(g, 0, 2, 1);
+    const editEl = g._rowPool[1];
+    const input = markEditing(editEl, 'draft');
+    g._activeEditRows = 1;
+
+    g._rows = [g._rows[1]];
+    renderVisibleRows(g, 0, 1, 1);
+
+    expect(g._rowPool).toEqual([editEl]);
+    expect(editEl.querySelector('input')).toBe(input);
+    expectAligned(g, 0);
+  });
+
+  it('lets normal recycling clear the editors when the edit row leaves the window', () => {
+    const g = setup(6);
+    renderVisibleRows(g, 0, 3, 1);
+    const editEl = g._rowPool[0];
+    markEditing(editEl, 'draft');
+    g._activeEditRows = 0;
+
+    renderVisibleRows(g, 3, 6, 1);
+
+    expect(g._bodyEl.querySelector('input')).toBeNull();
+    expect(g._bodyEl.querySelector('.cell.editing')).toBeNull();
+    expectAligned(g, 3);
+  });
+
+  it('does not relocate in grid edit mode', () => {
+    const g = setup(6);
+    renderVisibleRows(g, 0, 4, 1);
+    const pool = [...g._rowPool];
+    markEditing(pool[2], 'draft');
+    g._isGridEditMode = true;
+    // An active index too, so only the grid-mode guard can prevent the relocation.
+    g._activeEditRows = 2;
+
+    renderVisibleRows(g, 1, 5, 1);
+
+    expect(g._rowPool).toEqual(pool);
   });
 });
 

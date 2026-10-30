@@ -1,6 +1,6 @@
 {
   "name": "@toolbox-web/grid-react",
-  "version": "2.6.1",
+  "version": "2.6.4",
   "description": "React adapter for @toolbox-web/grid data grid component",
   "type": "module",
   "main": "./index.js",
@@ -65,6 +65,6 @@
   "peerDependencies": {
     "react": ">=18.0.0",
     "react-dom": ">=18.0.0",
-    "@toolbox-web/grid": "^3.0.0"
+    "@toolbox-web/grid": "^3.10.1"
   }
 }

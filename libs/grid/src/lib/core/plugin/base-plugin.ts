@@ -351,7 +351,8 @@ export type HookName =
   | 'onKeyDown'
   | 'onRowClick'
   | 'onScroll'
-  | 'onScrollRender';
+  | 'onScrollRender'
+  | 'renderRow';
 
 /**
  * Static metadata about a plugin's capabilities and requirements.
@@ -706,9 +707,19 @@ export abstract class BaseGridPlugin<TConfig = unknown> implements GridPlugin {
   detach(): void {
     // Abort the plugin's abort controller to clean up all event listeners
     // registered with { signal: this.disconnectSignal }
+    this.__releaseDisconnectSignal();
+    // Override in subclass for additional cleanup
+  }
+
+  /**
+   * Abort {@link disconnectSignal} (idempotent). The plugin manager calls this after
+   * every `detach()` so listeners bound to the signal are released even when an
+   * override does not call `super.detach()`.
+   * @internal
+   */
+  __releaseDisconnectSignal(): void {
     this.#abortController?.abort();
     this.#abortController = undefined;
-    // Override in subclass for additional cleanup
   }
 
   /**
@@ -1304,6 +1315,20 @@ export abstract class BaseGridPlugin<TConfig = unknown> implements GridPlugin {
    * ```
    */
   processColumns?(columns: readonly ColumnConfig[]): ColumnConfig[];
+
+  /**
+   * Reorder the FULL column list — hidden columns included — before `processColumns` runs.
+   * Must return a permutation of `columns` (same objects, no additions or removals).
+   *
+   * A plugin that moves columns (e.g. pinning to an edge) must do it here rather than in
+   * `processColumns`, which only ever sees visible columns: core cannot tell from a
+   * visible-only result where a hidden column belongs, so it would be misplaced once shown.
+   *
+   * @param columns - All columns in current model order
+   * @returns The reordered columns
+   * @internal
+   */
+  orderColumns?(columns: readonly ColumnConfig[]): ColumnConfig[];
 
   /**
    * Called before each render cycle begins.

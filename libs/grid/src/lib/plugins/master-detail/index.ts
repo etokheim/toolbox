@@ -7,6 +7,7 @@
 export { MasterDetailPlugin } from './master-detail-plugin';
 export type {
   DetailExpandDetail,
+  DetailLoadErrorDetail,
   ExpandCollapseAnimation,
   MasterDetailConfig,
   MasterDetailDisclosureContext,

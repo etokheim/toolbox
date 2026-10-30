@@ -6,12 +6,11 @@ import {
   getBlockRange,
   getRequiredBlocks,
   getRowFromCache,
-  isBlockLoaded,
-  isBlockLoading,
   loadBlock,
 } from './datasource';
+import { createLoadingPlaceholder, isLoadingPlaceholder } from './placeholder';
 import { ServerSidePlugin } from './server-side-plugin';
-import type { ServerSideDataSource } from './types';
+import type { ServerSideConfig, ServerSideDataSource } from './types';
 
 // #region Mock Grid
 
@@ -78,6 +77,18 @@ function createServerSideMockGrid(overrides: Record<string, unknown> = {}) {
 
   return el as HTMLElement & Record<string, any>;
 }
+
+/** Data source serving `{ id }` rows for any requested range of a `total`-row dataset. */
+const pagedDS = (total: number): ServerSideDataSource => ({
+  getRows: vi.fn().mockImplementation(({ startNode, endNode }: { startNode: number; endNode: number }) =>
+    Promise.resolve({
+      rows: Array.from({ length: Math.max(0, Math.min(total, endNode) - startNode) }, (_, i) => ({
+        id: startNode + i,
+      })),
+      totalNodeCount: total,
+    }),
+  ),
+});
 
 // #endregion
 
@@ -264,39 +275,6 @@ describe('server-side plugin', () => {
     });
   });
 
-  describe('isBlockLoaded', () => {
-    it('should return false for missing block', () => {
-      const loadedBlocks = new Map<number, any[]>();
-      expect(isBlockLoaded(0, loadedBlocks)).toBe(false);
-    });
-
-    it('should return true for loaded block', () => {
-      const loadedBlocks = new Map<number, any[]>();
-      loadedBlocks.set(0, []);
-      loadedBlocks.set(2, []);
-
-      expect(isBlockLoaded(0, loadedBlocks)).toBe(true);
-      expect(isBlockLoaded(1, loadedBlocks)).toBe(false);
-      expect(isBlockLoaded(2, loadedBlocks)).toBe(true);
-    });
-  });
-
-  describe('isBlockLoading', () => {
-    it('should return false for block not loading', () => {
-      const loadingBlocks = new Set<number>();
-      expect(isBlockLoading(0, loadingBlocks)).toBe(false);
-    });
-
-    it('should return true for loading block', () => {
-      const loadingBlocks = new Set<number>([1, 3]);
-
-      expect(isBlockLoading(0, loadingBlocks)).toBe(false);
-      expect(isBlockLoading(1, loadingBlocks)).toBe(true);
-      expect(isBlockLoading(2, loadingBlocks)).toBe(false);
-      expect(isBlockLoading(3, loadingBlocks)).toBe(true);
-    });
-  });
-
   describe('BlockCache', () => {
     it('should store and retrieve values', () => {
       const cache = new BlockCache<string>(3);
@@ -446,6 +424,68 @@ describe('ServerSidePlugin', () => {
       expect(manifest.incompatibleWith).toBeDefined();
       expect(manifest.incompatibleWith!.length).toBe(1);
       expect(manifest.incompatibleWith!.map((i) => i.name)).toEqual(['pivot']);
+    });
+
+    it('should answer datasource:filter-mode only while a data source is active (#520)', () => {
+      expect(ServerSidePlugin.manifest.queries!.map((q) => q.type)).toContain('datasource:filter-mode');
+      const query = { type: 'datasource:filter-mode', context: null };
+      const getRows = vi.fn().mockResolvedValue({ rows: [], totalNodeCount: 0 });
+
+      const serverMode = new ServerSidePlugin({ pageSize: 10 });
+      serverMode.attach(createServerSideMockGrid() as any);
+      expect(serverMode.handleQuery(query)).toBeUndefined();
+      serverMode.setDataSource({ getRows });
+      expect(serverMode.handleQuery(query)).toBe('server');
+
+      const localMode = new ServerSidePlugin({ pageSize: 10, filterMode: 'local', dataSource: { getRows } });
+      localMode.attach(createServerSideMockGrid() as any);
+      expect(localMode.handleQuery(query)).toBe('local');
+
+      // The URL source (`data-src`) slices a cached dataset and cannot filter.
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(() => new Promise(() => undefined)),
+      );
+      const urlSource = new ServerSidePlugin({ pageSize: 10, filterMode: 'server' });
+      try {
+        urlSource.attach(createServerSideMockGrid() as any);
+        urlSource.setDataSource(createUrlDataSource('/rows.json'));
+        expect(urlSource.handleQuery(query)).toBe('local');
+      } finally {
+        urlSource.detach();
+        vi.unstubAllGlobals();
+      }
+    });
+
+    it('should answer datasource:sort-mode only while a data source is active (#521)', () => {
+      expect(ServerSidePlugin.manifest.queries!.map((q) => q.type)).toContain('datasource:sort-mode');
+      const query = { type: 'datasource:sort-mode', context: null };
+      const getRows = vi.fn().mockResolvedValue({ rows: [], totalNodeCount: 0 });
+
+      const serverMode = new ServerSidePlugin({ pageSize: 10 });
+      serverMode.attach(createServerSideMockGrid() as any);
+      expect(serverMode.handleQuery(query)).toBeUndefined();
+      serverMode.setDataSource({ getRows });
+      expect(serverMode.handleQuery(query)).toBe('server');
+
+      const localMode = new ServerSidePlugin({ pageSize: 10, sortMode: 'local', dataSource: { getRows } });
+      localMode.attach(createServerSideMockGrid() as any);
+      expect(localMode.handleQuery(query)).toBe('local');
+
+      // The URL source (`data-src`) slices a cached dataset and cannot sort.
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(() => new Promise(() => undefined)),
+      );
+      const urlSource = new ServerSidePlugin({ pageSize: 10, sortMode: 'server' });
+      try {
+        urlSource.attach(createServerSideMockGrid() as any);
+        urlSource.setDataSource(createUrlDataSource('/rows.json'));
+        expect(urlSource.handleQuery(query)).toBe('local');
+      } finally {
+        urlSource.detach();
+        vi.unstubAllGlobals();
+      }
     });
   });
 
@@ -798,6 +838,133 @@ describe('ServerSidePlugin', () => {
       expect(plugin.getTotalNodeCount()).toBe(1);
       expect(plugin.getLoadedBlockCount()).toBe(1);
     });
+
+    describe('getChildRows signal', () => {
+      function setup(getChildRows: ServerSideDataSource['getChildRows']) {
+        const plugin = new ServerSidePlugin({ pageSize: 10 });
+        const grid = createServerSideMockGrid();
+        plugin.attach(grid as any);
+        plugin.setDataSource({ getRows: vi.fn().mockResolvedValue({ rows: [], totalNodeCount: 0 }), getChildRows });
+        const events: Array<{ type: string; detail: any }> = [];
+        for (const type of ['datasource:children', 'datasource:error', 'datasource:loading']) {
+          // Child-request events only — the root block's `datasource:loading` carries no context.
+          grid.addEventListener(type, (e: Event) => {
+            const detail = (e as CustomEvent).detail;
+            if (detail.context) events.push({ type, detail });
+          });
+        }
+        const fetch = (signal?: AbortSignal) =>
+          plugin.handleQuery({ type: 'datasource:fetch-children', context: { context: { source: 'tree' }, signal } });
+        return { plugin, events, fetch };
+      }
+
+      it('passes a non-aborted signal to getChildRows', async () => {
+        const getChildRows = vi.fn(async () => ({ rows: [{ id: 1 }] }));
+        const { events, fetch } = setup(getChildRows);
+
+        fetch();
+
+        await vi.waitFor(() => expect(events.some((e) => e.type === 'datasource:children')).toBe(true));
+        const params = getChildRows.mock.calls[0] as unknown[];
+        expect((params[0] as { signal: AbortSignal }).signal).toBeInstanceOf(AbortSignal);
+        expect((params[0] as { signal: AbortSignal }).signal.aborted).toBe(false);
+      });
+
+      it('aborts getChildRows and drops its result when the requester signal aborts (#527)', async () => {
+        let childSignal: AbortSignal | undefined;
+        let resolve!: (value: { rows: unknown[] }) => void;
+        const { events, fetch } = setup((params) => {
+          childSignal = params.signal;
+          return new Promise((r) => (resolve = r));
+        });
+        const requester = new AbortController();
+        fetch(requester.signal);
+
+        requester.abort();
+        expect(childSignal!.aborted).toBe(true);
+        resolve({ rows: [{ id: 'stale' }] });
+        await new Promise((r) => setTimeout(r, 0));
+
+        expect(events.map((e) => e.type)).toEqual(['datasource:loading', 'datasource:loading']);
+        expect(events.at(-1)!.detail.loading).toBe(false);
+      });
+
+      it('untracks a requester-aborted request even when getChildRows never settles (#539)', () => {
+        const { plugin, fetch } = setup(() => new Promise(() => undefined));
+        const requesters = Array.from({ length: 3 }, () => new AbortController());
+        for (const requester of requesters) fetch(requester.signal);
+        expect(plugin['childControllers'].size).toBe(3);
+
+        for (const requester of requesters) requester.abort();
+
+        expect(plugin['childControllers'].size).toBe(0);
+      });
+
+      it('reports no error when an aborted getChildRows rejects', async () => {
+        const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+        const { events, fetch } = setup(
+          ({ signal }) =>
+            new Promise((_resolve, reject) => signal.addEventListener('abort', () => reject(new Error('aborted')))),
+        );
+        const requester = new AbortController();
+        fetch(requester.signal);
+
+        requester.abort();
+        await new Promise((r) => setTimeout(r, 0));
+
+        expect(events.some((e) => e.type === 'datasource:error')).toBe(false);
+        expect(errorSpy).not.toHaveBeenCalled();
+      });
+
+      it('does not call getChildRows for an already-aborted requester signal', () => {
+        const getChildRows = vi.fn(async () => ({ rows: [] }));
+        const { fetch } = setup(getChildRows);
+
+        fetch(AbortSignal.abort());
+
+        expect(getChildRows).not.toHaveBeenCalled();
+      });
+
+      it('settles the request with datasource:error when getChildRows is not implemented (#539)', () => {
+        const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+        const { events, fetch } = setup(undefined);
+
+        fetch();
+
+        expect(warnSpy).toHaveBeenCalled();
+        expect(events.map((e) => e.type)).toEqual(['datasource:error']);
+        expect(events[0].detail.error.message).toContain('getChildRows() is not implemented');
+        expect(events[0].detail.context.source).toBe('tree');
+        warnSpy.mockRestore();
+      });
+
+      it('aborts in-flight child requests on detach', () => {
+        let childSignal: AbortSignal | undefined;
+        const { plugin, fetch } = setup((params) => {
+          childSignal = params.signal;
+          return new Promise(() => undefined);
+        });
+        fetch();
+
+        plugin.detach();
+
+        expect(childSignal!.aborted).toBe(true);
+      });
+
+      it('keeps child requests alive across refresh() (GroupingRows/MasterDetail rely on the result)', async () => {
+        let childSignal: AbortSignal | undefined;
+        const { plugin, events, fetch } = setup(async (params) => {
+          childSignal = params.signal;
+          return { rows: [{ id: 1 }] };
+        });
+        fetch();
+
+        plugin.refresh();
+
+        await vi.waitFor(() => expect(events.some((e) => e.type === 'datasource:children')).toBe(true));
+        expect(childSignal!.aborted).toBe(false);
+      });
+    });
   });
 
   describe('Subscribable getRows (RxJS / HttpClient)', () => {
@@ -917,6 +1084,50 @@ describe('ServerSidePlugin', () => {
       // undefined totalNodeCount is treated as 0 (not a valid number)
       expect(() => plugin.processRows([])).not.toThrow();
       expect(plugin.processRows([]).length).toBe(0);
+      expect(plugin.getTotalNodeCount()).toBe(0);
+    });
+
+    it('treats a malformed lastNode (negative / NaN) as an unknown total instead of throwing', async () => {
+      for (const lastNode of [-5, Number.NaN]) {
+        const plugin = new ServerSidePlugin({ pageSize: 5 });
+        const grid = createServerSideMockGrid();
+        plugin.attach(grid as any);
+        plugin.setDataSource({ getRows: vi.fn().mockResolvedValue({ rows: [{ id: 1 }], lastNode }) });
+        await vi.waitFor(() => expect(grid.requestRender).toHaveBeenCalled());
+
+        // `managedNodes.length = NaN | -4` would throw a RangeError.
+        expect(() => plugin.processRows([])).not.toThrow();
+        expect(plugin.getTotalNodeCount()).toBe(0);
+        plugin.detach();
+      }
+    });
+
+    it('fills only the loaded blocks and keeps stable placeholders in the gaps', async () => {
+      const plugin = new ServerSidePlugin({ pageSize: 5 });
+      const grid = createServerSideMockGrid({ _virtualization: { enabled: true, start: 0, end: 0 } });
+      plugin.attach(grid as any);
+
+      plugin.setDataSource(pagedDS(12));
+      await vi.waitFor(() => expect(plugin.getLoadedBlockCount()).toBe(1));
+      const first = plugin.processRows([]);
+      grid.rows = first;
+      const gapPlaceholder = first[5];
+      expect(isLoadingPlaceholder(gapPlaceholder)).toBe(true);
+
+      // Land block 2 (the short last block) without block 1.
+      grid._virtualization.start = 10;
+      grid._virtualization.end = 12;
+      plugin.afterRender();
+      await vi.waitFor(() => expect(plugin.getLoadedBlockCount()).toBe(2));
+      expect(plugin.isNodeLoaded(5)).toBe(false);
+
+      const result = plugin.processRows([]);
+      expect(result.length).toBe(12);
+      expect(result.slice(0, 5).map((r: any) => r.id)).toEqual([0, 1, 2, 3, 4]);
+      expect(result.slice(10).map((r: any) => r.id)).toEqual([10, 11]);
+      // Unloaded block 1 keeps the very same placeholder objects as the first pass.
+      expect(result[5]).toBe(gapPlaceholder);
+      expect(result.slice(5, 10).every((r) => isLoadingPlaceholder(r))).toBe(true);
     });
 
     it('should enter infinite scroll mode when totalNodeCount is -1', async () => {
@@ -934,6 +1145,44 @@ describe('ServerSidePlugin', () => {
       expect(() => plugin.processRows([])).not.toThrow();
       // Short block (1 row < blockSize 5) auto-detects end → total = 1
       expect(plugin.processRows([]).length).toBe(1);
+    });
+  });
+
+  describe('loading placeholders (#508)', () => {
+    it('createLoadingPlaceholder carries the node index and a height-cache key', () => {
+      const p = createLoadingPlaceholder(7);
+      expect(p).toMatchObject({ __loading: true, __index: 7, __rowCacheKey: '__loading:7' });
+      expect(isLoadingPlaceholder(p)).toBe(true);
+    });
+
+    it('isLoadingPlaceholder rejects data rows and grouped placeholders', () => {
+      expect(isLoadingPlaceholder({ id: 1 })).toBe(false);
+      expect(isLoadingPlaceholder(null)).toBe(false);
+      expect(isLoadingPlaceholder('row')).toBe(false);
+      expect(isLoadingPlaceholder({ __loading: true, __groupKey: 'a' })).toBe(false);
+    });
+
+    it('renderRow renders placeholders in the row-loading state and ignores data rows', () => {
+      const plugin = new ServerSidePlugin();
+      plugin.attach(createServerSideMockGrid() as any);
+      const rowEl = document.createElement('div');
+
+      expect(plugin.renderRow({ id: 1 }, rowEl)).toBe(false);
+      expect(plugin.renderRow(createLoadingPlaceholder(0), rowEl)).toBe(true);
+      expect(rowEl.classList.contains('tbw-row-loading')).toBe(true);
+      expect(rowEl.getAttribute('aria-busy')).toBe('true');
+    });
+
+    it("renderRow leaves placeholders to the default path with placeholderRendering: 'columns'", () => {
+      const plugin = new ServerSidePlugin({ placeholderRendering: 'columns' });
+      plugin.attach(createServerSideMockGrid() as any);
+      const rowEl = document.createElement('div');
+      expect(plugin.renderRow(createLoadingPlaceholder(0), rowEl)).toBe(false);
+      expect(rowEl.classList.contains('tbw-row-loading')).toBe(false);
+    });
+
+    it('claims renderRow before default-priority plugins', () => {
+      expect(ServerSidePlugin.manifest.hookPriority?.renderRow).toBeLessThan(0);
     });
   });
 
@@ -1057,6 +1306,114 @@ describe('ServerSidePlugin', () => {
       expect(plugin.getLoadedBlockCount()).toBe(0);
       expect(grid.requestRender).not.toHaveBeenCalled();
     });
+
+    it('drops a pending scroll debounce so the purge does not refetch', async () => {
+      vi.useFakeTimers();
+      try {
+        const plugin = new ServerSidePlugin({ pageSize: 10 });
+        const grid = createServerSideMockGrid({ _virtualization: { enabled: true, start: 10, end: 20 } });
+        plugin.attach(grid as any);
+
+        const ds = pagedDS(100);
+        plugin.setDataSource(ds);
+        await vi.waitFor(() => expect(plugin.getLoadedBlockCount()).toBe(1));
+
+        // Immediate check fetches block 1; the debounced re-check is now pending.
+        plugin.onScroll({ scrollTop: 500, scrollLeft: 0, direction: 'vertical' } as any);
+        expect(ds.getRows).toHaveBeenCalledTimes(2);
+
+        plugin.purgeCache();
+        vi.advanceTimersByTime(200);
+
+        // Without clearing the timer the debounce would refetch the purged block 1.
+        expect(ds.getRows).toHaveBeenCalledTimes(2);
+        expect(plugin.getLoadedBlockCount()).toBe(0);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+  });
+
+  describe('datasource:loading (root blocks)', () => {
+    it('stays loading until every in-flight root block settles, including block 0 from setDataSource()', async () => {
+      const plugin = new ServerSidePlugin({ pageSize: 10 });
+      const grid = createServerSideMockGrid({ _virtualization: { enabled: true, start: 0, end: 20 } });
+      plugin.attach(grid as any);
+      const loading: boolean[] = [];
+      grid.addEventListener('datasource:loading', (e: Event) => {
+        const detail = (e as CustomEvent).detail;
+        if (!detail.context) loading.push(detail.loading);
+      });
+
+      const resolvers = new Map<number, (result: { rows: unknown[]; totalNodeCount: number }) => void>();
+      const ds: ServerSideDataSource = {
+        getRows: ({ startNode }) =>
+          new Promise((resolve) => {
+            resolvers.set(startNode, resolve);
+          }),
+      };
+      plugin.setDataSource(ds);
+      // A scroll while block 0 is in flight starts block 1 (total still unknown).
+      plugin.onScroll({ scrollTop: 0, scrollLeft: 0, direction: 'vertical' } as any);
+      expect([...resolvers.keys()]).toEqual([0, 10]);
+      loading.length = 0;
+
+      resolvers.get(0)!({ rows: Array.from({ length: 10 }, (_, i) => ({ id: i })), totalNodeCount: 100 });
+      await vi.waitFor(() => expect(plugin.getLoadedBlockCount()).toBe(1));
+      // Block 1 is still in flight — no `false` may have been broadcast yet.
+      expect(loading).not.toContain(false);
+
+      resolvers.get(10)!({ rows: Array.from({ length: 10 }, (_, i) => ({ id: 10 + i })), totalNodeCount: 100 });
+      await vi.waitFor(() => expect(plugin.getLoadedBlockCount()).toBe(2));
+      expect(loading.at(-1)).toBe(false);
+
+      plugin.detach();
+    });
+  });
+
+  describe('initial block landing after a scroll-started block', () => {
+    it('still schedules the post-render viewport refill so the freed slot is used', async () => {
+      const plugin = new ServerSidePlugin({ pageSize: 10, maxConcurrentRequests: 2 });
+      // Viewport needs blocks 0–3; only two requests may be in flight.
+      const grid = createServerSideMockGrid({ _virtualization: { enabled: true, start: 0, end: 40 } });
+      plugin.attach(grid as any);
+      const resolvers = new Map<number, (result: { rows: unknown[]; totalNodeCount: number }) => void>();
+      const ds: ServerSideDataSource = {
+        getRows: ({ startNode }) =>
+          new Promise((resolve) => {
+            resolvers.set(startNode, resolve);
+          }),
+      };
+      const rowsFor = (start: number) => Array.from({ length: 10 }, (_, i) => ({ id: start + i }));
+      /** Run the render block 0/1 scheduled: processRows sizes managedNodes, afterRender consumes the viewport check. */
+      const render = () => {
+        grid.rows = plugin.processRows([]);
+        plugin.afterRender();
+      };
+
+      plugin.setDataSource(ds); // block 0 in flight
+      // Viewport check while block 0 is pending (a scroll, minus its debounce
+      // timer, which would otherwise refill on its own and mask the regression).
+      plugin['loadRequiredBlocks']();
+      expect([...resolvers.keys()]).toEqual([0, 10]); // block 1 took the second slot
+
+      // Block 1 lands FIRST: its render sizes managedNodes; its re-check starts block 2.
+      resolvers.get(10)!({ rows: rowsFor(10), totalNodeCount: 100 });
+      await vi.waitFor(() => expect(plugin.getLoadedBlockCount()).toBe(1));
+      render();
+      expect([...resolvers.keys()]).toEqual([0, 10, 20]); // block 3 throttled behind 0 and 2
+
+      // Block 0 lands: it frees a slot. managedNodes is already sized, so nothing
+      // but `initial` puts it on the rebuild path — without that, no viewport check
+      // runs and block 3 waits for block 2 to settle.
+      resolvers.get(0)!({ rows: rowsFor(0), totalNodeCount: 100 });
+      await vi.waitFor(() => expect(plugin.getLoadedBlockCount()).toBe(2));
+      render();
+
+      expect([...resolvers.keys()]).toEqual([0, 10, 20, 30]);
+
+      plugin.detach();
+    });
   });
 
   describe('onScroll', () => {
@@ -1098,6 +1455,49 @@ describe('ServerSidePlugin', () => {
     });
   });
 
+  describe('datasource:data generation (#538)', () => {
+    it('stamps blocks of one cache with the same generation and bumps it on every cache discard', async () => {
+      const plugin = new ServerSidePlugin({ pageSize: 10 });
+      const grid = createServerSideMockGrid({ _virtualization: { enabled: true, start: 0, end: 10 } });
+      plugin.attach(grid as any);
+      const blocks: Array<{ startNode: number; generation: number }> = [];
+      grid._pluginManager.subscribe({}, 'datasource:data', (detail: any) => blocks.push(detail));
+
+      const mockDS: ServerSideDataSource = {
+        getRows: vi.fn().mockImplementation(({ startNode }: { startNode: number }) =>
+          Promise.resolve({
+            rows: Array.from({ length: 10 }, (_, i) => ({ id: startNode + i })),
+            totalNodeCount: 100,
+          }),
+        ),
+      };
+      plugin.setDataSource(mockDS);
+      await vi.waitFor(() => expect(blocks).toHaveLength(1));
+      grid.rows = plugin.processRows([]);
+
+      grid._virtualization.start = 20;
+      grid._virtualization.end = 30;
+      plugin.onScroll({ scrollTop: 800, scrollLeft: 0, direction: 'vertical' } as any);
+      await vi.waitFor(() => expect(blocks.length).toBeGreaterThan(1));
+      expect(blocks[1].startNode).toBe(20);
+      expect(blocks[1].generation).toBe(blocks[0].generation);
+      const firstGeneration = blocks[0].generation;
+      // Aborted old-generation blocks are dropped, never broadcast — wait on the new generation, not on time.
+      const latest = () => Math.max(...blocks.map((b) => b.generation));
+
+      plugin.refresh();
+      await vi.waitFor(() => expect(latest()).toBeGreaterThan(firstGeneration));
+      const refreshed = latest();
+
+      plugin.purgeCache();
+      grid.rows = plugin.processRows([]);
+      plugin.onScroll({ scrollTop: 800, scrollLeft: 0, direction: 'vertical' } as any);
+      await vi.waitFor(() => expect(latest()).toBeGreaterThan(refreshed));
+
+      plugin.detach();
+    });
+  });
+
   describe('claimed data (structural plugin) rebuilds the row model', () => {
     it('should requestRender, not requestVirtualRefresh, when a plugin claimed the block', async () => {
       const requestVirtualRefresh = vi.fn();
@@ -1127,7 +1527,7 @@ describe('ServerSidePlugin', () => {
 
       // Size managedNodes so the second block would otherwise take the cheap
       // in-place path (previousManagedLength > 0, length === totalNodeCount).
-      plugin.processRows([]);
+      grid.rows = plugin.processRows([]);
       (grid.requestRender as any).mockClear();
 
       grid._virtualization.start = 20;
@@ -1161,7 +1561,8 @@ describe('ServerSidePlugin', () => {
       plugin.setDataSource(mockDS);
       await vi.waitFor(() => expect(plugin.getLoadedBlockCount()).toBe(1));
 
-      plugin.processRows([]);
+      // Mirror core: with no downstream transform, `_rows` IS managedNodes.
+      grid.rows = plugin.processRows([]);
       (grid.requestRender as any).mockClear();
 
       grid._virtualization.start = 20;
@@ -1170,6 +1571,157 @@ describe('ServerSidePlugin', () => {
 
       await vi.waitFor(() => expect(requestVirtualRefresh).toHaveBeenCalled());
       expect(grid.requestRender).not.toHaveBeenCalled();
+
+      plugin.detach();
+    });
+
+    /** Plugin on a mock grid with block 0 of a paged `total`-row source loaded. */
+    async function withFirstBlock(
+      config: Partial<ServerSideConfig>,
+      total: number,
+      gridOverrides: Record<string, unknown>,
+    ) {
+      const plugin = new ServerSidePlugin({ pageSize: 10, ...config });
+      const grid = createServerSideMockGrid(gridOverrides);
+      plugin.attach(grid as any);
+      const ds = pagedDS(total);
+      plugin.setDataSource(ds);
+      await vi.waitFor(() => expect(plugin.getLoadedBlockCount()).toBe(1));
+      return { plugin, grid, ds };
+    }
+
+    it("should re-check the viewport after the render a filterMode: 'local' filter change requests (#520)", async () => {
+      const { plugin, grid, ds } = await withFirstBlock({ filterMode: 'local' }, 30, {
+        _virtualization: { enabled: true, start: 0, end: 5 },
+      });
+      // The render block 0 requested: the 5-row viewport needs nothing more.
+      grid.rows = plugin.processRows([]);
+      plugin.afterRender();
+      expect(ds.getRows).toHaveBeenCalledTimes(1);
+
+      // A local filter rejects block 0. Its render moves block 1's placeholders into
+      // view without any scroll.
+      grid._pluginManager.emitPluginEvent('filter-change', {});
+      grid.rows = grid.rows.filter(isLoadingPlaceholder);
+      plugin.afterRender();
+
+      await vi.waitFor(() => expect(plugin.getLoadedBlockCount()).toBe(2));
+      expect(ds.getRows).toHaveBeenLastCalledWith(expect.objectContaining({ startNode: 10, endNode: 20 }));
+
+      plugin.detach();
+    });
+
+    it('should request the blocks of on-screen placeholders after a later stage dropped rows above them (#520)', async () => {
+      const { plugin, grid, ds } = await withFirstBlock({}, 30, {
+        _virtualization: { enabled: true, start: 0, end: 5 },
+      });
+
+      // Unfiltered: the 5-row viewport needs only block 0.
+      grid.rows = plugin.processRows([]);
+      plugin.onScroll({ scrollTop: 0, scrollLeft: 0, direction: 'vertical' } as any);
+      expect(ds.getRows).toHaveBeenCalledTimes(1);
+
+      // A local filter drops every row of block 0: placeholders 10–29 now sit at display 0–19.
+      grid.rows = grid.rows.filter(isLoadingPlaceholder);
+      plugin.onScroll({ scrollTop: 0, scrollLeft: 0, direction: 'vertical' } as any);
+
+      await vi.waitFor(() => expect(plugin.getLoadedBlockCount()).toBe(2));
+      expect(ds.getRows).toHaveBeenLastCalledWith(expect.objectContaining({ startNode: 10, endNode: 20 }));
+
+      plugin.detach();
+    });
+
+    it('should requestRender with a new managedNodes identity when a later stage transformed the rows (#520)', async () => {
+      const requestVirtualRefresh = vi.fn();
+      const { plugin, grid } = await withFirstBlock({}, 100, {
+        requestVirtualRefresh,
+        _virtualization: { enabled: true, start: 0, end: 10 },
+      });
+
+      const managed = plugin.processRows([]);
+      // Stand in for a later stage (e.g. MultiSort's `[...rows]`) that derived `_rows` from managedNodes.
+      grid.rows = [...managed];
+      (grid.requestRender as any).mockClear();
+
+      grid._virtualization.start = 20;
+      grid._virtualization.end = 30;
+      plugin.onScroll({ scrollTop: 800, scrollLeft: 0, direction: 'vertical' } as any);
+
+      await vi.waitFor(() => expect(plugin.getLoadedBlockCount()).toBe(2));
+      expect(grid.requestRender).toHaveBeenCalled();
+      expect(requestVirtualRefresh).not.toHaveBeenCalled();
+      // Downstream caches keyed on the input reference must see a new array.
+      const next = plugin.processRows([]);
+      expect(next).not.toBe(managed);
+      expect(next[25]).toEqual({ id: 25 });
+
+      plugin.detach();
+    });
+
+    it('should not request blocks past a total that shrank before the scheduled render (#520)', async () => {
+      const plugin = new ServerSidePlugin({ pageSize: 10, maxConcurrentRequests: 1 });
+      const grid = createServerSideMockGrid({ _virtualization: { enabled: true, start: 0, end: 20 } });
+      plugin.attach(grid as any);
+      // Block 0 reports 100 nodes; block 1 declares the real end at node 14.
+      const getRows = vi.fn(({ startNode }: { startNode: number }) =>
+        Promise.resolve(
+          startNode === 0
+            ? { rows: Array.from({ length: 10 }, (_, i) => ({ id: i })), totalNodeCount: 100 }
+            : { rows: Array.from({ length: 5 }, (_, i) => ({ id: startNode + i })), totalNodeCount: 100, lastNode: 14 },
+        ),
+      );
+      plugin.setDataSource({ getRows });
+      await vi.waitFor(() => expect(plugin.getLoadedBlockCount()).toBe(1));
+
+      // A local filter dropped block 0: placeholders 10–29 fill the 20-row viewport.
+      grid.rows = plugin.processRows([]).filter(isLoadingPlaceholder);
+      plugin.onScroll({ scrollTop: 0, scrollLeft: 0, direction: 'vertical' } as any);
+      await vi.waitFor(() => expect(plugin.getLoadedBlockCount()).toBe(2));
+
+      // Block 1's synchronous re-check still sees the old placeholders 15–29.
+      expect(getRows.mock.calls.map(([params]) => params.startNode)).toEqual([0, 10]);
+      expect(plugin.getTotalNodeCount()).toBe(15);
+
+      plugin.detach();
+    });
+
+    it('should request the blocks of on-screen placeholders a structural mapping renumbered (#520)', async () => {
+      const { plugin, grid, ds } = await withFirstBlock({ filterMode: 'local' }, 30, {
+        _virtualization: { enabled: true, start: 0, end: 5 },
+      });
+      // Stand in for Tree after a local filter kept only root 0: it numbers the remaining
+      // roots from zero, so it maps the viewport to nodes [0, 6) — cached block 0 only.
+      Object.defineProperty(grid, 'query', {
+        value: (type: string) =>
+          type === 'datasource:viewport-mapping' ? [{ startNode: 0, endNode: 6, totalLoadedNodes: 21 }] : [],
+        configurable: true,
+      });
+      const managed = plugin.processRows([]);
+      grid.rows = [managed[0], ...managed.slice(10)];
+
+      plugin.onScroll({ scrollTop: 0, scrollLeft: 0, direction: 'vertical' } as any);
+
+      await vi.waitFor(() => expect(plugin.getLoadedBlockCount()).toBe(2));
+      expect(ds.getRows).toHaveBeenLastCalledWith(expect.objectContaining({ startNode: 10, endNode: 20 }));
+
+      plugin.detach();
+    });
+
+    it('should find on-screen placeholders with a fractional loadThreshold (#520)', async () => {
+      const { plugin, grid, ds } = await withFirstBlock({ loadThreshold: 2.5 }, 30, {
+        _virtualization: { enabled: true, start: 0, end: 5 },
+      });
+      // A local filter dropped block 0: placeholders 10–29 sit at display 0–19.
+      grid.rows = plugin.processRows([]).filter(isLoadingPlaceholder);
+      grid._virtualization.start = 5;
+      grid._virtualization.end = 10;
+
+      plugin.onScroll({ scrollTop: 0, scrollLeft: 0, direction: 'vertical' } as any);
+
+      await vi.waitFor(() => expect(plugin.getLoadedBlockCount()).toBe(3));
+      expect((ds.getRows as any).mock.calls.map(([params]: [{ startNode: number }]) => params.startNode)).toEqual([
+        0, 10, 20,
+      ]);
 
       plugin.detach();
     });
@@ -1271,17 +1823,6 @@ describe('ServerSidePlugin', () => {
   });
 
   describe('viewport taller than one block (#507)', () => {
-    const pagedDS = (total: number): ServerSideDataSource => ({
-      getRows: vi.fn().mockImplementation(({ startNode, endNode }: { startNode: number; endNode: number }) =>
-        Promise.resolve({
-          rows: Array.from({ length: Math.max(0, Math.min(total, endNode) - startNode) }, (_, i) => ({
-            id: startNode + i,
-          })),
-          totalNodeCount: total,
-        }),
-      ),
-    });
-
     it('should load further visible blocks after the post-data render, without loadThreshold or scroll', async () => {
       const plugin = new ServerSidePlugin({ pageSize: 10 });
       // Before data arrives the grid has no rows, so the virtual window is empty.
@@ -1296,8 +1837,8 @@ describe('ServerSidePlugin', () => {
       expect(ds.getRows).toHaveBeenCalledTimes(1);
 
       // Simulate the render that block 0 requested: rows exist now and the
-      // virtual window spans 28 rows (blocks 0, 1 and 2).
-      plugin.processRows([]);
+      // virtual window spans 28 rows (blocks 0, 1 and 2). Core assigns `_rows`.
+      grid.rows = plugin.processRows([]);
       grid._virtualization.end = 28;
       plugin.afterRender();
 
@@ -1838,6 +2379,162 @@ describe('ServerSidePlugin', () => {
 
       // Async handler can't be awaited inside processRows — managedNodes order is preserved.
       expect(result.map((r) => r.name)).toEqual(['Alice', 'Bob', 'Charlie']);
+    });
+  });
+
+  describe('QA regressions: row-model sizing, superseded requests, sync throws', () => {
+    /** Data source serving full `pageSize`-row blocks with an unknown total (infinite scroll). */
+    const infiniteDS = (blockSize: number, lastBlockRows = blockSize, lastBlock = Infinity): ServerSideDataSource => ({
+      getRows: vi.fn(({ startNode }: { startNode: number }) => {
+        const length = startNode / blockSize === lastBlock ? lastBlockRows : blockSize;
+        return Promise.resolve({
+          rows: Array.from({ length }, (_, i) => ({ id: startNode + i })),
+          totalNodeCount: -1,
+        });
+      }),
+    });
+
+    it('re-runs processRows when a block grows the infinite-scroll estimate', async () => {
+      const plugin = new ServerSidePlugin({ pageSize: 5 });
+      const grid = createServerSideMockGrid({ requestVirtualRefresh: vi.fn() });
+      grid._virtualization = { enabled: false, start: 0, end: 10 };
+      plugin.attach(grid as any);
+      plugin.setDataSource(infiniteDS(5));
+      await vi.waitFor(() => expect(plugin.getLoadedBlockCount()).toBe(1));
+      grid.rows = plugin.processRows([]);
+      expect(grid.rows.length).toBe(10);
+
+      grid.requestRender.mockClear();
+      plugin.afterRender(); // fetches block 1 (rows 5..9)
+      await vi.waitFor(() => expect(plugin.getLoadedBlockCount()).toBe(2));
+
+      expect(grid.requestRender).toHaveBeenCalled();
+      expect(plugin.processRows([]).length).toBe(15); // 10 loaded + one placeholder block
+    });
+
+    it('re-runs processRows when a short block shrinks the infinite-scroll estimate', async () => {
+      const plugin = new ServerSidePlugin({ pageSize: 5 });
+      const grid = createServerSideMockGrid({ requestVirtualRefresh: vi.fn() });
+      grid._virtualization = { enabled: false, start: 0, end: 10 };
+      plugin.attach(grid as any);
+      plugin.setDataSource(infiniteDS(5, 2, 1)); // block 1 returns 2 rows → total 7
+      await vi.waitFor(() => expect(plugin.getLoadedBlockCount()).toBe(1));
+      grid.rows = plugin.processRows([]);
+
+      grid.requestRender.mockClear();
+      plugin.afterRender();
+      await vi.waitFor(() => expect(plugin.getLoadedBlockCount()).toBe(2));
+
+      expect(plugin.getTotalNodeCount()).toBe(7);
+      expect(grid.requestRender).toHaveBeenCalled();
+      const result = plugin.processRows([]);
+      expect(result.length).toBe(7);
+      expect(result.some(isLoadingPlaceholder)).toBe(false);
+    });
+
+    it('keeps a superseding request abortable after the superseded one settles', async () => {
+      const plugin = new ServerSidePlugin({ pageSize: 5 });
+      const grid = createServerSideMockGrid();
+      plugin.attach(grid as any);
+      const signals: AbortSignal[] = [];
+      const ds: ServerSideDataSource = {
+        getRows: vi.fn(({ signal }: { signal: AbortSignal }) => {
+          signals.push(signal);
+          return new Promise<never>(() => undefined);
+        }),
+      };
+      plugin.setDataSource(ds);
+      plugin.refresh(); // aborts request #0, starts #1 for the same block
+      await new Promise((r) => setTimeout(r, 0)); // let #0's rejection settle
+
+      grid._pluginManager.emitPluginEvent('sort-change', {});
+
+      expect(signals[0].aborted).toBe(true);
+      expect(signals[1].aborted).toBe(true); // was orphaned before the fix
+    });
+
+    it('does not let a superseded block-0 result overwrite the current one', async () => {
+      const plugin = new ServerSidePlugin({ pageSize: 5 });
+      const grid = createServerSideMockGrid();
+      plugin.attach(grid as any);
+      // Ignores the abort signal, resolving in call order on demand.
+      const resolvers: Array<(rows: unknown[]) => void> = [];
+      const ds: ServerSideDataSource = {
+        getRows: vi.fn(
+          () =>
+            new Promise((resolve) => {
+              resolvers.push((rows) => resolve({ rows, totalNodeCount: rows.length }));
+            }),
+        ),
+      };
+      plugin.setDataSource(ds); // #0
+      plugin.refresh(); // #1
+      await new Promise((r) => setTimeout(r, 0));
+      grid._pluginManager.emitPluginEvent('sort-change', {}); // #2 (+ viewport blocks)
+      await new Promise((r) => setTimeout(r, 0));
+
+      resolvers[2]([{ id: 'current' }]);
+      await vi.waitFor(() => expect(plugin.getLoadedBlockCount()).toBe(1));
+      resolvers[1]([{ id: 'stale' }]);
+      await new Promise((r) => setTimeout(r, 0));
+
+      expect(plugin.processRows([])[0]).toEqual({ id: 'current' });
+    });
+
+    it('purgeCache() releases loading slots so purged blocks can be refetched', async () => {
+      const plugin = new ServerSidePlugin({ pageSize: 5 });
+      const grid = createServerSideMockGrid();
+      grid._virtualization = { enabled: false, start: 0, end: 5 };
+      plugin.attach(grid as any);
+      const ds: ServerSideDataSource = { getRows: vi.fn(() => new Promise<never>(() => undefined)) };
+      plugin.setDataSource(ds);
+      plugin.purgeCache();
+      await new Promise((r) => setTimeout(r, 0));
+
+      plugin.onScroll({} as any);
+      expect(ds.getRows).toHaveBeenCalledTimes(2);
+    });
+
+    it('surfaces a synchronous getRows() throw as datasource:error', async () => {
+      const plugin = new ServerSidePlugin({ pageSize: 5 });
+      const grid = createServerSideMockGrid();
+      plugin.attach(grid as any);
+      const errors: unknown[] = [];
+      const loading: boolean[] = [];
+      grid.addEventListener('datasource:error', (e: Event) => errors.push((e as CustomEvent).detail.error));
+      grid.addEventListener('datasource:loading', (e: Event) => loading.push((e as CustomEvent).detail.loading));
+      vi.spyOn(console, 'error').mockImplementation(() => undefined);
+      const ds: ServerSideDataSource = {
+        getRows: () => {
+          throw new Error('boom');
+        },
+      };
+
+      expect(() => plugin.setDataSource(ds)).not.toThrow();
+      await vi.waitFor(() => expect(errors).toHaveLength(1));
+      expect((errors[0] as Error).message).toBe('boom');
+      expect(loading.at(-1)).toBe(false);
+    });
+
+    it('surfaces a synchronous getChildRows() throw as datasource:error', async () => {
+      const plugin = new ServerSidePlugin({ pageSize: 5 });
+      const grid = createServerSideMockGrid();
+      plugin.attach(grid as any);
+      const errors: unknown[] = [];
+      grid.addEventListener('datasource:error', (e: Event) => errors.push((e as CustomEvent).detail.error));
+      vi.spyOn(console, 'error').mockImplementation(() => undefined);
+      plugin.setDataSource({
+        getRows: vi.fn().mockResolvedValue({ rows: [], totalNodeCount: 0 }),
+        getChildRows: () => {
+          throw new Error('child boom');
+        },
+      });
+
+      expect(() =>
+        plugin.handleQuery({ type: 'datasource:fetch-children', context: { context: { source: 'tree' } } }),
+      ).not.toThrow();
+      await vi.waitFor(() => expect(errors).toHaveLength(1));
+      expect((errors[0] as Error).message).toBe('child boom');
     });
   });
 });

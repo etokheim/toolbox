@@ -5,13 +5,7 @@ import type { TreeConfig } from './types';
 // Import grid for full integration test
 import '../../../index';
 import type { GridElement } from '../../../public';
-
-/** Wait for custom element upgrade + ready promise */
-async function waitUpgrade(el: GridElement): Promise<void> {
-  await customElements.whenDefined('tbw-grid');
-  await (el as any).ready?.();
-  await new Promise((r) => requestAnimationFrame(r));
-}
+import { nextFrame, waitUpgrade } from '../../../../test/helpers';
 
 describe('tree plugin integration', () => {
   beforeEach(() => {
@@ -64,8 +58,8 @@ describe('tree plugin integration', () => {
     const processedCols = plugin.processColumns(cols);
 
     // Verify processColumns wrapped the first column
-    expect(processedCols[0].viewRenderer).toBeDefined();
-    expect(typeof processedCols[0].viewRenderer).toBe('function');
+    expect(processedCols[0].renderer).toBeDefined();
+    expect(typeof processedCols[0].renderer).toBe('function');
   });
 
   it('should return columns unchanged if flattenedRows is empty', () => {
@@ -122,8 +116,8 @@ describe('tree plugin integration', () => {
     // ID column should be untouched
     expect(processedCols[0].viewRenderer).toBeUndefined();
     // Name column should be wrapped with tree renderer
-    expect(processedCols[1].viewRenderer).toBeDefined();
-    expect(typeof processedCols[1].viewRenderer).toBe('function');
+    expect(processedCols[1].renderer).toBeDefined();
+    expect(typeof processedCols[1].renderer).toBe('function');
   });
 
   it('should fall back to first column when treeColumn field is not found', () => {
@@ -156,7 +150,7 @@ describe('tree plugin integration', () => {
     const processedCols = plugin.processColumns(cols);
 
     // Should wrap first column as fallback
-    expect(processedCols[0].viewRenderer).toBeDefined();
+    expect(processedCols[0].renderer).toBeDefined();
     expect(processedCols[1].viewRenderer).toBeUndefined();
   });
 
@@ -307,6 +301,31 @@ describe('tree plugin integration', () => {
 
     // The name should appear in the first column (tree wraps first column)
     expect(nameCells).toEqual(['Documents', 'Resume.pdf', 'Cover Letter.docx', 'Projects', 'Pictures', 'readme.md']);
+  });
+
+  it('preserves a custom renderer inside the tree cell and restores it when tree rows disappear', async () => {
+    const grid = document.createElement('tbw-grid') as GridElement;
+    document.body.appendChild(grid);
+
+    const renderer = ({ value }: { value: unknown }) => `<strong>${String(value)}</strong>`;
+    const treePlugin = new TreePlugin({ childrenField: 'children', defaultExpanded: true });
+    grid.gridConfig = {
+      columns: [{ field: 'name', renderer }],
+      plugins: [treePlugin],
+    };
+    grid.rows = [{ id: 'parent', name: 'Parent', children: [{ id: 'child', name: 'Child' }] }];
+
+    await waitUpgrade(grid);
+
+    const renderedRows = grid.querySelectorAll('.data-grid-row');
+    const parentCell = renderedRows[0]?.querySelector('.cell[data-col="0"]');
+    const childWrapper = renderedRows[1]?.querySelector('.tree-cell-wrapper');
+    expect(parentCell?.querySelector('.tree-toggle')).not.toBeNull();
+    expect(parentCell?.querySelector('.tree-content strong')?.textContent).toBe('Parent');
+    expect(childWrapper?.style.getPropertyValue('--tbw-tree-depth')).toBe('1');
+
+    grid.rows = [];
+    await vi.waitFor(() => expect(grid.columns[0].renderer).toBe(renderer));
   });
 
   it('does not re-write unchanged aria position attributes on subsequent renders', async () => {
@@ -1230,8 +1249,6 @@ describe('tree plugin integration', () => {
       await waitUpgrade(grid);
       return { grid, plugin };
     }
-
-    const nextFrame = () => new Promise((r) => requestAnimationFrame(r));
 
     it('fetches children on expand, merges them, and emits tree-load-start/end', async () => {
       const calls: Array<{ key: string; depth: number }> = [];

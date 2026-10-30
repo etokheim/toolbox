@@ -1,6 +1,6 @@
 ---
 name: bundle-check
-description: Check the grid bundle budget using authoritative Bun gzip (index.js ≤170 KiB raw, ≤52 KiB gzip hard limit, 45 KiB gzip soft warning). Run after code changes that could affect bundle size.
+description: Check the grid bundle budget using authoritative Bun gzip (index.js ≤175 KiB raw, ≤52 KiB gzip hard limit, 45 KiB gzip soft warning). Run after code changes that could affect bundle size.
 argument-hint: library-name (optional)
 ---
 
@@ -12,7 +12,7 @@ Verify that the grid library build stays within its budget constraints.
 
 | Metric              | Threshold            | Action                                                                         |
 | ------------------- | -------------------- | ------------------------------------------------------------------------------ |
-| `index.js` raw size | > 174080 B (170 KiB) | **Hard fail** — reduce size or document a justified budget increase.           |
+| `index.js` raw size | > 179200 B (175 KiB) | **Hard fail** — reduce size or document a justified budget increase.           |
 | `index.js` gzipped  | > 53248 B (52 KiB)   | **Hard fail** — reduce size or document a justified budget increase.           |
 | `index.js` gzipped  | > 46080 B, ≤ 53248 B | **Soft warning** — investigate; do not trade readability for marginal savings. |
 | `index.js` gzipped  | ≤ 46080 B (45 KiB)   | **Pass**, provided raw size also passes.                                       |
@@ -27,7 +27,7 @@ Verify that the grid library build stays within its budget constraints.
 bun nx build grid
 ```
 
-The Vite `bundleBudget` plugin enforces `tools/core-bundle-budget.ts` (170 KiB raw / 52 KiB gzip) and existing plugin rules. Both it and the report use `tools/bundle-size.ts`: Bun's default `node:zlib.gzipSync`, with one batched Bun subprocess for a Node-hosted caller. Missing Bun, failed measurement and malformed child output are errors, never grounds to substitute Node gzip. Record the printed Bun version with exact bytes and bundle hash.
+The Vite `bundleBudget` plugin enforces `tools/core-bundle-budget.ts` (175 KiB raw / 52 KiB gzip) and existing plugin rules. Both it and the report use `tools/bundle-size.ts`: Bun's default `node:zlib.gzipSync`, with one batched Bun subprocess for a Node-hosted caller. Missing Bun, failed measurement and malformed child output are errors, never grounds to substitute Node gzip. Record the printed Bun version with exact bytes and bundle hash.
 
 Vite's inherited progress/sub-build size banners still use the hosting runtime and are informational. The explicitly labeled **Bundle budget authority** output and the report determine acceptance, not those rounded banners.
 
@@ -47,18 +47,18 @@ Upstream is Bun-first, not Bun-only: inherited Nx/Vite uses a Node shebang and C
 
 Use this checklist in order. Stop at the first matching outcome.
 
-#### 3a. Under budget (gzipped ≤ 45 KiB and raw ≤ 170 KiB)
+#### 3a. Under budget (gzipped ≤ 45 KiB and raw ≤ 175 KiB)
 
 - [ ] Report the raw and gzipped sizes.
 - [ ] Confirm the build is good. No further investigation required.
 
-#### 3b. Soft warning (gzip > 45 KiB and ≤ 52 KiB, raw ≤ 170 KiB)
+#### 3b. Soft warning (gzip > 45 KiB and ≤ 52 KiB, raw ≤ 175 KiB)
 
 - [ ] Report the sizes and flag the warning explicitly.
 - [ ] Briefly investigate using the **Over-budget investigation checklist** below.
 - [ ] Document any size increase in the commit message; merging is allowed.
 
-#### 3c. Over budget (gzip > 52 KiB **or** raw > 170 KiB)
+#### 3c. Over budget (gzip > 52 KiB **or** raw > 175 KiB)
 
 The build/report must fail. Evaluate the checklist, then either reduce size without harming code quality or use the user's standing permission for a justified increase. Record feature need, plugin-placement decision, readability/performance trade-offs, old/new limits and before/after authoritative bytes. Update the shared rule, active docs and threshold tests together. No per-increase approval is needed; this grants no commit or remote permission.
 
@@ -88,7 +88,7 @@ The build/report must fail. Evaluate the checklist, then either reduce size with
 
 ## Plugin Bundle Sizes
 
-Individual plugins are separate entry points. The report lists their raw/gzip bytes. Existing limits remain 55 KiB raw per plugin, except Selection at 60 KiB. Any future increase must justify the affected entry, not silently loosen a shared wildcard or move always-loaded bytes into core. Disabled configuration does not remove an imported plugin's download/parse cost.
+Individual plugins are separate entry points. The report lists their raw/gzip bytes. Existing limits remain 55 KiB raw per plugin, except Editing at 56 KiB and Selection at 60 KiB. Any future increase must justify the affected entry, not silently loosen a shared wildcard or move always-loaded bytes into core. Disabled configuration does not remove an imported plugin's download/parse cost.
 
 ## Tooling regression checks
 
@@ -99,6 +99,26 @@ bun nx exec --projects=grid --excludeTaskDependencies -- vitest run --root "$PWD
 ```
 
 Tests are Node-environment tooling tests (no DOM). They exercise the inherited Node caller and real Bun worker, exact below/equal/over boundaries, one batch, child failure, missing Bun, and report exit status.
+
+## Bundle Composition (build-enforced + runtime smoke)
+
+Where code lives is a global rule (`development-principles.instructions.md` → "Bundle Composition"). The build enforces the structural half via `tools/vite-core-imports.ts`, which runs in the per-plugin ESM and UMD builds:
+
+| Build failure                                           | Meaning                                                                           | Fix                                                                                       |
+| ------------------------------------------------------- | --------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| `[core-imports] … inlines module state from X`          | A plugin inlined a core module that keeps module-level state, and core has it too | Export the plugin's entry point into that module from `public.ts` (`@internal` if needed) |
+| `[core-imports] module state exists more than once`     | Two plugin bundles each carry the same stateful core module                       | Same fix: export it from `public.ts` so both share core's instance                        |
+| `[core-imports] … which the built core does not export` | A plugin imports a public name that `index.js` doesn't export                     | Check `src/index.ts` re-exports                                                           |
+| `[core-imports] … unexpected external import`           | Something other than `@toolbox-web/grid` (or a plugin dep, ESM) went external     | Find the import; plugin-shared code belongs in `plugins/shared/`                          |
+
+A green build does not prove the bundles **run**. After touching `vite.config.ts`, `tools/vite-core-imports.ts`, `public.ts`, or a plugin's core imports, run the dist smoke test. It loads core and every plugin bundle (ESM and UMD) in happy-dom and drives a real grid:
+
+```bash
+bun nx build grid
+bun .github/skills/bundle-check/smoke-dist.mjs   # exit 1 + ✗ lines on failure
+```
+
+It catches what the build cannot: a UMD plugin reading an undefined `TbwGrid.<name>`, a plugin carrying its own `BaseGridPlugin` copy, and module state that is not shared with core (`aggregatorRegistry`). To prove a fix, build once with the old config (`git show HEAD:libs/grid/vite.config.ts`) and confirm the script fails there.
 
 ## Dead Code Removal
 

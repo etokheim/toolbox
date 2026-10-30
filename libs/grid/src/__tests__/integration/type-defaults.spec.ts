@@ -12,6 +12,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import '../../lib/core/grid';
 import type { ColumnConfig, FrameworkAdapter, GridConfig } from '../../lib/core/types';
 import { EditingPlugin } from '../../lib/plugins/editing';
+import { waitUpgrade } from '../../../test/helpers';
 
 interface TestRow {
   id: number;
@@ -25,15 +26,6 @@ const testData: TestRow[] = [
   { id: 1, name: 'Alice', country: 'US', status: 'active', price: 100 },
   { id: 2, name: 'Bob', country: 'UK', status: 'pending', price: 200 },
 ];
-
-async function waitForUpgraded(el: HTMLElement, timeout = 5000) {
-  const start = Date.now();
-  while (!el.hasAttribute('data-upgraded')) {
-    if (Date.now() - start > timeout) throw new Error('upgrade timeout');
-    await new Promise((r) => setTimeout(r, 10));
-  }
-  await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
-}
 
 describe('Type Defaults - Renderer Resolution', () => {
   let grid: HTMLElement & { gridConfig: GridConfig<TestRow>; rows: TestRow[] };
@@ -72,8 +64,7 @@ describe('Type Defaults - Renderer Resolution', () => {
     };
     grid.rows = testData;
 
-    await customElements.whenDefined('tbw-grid');
-    await waitForUpgraded(grid);
+    await waitUpgrade(grid);
 
     // Column-level renderer should be called, not type-level
     expect(columnRenderer).toHaveBeenCalled();
@@ -103,8 +94,7 @@ describe('Type Defaults - Renderer Resolution', () => {
     };
     grid.rows = testData;
 
-    await customElements.whenDefined('tbw-grid');
-    await waitForUpgraded(grid);
+    await waitUpgrade(grid);
 
     // Type-level renderer should be called
     expect(typeRenderer).toHaveBeenCalled();
@@ -126,8 +116,7 @@ describe('Type Defaults - Renderer Resolution', () => {
     // Override status to be a boolean for this test
     grid.rows = [{ id: 1, name: 'Alice', country: 'US', status: true as any, price: 100 }];
 
-    await customElements.whenDefined('tbw-grid');
-    await waitForUpgraded(grid);
+    await waitUpgrade(grid);
 
     // Built-in boolean renderer should create checkbox
     const checkbox = grid.querySelector('[data-field="status"] [role="checkbox"]');
@@ -156,8 +145,7 @@ describe('Type Defaults - Renderer Resolution', () => {
       { id: 2, name: 'Bob', country: 'UK', status: 'pending', price: 200, active: false } as any,
     ];
 
-    await customElements.whenDefined('tbw-grid');
-    await waitForUpgraded(grid);
+    await waitUpgrade(grid);
 
     // Custom boolean renderer should be called instead of built-in
     expect(customBooleanRenderer).toHaveBeenCalled();
@@ -197,8 +185,7 @@ describe('Type Defaults - Renderer Resolution', () => {
     ];
     grid.rows = [{ id: 1, name: 'Alice', available: true } as any, { id: 2, name: 'Bob', available: false } as any];
 
-    await customElements.whenDefined('tbw-grid');
-    await waitForUpgraded(grid);
+    await waitUpgrade(grid);
 
     // Custom boolean renderer should be called instead of built-in
     expect(customBooleanRenderer).toHaveBeenCalled();
@@ -222,8 +209,7 @@ describe('Type Defaults - Renderer Resolution', () => {
     };
     grid.rows = testData;
 
-    await customElements.whenDefined('tbw-grid');
-    await waitForUpgraded(grid);
+    await waitUpgrade(grid);
 
     // Should render as plain text (use role="gridcell" to target data cells, not headers)
     const cell = grid.querySelector('[role="gridcell"][data-field="country"]');
@@ -261,8 +247,7 @@ describe('Type Defaults - Renderer Resolution', () => {
     };
     grid.rows = testData;
 
-    await customElements.whenDefined('tbw-grid');
-    await waitForUpgraded(grid);
+    await waitUpgrade(grid);
 
     expect(countryRenderer).toHaveBeenCalled();
     expect(statusRenderer).toHaveBeenCalled();
@@ -312,8 +297,7 @@ describe('Type Defaults - Editor Resolution', () => {
     };
     grid.rows = testData;
 
-    await customElements.whenDefined('tbw-grid');
-    await waitForUpgraded(grid);
+    await waitUpgrade(grid);
 
     // Simulate click to start editing (use role="gridcell" to target data cells)
     const cell = grid.querySelector('[role="gridcell"][data-field="country"]') as HTMLElement;
@@ -355,8 +339,7 @@ describe('Type Defaults - Editor Resolution', () => {
     };
     grid.rows = testData;
 
-    await customElements.whenDefined('tbw-grid');
-    await waitForUpgraded(grid);
+    await waitUpgrade(grid);
 
     // Simulate click to start editing (use role="gridcell" to target data cells)
     const cell = grid.querySelector('[role="gridcell"][data-field="country"]') as HTMLElement;
@@ -407,8 +390,7 @@ describe('Type Defaults - editorParams Merging', () => {
     };
     grid.rows = testData;
 
-    await customElements.whenDefined('tbw-grid');
-    await waitForUpgraded(grid);
+    await waitUpgrade(grid);
 
     // Get the effective column config
     const config = await (grid as any).getConfig();
@@ -437,8 +419,7 @@ describe('Type Defaults - editorParams Merging', () => {
     };
     grid.rows = testData;
 
-    await customElements.whenDefined('tbw-grid');
-    await waitForUpgraded(grid);
+    await waitUpgrade(grid);
 
     const config = await (grid as any).getConfig();
     const priceCol = config.columns.find((c: ColumnConfig) => c.field === 'price');
@@ -513,8 +494,7 @@ describe('Type Defaults - Framework Adapter Integration', () => {
     // Inject mock adapter before upgrade
     (grid as any).__frameworkAdapter = mockAdapter;
 
-    await customElements.whenDefined('tbw-grid');
-    await waitForUpgraded(grid);
+    await waitUpgrade(grid);
 
     // Adapter renderer should be called
     expect(adapterRenderer).toHaveBeenCalled();
@@ -564,8 +544,7 @@ describe('Type Defaults - Framework Adapter Integration', () => {
 
     (grid as any).__frameworkAdapter = mockAdapter;
 
-    await customElements.whenDefined('tbw-grid');
-    await waitForUpgraded(grid);
+    await waitUpgrade(grid);
 
     // Grid-level renderer should be called, not adapter
     expect(gridRenderer).toHaveBeenCalled();
@@ -603,8 +582,7 @@ describe('Type Defaults - Light DOM tbw-grid-type', () => {
     ];
     document.body.appendChild(grid);
 
-    await customElements.whenDefined('tbw-grid');
-    await waitForUpgraded(grid);
+    await waitUpgrade(grid);
 
     const priceCell = grid.querySelector('[role="gridcell"][data-field="price"] .currency-cell');
     const costCell = grid.querySelector('[role="gridcell"][data-field="cost"] .currency-cell');
@@ -639,8 +617,7 @@ describe('Type Defaults - Light DOM tbw-grid-type', () => {
     grid.rows = [{ id: 1, name: 'Alice', country: 'US', status: 'active', price: 100 }];
     document.body.appendChild(grid);
 
-    await customElements.whenDefined('tbw-grid');
-    await waitForUpgraded(grid);
+    await waitUpgrade(grid);
 
     expect(programmaticRenderer).toHaveBeenCalled();
     expect(grid.querySelector('.programmatic-currency')).toBeTruthy();
@@ -651,7 +628,14 @@ describe('Type Defaults - Light DOM tbw-grid-type', () => {
     expect(grid.querySelector('[role="gridcell"] .currency-cell')).toBeFalsy();
   }, 20000);
 
-  it('supports editor-only tbw-grid-type definitions for editing plugin', async () => {
+  /**
+   * Mount a grid whose `currency` type carries only a `<tbw-grid-column-editor>`
+   * template, click the price cell, and resolve with the rendered editor input.
+   * Scoped to the rendered cell — the raw template input stays in light DOM by
+   * design, so an unscoped `.currency-editor` query would match the inert
+   * template (value `{{ value }}`) first.
+   */
+  async function openCurrencyTypeEditor(price: number | null): Promise<HTMLInputElement> {
     const grid = document.createElement('tbw-grid') as any;
     grid.innerHTML = `
       <tbw-grid-type name="currency" data-currency="USD">
@@ -661,32 +645,26 @@ describe('Type Defaults - Light DOM tbw-grid-type', () => {
       </tbw-grid-type>
       <tbw-grid-column field="price" type="currency" editable></tbw-grid-column>
     `;
-    grid.gridConfig = {
-      plugins: [new EditingPlugin({ editOn: 'click' })],
-    };
-    grid.rows = [{ id: 1, name: 'Alice', country: 'US', status: 'active', price: 100 }];
+    grid.gridConfig = { plugins: [new EditingPlugin({ editOn: 'click' })] };
+    grid.rows = [{ id: 1, name: 'Alice', country: 'US', status: 'active', price }];
     document.body.appendChild(grid);
-
-    await customElements.whenDefined('tbw-grid');
-    await waitForUpgraded(grid);
+    await waitUpgrade(grid);
 
     const priceCell = grid.querySelector('[role="gridcell"][data-field="price"]') as HTMLElement;
     expect(priceCell).toBeTruthy();
     priceCell.click();
-    await vi.waitFor(() => {
-      const editor = grid.querySelector(
-        '[role="gridcell"][data-field="price"] .currency-editor',
-      ) as HTMLInputElement | null;
-      expect(editor).toBeTruthy();
-    });
+    const selector = '[role="gridcell"][data-field="price"] .currency-editor';
+    await vi.waitFor(() => expect(grid.querySelector(selector)).toBeTruthy());
+    return grid.querySelector(selector) as HTMLInputElement;
+  }
 
-    // Scope to the rendered cell — the raw `<tbw-grid-column-editor>` template
-    // input stays in light DOM by design, so an unscoped `.currency-editor`
-    // query would match the inert template (value `{{ value }}`) first.
-    const editor = grid.querySelector(
-      '[role="gridcell"][data-field="price"] .currency-editor',
-    ) as HTMLInputElement | null;
-    expect(editor).toBeTruthy();
-    expect(editor?.value).toBe('100');
+  it('supports editor-only tbw-grid-type definitions for editing plugin', async () => {
+    const editor = await openCurrencyTypeEditor(100);
+    expect(editor.value).toBe('100');
+  }, 20000);
+
+  it('renders a tbw-grid-type editor template for a blank cell (every {{ }} empty, PR #578)', async () => {
+    const editor = await openCurrencyTypeEditor(null);
+    expect(editor.value).toBe('');
   }, 20000);
 });

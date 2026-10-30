@@ -171,6 +171,9 @@ For opt-in single-cell entry, import `features/cell-entry`, `features/editing` a
 `features/selection` from `@toolbox-web/grid-react`, then use
 `cellEntry={{ singleClick: true }}`, `editing={{ editOn: 'manual', tabToEdit: true }}`
 and `selection="range"`. The same options work in `gridConfig.features`.
+For selected-cell Delete/Backspace, additionally import `features/undo-redo`,
+enable `undoRedo`, set `cellEntry={{ clearOnDelete: true }}` and handle
+`onCellClear(detail)`. Native column `clearValue` rules remain typed to your row.
 See [Cell Entry](https://toolboxjs.com/grid/plugins/cell-entry/) for keyboard,
 validation and boundary-focus behaviour.
 

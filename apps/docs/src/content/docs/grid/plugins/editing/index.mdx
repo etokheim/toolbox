@@ -346,7 +346,7 @@ The demo above uses `editOn: 'click'` — a single click enters edit mode.
 | --- | -------- |
 | **Enter** | Start editing the entire row (all editable cells get editors) |
 | **F2** | Start editing only the focused cell (single-cell edit) |
-| **Escape** | Cancel the current edit and revert changes |
+| **Escape** | Cancel the current edit and revert changes. If the focused editor has an open popup declared with `aria-expanded="true"` + `aria-controls` (combobox, autocomplete, picker), the first Escape only closes the popup; the next one cancels the edit. |
 | **Tab** / **Shift+Tab** | Move to next/previous editable cell |
 | **Arrow Up/Down** | Handled by the focused editor (e.g. number stepper, select options, textarea caret). Press **Enter**, **Escape**, or **Tab** to leave edit mode before arrow keys resume cell navigation. |
 | **Space** | Toggle boolean cells (when not in edit mode). Space with a modifier (Shift, Ctrl/⌘, Alt) never toggles — those chords belong to selection. |
@@ -934,16 +934,21 @@ const type: ColumnType = 'country'; // Works! Custom types allowed
 </ShowSource>
 
 :::caution[Editor markup is a code-trust boundary]
-Editor markup is **not** passed through the grid's HTML sanitizer. It cannot be — the sanitizer
+Editor markup does **not** go through the grid's full HTML sanitizer. It cannot — the sanitizer
 strips `input`, `select`, `textarea` and `button`, which is everything an editor is made of.
+Instead, template editors and HTML-string `editor` factories get an **editor-safe pass** that keeps
+those form controls but still removes event-handler attributes, `javascript:`/`data:` URLs (so an
+interpolated `href="{{ row.url }}"` cannot become an executable link) and non-control dangerous tags.
 
 That is safe as long as editor definitions come from your **source code**: an `editor` function or
 a light-DOM `<template editor>` is code, the same as any other component you ship. Interpolated
-row values are still HTML-escaped by the compiled template, so untrusted *data* cannot break out.
+row values are HTML-escaped by the compiled template, so untrusted *data* cannot break out of an
+attribute or inject elements.
 
 It stops being safe if editor definitions ever become **data**. Never build an `editor` function,
 an editor `template`, or the HTML inside one from a serialized config, a database column, a URL
-parameter, or any other remote source — that turns editors into an XSS sink.
+parameter, or any other remote source — that turns editors into an XSS sink. Editors that return a
+DOM node (or mount into the host) are not scrubbed at all; their safety is entirely your code's.
 :::
 
 For specialized input needs, provide a custom `editor` function:
@@ -1009,7 +1014,11 @@ Built-in editors are deliberately plain `<input>` / `<select>` elements. For pho
 ### Cascade Updates (onValueChange)
 
 When one cell's commit updates other fields via `updateRow()`, any editors open on those fields
-receive the new value automatically. The grid does this for built-in editors out of the box.
+receive the new value automatically. The grid does this for built-in editors out of the box, and
+also for a plain native `<input>`, `<textarea>` or `<select>` (including `<select multiple>`) that a
+custom editor factory returns or an editor template contains — array values select the matching
+options, `null` selects a nullable column's blank option, and date inputs accept `Date` objects and
+ISO strings.
 
 For custom editors, use `onValueChange` to keep your inputs in sync:
 
@@ -1485,8 +1494,20 @@ EditingPlugin preserves the active edit session. The plugin tracks the editing r
 by identity (object reference) and remaps the edit index after the data pipeline
 runs, so the editor stays attached to the correct row even when its position changes.
 
+The live editors move with the row, so values the user has typed but not yet
+committed — and the focused editor itself — survive the move. This holds whether the
+row changes position because `rows` was reassigned in a different order, a row was
+added or removed above it (`insertRow()`, `removeRow()`, a new tree child), or the
+grid scrolled while the row stayed in view.
+
 If the editing row is removed from the processed data (e.g., filtered out), the
-edit session is automatically canceled to prevent stale state.
+edit session is automatically canceled to prevent stale state. This check runs
+against the final rendered rows, so nested rows behave the same as top-level
+ones: re-rendering (for example `grid.requestRender()` from a `cell-commit`
+handler) or replacing `rows` with new objects that keep the same row IDs (with
+`getRowId` configured) while a child row of a [tree](/grid/plugins/tree/) is in
+edit keeps the edit open on the in-progress row. The session ends only when the
+row is no longer rendered (removed, filtered out, or its parent collapsed).
 
 ## See Also
 
