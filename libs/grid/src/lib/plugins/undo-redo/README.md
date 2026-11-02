@@ -66,6 +66,52 @@ const undoStack = history.getUndoStack();
 const redoStack = history.getRedoStack();
 ```
 
+### Preserving history across remounts
+
+```typescript
+import type { UndoRedoSnapshot } from '@toolbox-web/grid/plugins/undo-redo';
+
+// Capture before removing/reconfiguring the source grid.
+const snapshot: UndoRedoSnapshot = history.captureHistory();
+
+// Install the intended rows/config, including the SAME getRowId function,
+// then wait for the destination grid to attach its plugins.
+await replacementGrid.ready();
+replacementGrid.getPluginByName('undoRedo').restoreHistory(snapshot);
+```
+
+`captureHistory()` preserves both stacks and their original private row-identity
+evidence. `getUndoStack()` / `getRedoStack()` only copy arrays; they are inspection
+APIs, not an export/import format. Never assign them into a plugin's private state.
+
+Snapshots are opaque, reusable tokens valid only in the same loaded UndoRedo
+module. JSON, structured clones, other package instances, workers and durable
+storage are unsupported. Each capture/restore copies action containers, including
+compound children, but retains original row, resolver and cell-value references.
+Snapshots survive source detach or `clearHistory()`; release your reference when
+no longer needed. They do not directly store a source grid/plugin reference,
+but retained row, resolver or value references can indirectly retain them.
+
+Restore replaces history, not rows, dirty baselines, editors or open transactions.
+Use it only for the same logical dataset. It never recaptures identity: the
+[row identity](#row-identity) safeguards below still apply, including original-object
+safety for ID-less rows. Detach still clears live history; reconnect alone does
+not restore it.
+
+Both methods reject detached plugins, open transactions, replay and synchronous
+`history-change` listener reentry with `TBW003`. Restore also rejects invalid
+tokens and snapshots exceeding the receiving `maxHistorySize`, counting **undo
+and redo entries together** (a compound counts as one). It validates before
+replacing anything and never trims silently. During its notification, history
+mutators are rejected too; defer follow-up work until the call returns.
+
+A successful restore emits exactly one `history-change`, even for empty history,
+and discards pending history focus. It does not emit `undo`, `redo` or `cell-change`,
+write rows, or request focus. Action/history events describe stack movement,
+including skipped edits; for ID-based replay, accepted mutations are reported by
+`cell-change` with `source: 'history'`. Do not replay actions from history events
+to persist skipped changes.
+
 ### Compound Actions (Transactions)
 
 When a single user edit triggers cascaded changes to other fields, group them
@@ -139,7 +185,7 @@ grid.addEventListener('redo', (e) => {
 ### `history-change`
 
 Fired whenever the history changes: an edit is recorded outside a transaction, a non-empty
-transaction ends, an undo or redo runs, or `clearHistory()` empties a non-empty history. Use it
+transaction ends, an undo or redo runs, `restoreHistory()` succeeds, or `clearHistory()` empties a non-empty history. Use it
 to enable/disable toolbar buttons.
 
 ```typescript

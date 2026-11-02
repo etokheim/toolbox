@@ -76,6 +76,22 @@ export interface CompoundEditAction {
  */
 export type UndoRedoAction = EditAction | CompoundEditAction;
 
+declare const historySnapshotBrand: unique symbol;
+
+/**
+ * Opaque, reusable in-memory history checkpoint created by `captureHistory()`.
+ * Preserves captured row ownership and resolver identity, not just public actions.
+ * Only the originating loaded UndoRedo module can restore it; serialization,
+ * structured cloning and transferring between package instances are unsupported.
+ *
+ * Retains original row, resolver and old/new value references until released.
+ * Action containers are copied, but cell values are not deep-cloned.
+ * @since 3.11.0
+ */
+export interface UndoRedoSnapshot {
+  readonly [historySnapshotBrand]: true;
+}
+
 /** Internal state maintained by the undo/redo plugin */
 export interface UndoRedoState {
   /** Stack of actions that can be undone (most recent last) */
@@ -102,7 +118,9 @@ export interface UndoRedoDetail {
  * Fired when an edit is pushed onto the undo stack (by `recordEdit()` outside a
  * transaction, or by the outermost `endTransaction()` of a non-empty transaction),
  * after an undo or redo (keyboard or programmatic), and when `clearHistory()`
- * empties a non-empty history. Bind toolbar buttons' `disabled` state to it.
+ * empties a non-empty history. Also fired once after `restoreHistory()`, even for
+ * an empty snapshot. This reports stack availability, not accepted row mutations.
+ * Bind toolbar buttons' `disabled` state to it.
  *
  * @since 3.10.1
  */

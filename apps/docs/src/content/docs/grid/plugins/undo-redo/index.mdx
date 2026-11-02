@@ -205,22 +205,52 @@ const canRedo = plugin.canRedo();
 plugin.clearHistory();
 ```
 
-### Row identity
-
-Each recorded edit stores the row's ID (from [`getRowId`](/grid/api/core/interfaces/gridconfig/#getrowid) or `row.id`) alongside its
-display index. Undo and redo find the row by that ID, so they still target the right row after the
-grid is sorted or filtered, even when the row is filtered out of view. If a row has no ID, the
-plugin falls back to the display index captured when the edit was made. That index goes stale once
-the view changes, so configure `getRowId` when you combine undo/redo with sorting or filtering.
-
-`recordEdit(rowIndex, field, oldValue, newValue, rowId?)` reads the ID from the row currently shown at
-`rowIndex`, so call it while that index still points at the edited row. If the row may not be in
-view, pass `rowId` yourself. For example, a `cell-commit` raised by `updateRow()` on a filtered-out
-row reports `rowIndex: -1`, but its `detail.rowId` is still set.
-
 After an undo or redo, focus moves to the restored cell once the grid has re-rendered, so it lands
 on the row's new position after any re-sort or re-filter. If the row is filtered out, focus stays
-where it was. Undoing an edit on a row that has since been deleted does nothing.
+where it was. Deleted targets are skipped without moving focus; stacks still advance.
+
+### Preserving history across remounts
+
+```ts
+import type { UndoRedoSnapshot } from '@toolbox-web/grid/plugins/undo-redo';
+
+// Before removing or reconfiguring the source grid:
+const snapshot: UndoRedoSnapshot = grid.getPluginByName('undoRedo').captureHistory();
+
+// After installing the destination's rows/config, with the same getRowId function:
+await replacementGrid.ready();
+replacementGrid.getPluginByName('undoRedo').restoreHistory(snapshot);
+```
+
+The opaque token preserves both stacks and their original captured owners,
+resolver references and ambiguity evidence. Replay retains the safeguards above;
+restore never reinterprets IDs using the destination's current resolver. Use it
+only for the same logical dataset. ID-less edits require the original live row
+objects; a unique ID can follow an immutable replacement.
+
+Snapshots survive source cleanup and can be restored repeatedly. Action containers
+and compound children are copied at capture and each restore; row objects,
+resolvers and old/new cell values remain references, not deep copies. Release
+the token when no longer needed to allow those references to be collected.
+The token does not directly store a source grid/plugin reference, but retained
+row, resolver or value references can indirectly retain them.
+
+Only the originating loaded UndoRedo module accepts the token. JSON, structured
+clones, workers, different package instances and persistent storage are unsupported.
+Stack getters are for inspection, not serialization or restoration.
+
+Restore replaces both stacks without changing rows, dirty baselines, editors or
+open transactions. Detach still clears live history: capture **before** detach,
+then restore **after** the destination is ready. Both methods reject detached
+plugins, open transactions, replay and synchronous `history-change` listener
+reentry with `TBW003`. Invalid tokens and snapshots exceeding the destination's
+`maxHistorySize` are also rejected before replacement; undo+redo top-level entries
+count together, with each compound counting as one. Nothing is silently trimmed.
+
+A successful restore clears pending history focus and emits one `history-change`,
+including for empty history. It emits no `undo`, `redo` or `cell-change`, writes
+no rows and requests no focus. History mutators are rejected during its synchronous
+notification; schedule follow-up operations after restore returns.
 
 ### Compound Actions (Transactions)
 
@@ -256,9 +286,11 @@ grid.on('cell-commit', ({ row, rowId, rowIndex }) => {
 
 ### undo / redo
 
-Fired after an undo or redo action is applied, whether it came from the keyboard or from
-`plugin.undo()` / `plugin.redo()`. If your app keeps rows in its own state, replay the action
-from these events so a toolbar button and Ctrl+Z update that state the same way:
+Fired when an action moves between history stacks, whether it came from the keyboard
+or from `plugin.undo()` / `plugin.redo()`. Targets can be skipped, so these events
+are not proof of data mutation. For ID-based replay, synchronize external row state
+from accepted `cell-change` events with `source: 'history'`, not by replaying the
+action yourself.
 
 ```ts
 grid.on('undo', ({ action, type }) => {
@@ -280,7 +312,7 @@ See [`UndoRedoDetail`](./interfaces/undoredodetail/) for the full event payload 
 ### history-change
 
 Fired whenever the history changes: an edit is recorded outside a transaction, a non-empty
-transaction ends, an undo or redo runs, or `clearHistory()` empties a non-empty history. Bind your
+transaction ends, an undo or redo runs, `restoreHistory()` succeeds, or `clearHistory()` empties a non-empty history. Bind your
 toolbar buttons to it:
 
 ```ts

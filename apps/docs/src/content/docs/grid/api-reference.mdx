@@ -471,6 +471,13 @@ through `cell-commit`, not the non-cancelable outcome event.
 
 Bulk-edit lifecycle, change tracking, and active-row controls are provided by the **Editing plugin** and surfaced on the grid instance when the plugin is loaded. See [Editing Plugin → Imperative Bulk-Edit API](/grid/plugins/editing/#imperative-bulk-edit-api) for the full method list and examples.
 
+For history across remounts, `grid.getPluginByName('undoRedo').captureHistory()`
+returns an opaque `UndoRedoSnapshot`; `restoreHistory(snapshot)` replaces both
+stacks while preserving captured ownership evidence. These are same-module,
+in-memory operations, not serializable action import. Restore emits one
+`history-change` and no row-mutation events. See
+[history snapshot lifetime and restrictions](/grid/plugins/undo-redo/#preserving-history-across-remounts).
+
 ### Plugin Methods
 
 | Method                   | Returns                        | Description                                            |
