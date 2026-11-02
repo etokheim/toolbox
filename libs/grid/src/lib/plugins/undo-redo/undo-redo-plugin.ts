@@ -6,7 +6,13 @@
  */
 
 import { GridClasses } from '../../core/constants';
-import { NO_TRANSACTION, ROW_NOT_FOUND, throwDiagnostic, warnDiagnostic } from '../../core/internal/diagnostics';
+import {
+  CONFIG_RULE_ERROR,
+  NO_TRANSACTION,
+  ROW_NOT_FOUND,
+  throwDiagnostic,
+  warnDiagnostic,
+} from '../../core/internal/diagnostics';
 import {
   captureEditTarget,
   resolveEditTarget,
@@ -27,7 +33,20 @@ import {
   redo,
   undo,
 } from './history';
-import type { EditAction, HistoryChangeDetail, UndoRedoAction, UndoRedoConfig, UndoRedoDetail } from './types';
+import type {
+  EditAction,
+  HistoryChangeDetail,
+  UndoRedoAction,
+  UndoRedoConfig,
+  UndoRedoDetail,
+  UndoRedoSnapshot,
+} from './types';
+
+interface CapturedHistory {
+  undoStack: UndoRedoAction[];
+  redoStack: UndoRedoAction[];
+  targets: WeakMap<EditAction, EditTarget>;
+}
 
 /**
  * Undo/Redo Plugin for tbw-grid
@@ -79,6 +98,8 @@ import type { EditAction, HistoryChangeDetail, UndoRedoAction, UndoRedoConfig, U
  * @since 0.1.1
  */
 export class UndoRedoPlugin extends BaseGridPlugin<UndoRedoConfig> {
+  static #snapshots = new WeakMap<UndoRedoSnapshot, CapturedHistory>();
+
   /**
    * Plugin dependencies - UndoRedoPlugin requires EditingPlugin to track edits.
    *
@@ -105,6 +126,9 @@ export class UndoRedoPlugin extends BaseGridPlugin<UndoRedoConfig> {
 
   // Coordinates in public actions describe the original edit, not its current owner.
   #targets = new WeakMap<EditAction, EditTarget>();
+  #attached = false;
+  #historyActivity = 0;
+  #restoring = false;
 
   /** Suppresses recording during undo/redo to prevent feedback loops. */
   #suppressRecording = false;
@@ -270,6 +294,7 @@ export class UndoRedoPlugin extends BaseGridPlugin<UndoRedoConfig> {
         );
       },
     );
+    this.#attached = true;
   }
 
   /**
@@ -277,6 +302,8 @@ export class UndoRedoPlugin extends BaseGridPlugin<UndoRedoConfig> {
    * @internal
    */
   override detach(): void {
+    this.#attached = false;
+    super.detach();
     this.undoStack = [];
     this.redoStack = [];
     this.#transactionBuffer = null;
@@ -329,24 +356,74 @@ export class UndoRedoPlugin extends BaseGridPlugin<UndoRedoConfig> {
    * cannot tell them apart (#563).
    */
   #performHistory(kind: 'undo' | 'redo'): UndoRedoAction | null {
-    const state = { undoStack: this.undoStack, redoStack: this.redoStack };
-    const result = kind === 'undo' ? undo(state) : redo(state);
-    if (!result.action) return null;
+    this.#assertNotRestoring();
+    this.#historyActivity++;
+    try {
+      const state = { undoStack: this.undoStack, redoStack: this.redoStack };
+      const result = kind === 'undo' ? undo(state) : redo(state);
+      if (!result.action) return null;
 
-    const applied = this.#applyUndoRedoAction(result.action, kind);
-    this.undoStack = result.newState.undoStack;
-    this.redoStack = result.newState.redoStack;
+      const applied = this.#applyUndoRedoAction(result.action, kind);
+      this.undoStack = result.newState.undoStack;
+      this.redoStack = result.newState.redoStack;
 
-    this.emit<UndoRedoDetail>(kind, { action: result.action, type: kind });
-    this.#emitHistoryChange();
-    this.#focusUndoRedoAction(result.action, applied);
-    this.requestRenderWithFocus();
-    return result.action;
+      this.emit<UndoRedoDetail>(kind, { action: result.action, type: kind });
+      this.#emitHistoryChange();
+      this.#focusUndoRedoAction(result.action, applied);
+      this.requestRenderWithFocus();
+      return result.action;
+    } finally {
+      this.#historyActivity--;
+    }
   }
 
   /** Notify listeners that the undo/redo stacks changed. */
   #emitHistoryChange(): void {
-    this.emit<HistoryChangeDetail>('history-change', { canUndo: this.canUndo(), canRedo: this.canRedo() });
+    this.#historyActivity++;
+    try {
+      this.emit<HistoryChangeDetail>('history-change', { canUndo: this.canUndo(), canRedo: this.canRedo() });
+    } finally {
+      this.#historyActivity--;
+    }
+  }
+
+  #assertNotRestoring(): void {
+    if (this.#restoring) {
+      throwDiagnostic(
+        CONFIG_RULE_ERROR,
+        'Cannot mutate history during restoreHistory notification.',
+        this.grid?.id,
+        this.name,
+      );
+    }
+  }
+
+  #assertSnapshotReady(): void {
+    if (!this.#attached || this.#transactionDepth > 0 || this.#historyActivity > 0 || this.#restoring) {
+      throwDiagnostic(
+        CONFIG_RULE_ERROR,
+        'History snapshots require an attached plugin outside transactions, replay and history-change notifications.',
+        this.grid?.id,
+        this.name,
+      );
+    }
+  }
+
+  #copyHistory(history: CapturedHistory): CapturedHistory {
+    const targets = new WeakMap<EditAction, EditTarget>();
+    const copyEdit = (action: EditAction): EditAction => {
+      const copy = { ...action };
+      const target = history.targets.get(action);
+      if (target) targets.set(copy, { ...target });
+      return copy;
+    };
+    const copyAction = (action: UndoRedoAction): UndoRedoAction =>
+      action.type === 'compound' ? { ...action, actions: action.actions.map(copyEdit) } : copyEdit(action);
+    return {
+      undoStack: history.undoStack.map(copyAction),
+      redoStack: history.redoStack.map(copyAction),
+      targets,
+    };
   }
 
   /**
@@ -368,6 +445,7 @@ export class UndoRedoPlugin extends BaseGridPlugin<UndoRedoConfig> {
    */
   #deferToNativeHistory(target: HTMLElement, kind: 'undo' | 'redo'): void {
     const wantedInputType = kind === 'undo' ? 'historyUndo' : 'historyRedo';
+    const signal = this.disconnectSignal;
     let nativeHandled = false;
 
     const onBeforeInput = (e: Event) => {
@@ -377,7 +455,7 @@ export class UndoRedoPlugin extends BaseGridPlugin<UndoRedoConfig> {
 
     queueMicrotask(() => {
       target.removeEventListener('beforeinput', onBeforeInput, { capture: true } as EventListenerOptions);
-      if (!nativeHandled) this.#performHistory(kind);
+      if (!nativeHandled && this.#attached && !signal.aborted) this.#performHistory(kind);
     });
   }
 
@@ -401,6 +479,7 @@ export class UndoRedoPlugin extends BaseGridPlugin<UndoRedoConfig> {
    * @param rowId - Stable ID of the edited row; resolved from `rowIndex` when omitted (since 3.9.2)
    */
   recordEdit(rowIndex: number, field: string, oldValue: unknown, newValue: unknown, rowId?: string): void {
+    this.#assertNotRestoring();
     this.#recordEdit(rowIndex, field, oldValue, newValue, this.#recordedRow(rowIndex, rowId));
   }
 
@@ -413,6 +492,7 @@ export class UndoRedoPlugin extends BaseGridPlugin<UndoRedoConfig> {
   }
 
   #recordEdit(rowIndex: number, field: string, oldValue: unknown, newValue: unknown, row: unknown): void {
+    this.#assertNotRestoring();
     const action = createEditAction(rowIndex, field, oldValue, newValue);
     this.#captureTarget(action, row);
 
@@ -464,6 +544,7 @@ export class UndoRedoPlugin extends BaseGridPlugin<UndoRedoConfig> {
    * ```
    */
   beginTransaction(): void {
+    this.#assertNotRestoring();
     if (this.#transactionDepth === 0) {
       this.#transactionBuffer = [];
     }
@@ -487,6 +568,7 @@ export class UndoRedoPlugin extends BaseGridPlugin<UndoRedoConfig> {
    * @throws Error if no transaction is in progress
    */
   endTransaction(): void {
+    this.#assertNotRestoring();
     if (this.#transactionDepth === 0) {
       throwDiagnostic(NO_TRANSACTION, 'No transaction in progress. Call beginTransaction() first.');
     }
@@ -513,8 +595,8 @@ export class UndoRedoPlugin extends BaseGridPlugin<UndoRedoConfig> {
    * Programmatically undo the last action.
    *
    * Behaves exactly like Ctrl+Z: emits `undo` (with the undone action) and
-   * `history-change`, so app state that replays actions from the `undo` event
-   * stays in sync.
+   * `history-change`. These report stack movement, including skipped edits;
+   * accepted ID-based mutations emit `cell-change` with source `history`.
    *
    * @returns The undone action, or null if nothing to undo
    */
@@ -553,6 +635,7 @@ export class UndoRedoPlugin extends BaseGridPlugin<UndoRedoConfig> {
    * Emits `history-change` when there was history to clear.
    */
   clearHistory(): void {
+    this.#assertNotRestoring();
     const hadHistory = this.undoStack.length > 0 || this.redoStack.length > 0;
     const newState = clearHistory();
     this.undoStack = newState.undoStack;
@@ -575,6 +658,72 @@ export class UndoRedoPlugin extends BaseGridPlugin<UndoRedoConfig> {
    */
   getRedoStack(): UndoRedoAction[] {
     return [...this.redoStack];
+  }
+
+  /**
+   * Capture both history stacks with their original ownership evidence.
+   * Call before detach, outside transactions, replay and history-change listeners.
+   * The reusable token survives source cleanup, but retains row/value/resolver
+   * references. Release it when no longer needed. Cell values are not deep-cloned.
+   * @since 3.11.0
+   */
+  captureHistory(): UndoRedoSnapshot {
+    this.#assertSnapshotReady();
+    const snapshot = Object.freeze({}) as UndoRedoSnapshot;
+    UndoRedoPlugin.#snapshots.set(
+      snapshot,
+      this.#copyHistory({
+        undoStack: this.undoStack,
+        redoStack: this.redoStack,
+        targets: this.#targets,
+      }),
+    );
+    return snapshot;
+  }
+
+  /**
+   * Replace both stacks from a checkpoint created by this loaded module.
+   * Call after the destination grid is ready, using the same logical dataset and
+   * resolver function. Replay still skips missing/ambiguous owners and changed
+   * resolvers; ID-less edits require the original live row object.
+   *
+   * Rejects invalid tokens, unsafe lifecycle/reentrant calls and snapshots whose
+   * combined undo+redo entry count exceeds `maxHistorySize` (a compound counts as
+   * one). Validation precedes replacement; nothing is silently trimmed.
+   * Emits one `history-change`, even for empty history, and no data or focus changes.
+   * Does not restore rows, editor state, dirty baselines or open transactions.
+   * @since 3.11.0
+   */
+  restoreHistory(snapshot: UndoRedoSnapshot): void {
+    this.#assertSnapshotReady();
+    const history = UndoRedoPlugin.#snapshots.get(snapshot);
+    if (!history) {
+      throwDiagnostic(
+        CONFIG_RULE_ERROR,
+        'Invalid history snapshot; use captureHistory() from this loaded module.',
+        this.grid?.id,
+        this.name,
+      );
+    }
+    if (history.undoStack.length + history.redoStack.length > (this.config.maxHistorySize ?? 100)) {
+      throwDiagnostic(
+        CONFIG_RULE_ERROR,
+        'History snapshot exceeds the receiving maxHistorySize.',
+        this.grid.id,
+        this.name,
+      );
+    }
+    const copy = this.#copyHistory(history);
+    this.#restoring = true;
+    try {
+      this.undoStack = copy.undoStack;
+      this.redoStack = copy.redoStack;
+      this.#targets = copy.targets;
+      this.#pendingFocus = null;
+      this.#emitHistoryChange();
+    } finally {
+      this.#restoring = false;
+    }
   }
   // #endregion
 }

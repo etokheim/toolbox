@@ -11,5 +11,6 @@ export type {
   UndoRedoAction,
   UndoRedoConfig,
   UndoRedoDetail,
+  UndoRedoSnapshot,
 } from './types';
 export { UndoRedoPlugin } from './undo-redo-plugin';

@@ -30,9 +30,12 @@ const CALENDAR_DEMOS = {
 
 test.describe('Cross-Framework Calendar Parity', () => {
   test.describe.configure({ mode: 'serial', retries: 0 });
+  test.use({ timezoneId: 'UTC' });
 
   for (const [demoName, url] of Object.entries(CALENDAR_DEMOS)) {
     test(`${demoName}: calendar renders with shared structure`, async ({ page }, testInfo) => {
+      // Keep the month, seeded events and today highlight stable without pausing timers.
+      await page.clock.setFixedTime(new Date('2026-10-30T12:00:00Z'));
       await page.goto(url);
       await waitForGridReady(page);
 
@@ -53,6 +56,7 @@ test.describe('Cross-Framework Calendar Parity', () => {
       expect(weekCount).toBeGreaterThanOrEqual(4);
       expect(weekCount).toBeLessThanOrEqual(6);
       await expect(grid.locator('.cal-cell__date')).toHaveCount(weekCount * 7);
+      await expect(grid.locator('.cal-cell--today .cal-cell__date')).toHaveText('30');
       await expect(grid.locator('.cal-legend')).toBeVisible();
 
       // Visual parity — skipped if no baseline committed for this platform
