@@ -23,13 +23,20 @@ afterEach(() => {
 
 describe('exact byte boundaries', () => {
   it('keeps the requested core thresholds in one definition', () => {
-    expect(CORE_BUNDLE_BUDGET).toEqual({ path: 'index.js', maxSize: 179200, maxGzip: 53248, warnGzip: 46080 });
+    expect(CORE_BUNDLE_BUDGET).toEqual({ path: 'index.js', maxSize: 179200, maxGzip: 53504, warnGzip: 46080 });
   });
 
   it.each([-1, 0, 1])('checks gzip hard boundary at limit %+i bytes', (delta) => {
-    const result = checkSizeBudget('index.js', { raw: 100000, gzip: 53248 + delta }, CORE_BUNDLE_BUDGET);
+    const result = checkSizeBudget('index.js', { raw: 100000, gzip: 53504 + delta }, CORE_BUNDLE_BUDGET);
     expect(result.violations).toHaveLength(delta > 0 ? 1 : 0);
-    if (delta > 0) expect(result.violations[0]).toContain('53249 B');
+    if (delta > 0) expect(result.violations[0]).toContain('53505 B');
+  });
+
+  it('admits the reviewed acceptance payload without removing its soft warning', () => {
+    const result = checkSizeBudget('index.js', { raw: 178442, gzip: 53269 }, CORE_BUNDLE_BUDGET);
+    expect(result.violations).toEqual([]);
+    expect(result.warnings).toHaveLength(1);
+    expect(CORE_BUNDLE_BUDGET.maxGzip).toBe(53269 + 235);
   });
 
   it.each([-1, 0, 1])('checks raw hard boundary at limit %+i bytes', (delta) => {

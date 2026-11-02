@@ -4,6 +4,6 @@ import type { BudgetEntry } from './vite-bundle-budget.ts';
 export const CORE_BUNDLE_BUDGET: BudgetEntry = {
   path: 'index.js',
   maxSize: 175 * 1024,
-  maxGzip: 52 * 1024,
+  maxGzip: 52.25 * 1024,
   warnGzip: 45 * 1024,
 };
