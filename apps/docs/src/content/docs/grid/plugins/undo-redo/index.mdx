@@ -209,7 +209,53 @@ After an undo or redo, focus moves to the restored cell once the grid has re-ren
 on the row's new position after any re-sort or re-filter. If the row is filtered out, focus stays
 where it was. Deleted targets are skipped without moving focus; stacks still advance.
 
+### Application-owned history
+
+Set `externalHistory` to an
+[`ExternalHistoryOwner`](./interfaces/externalhistoryowner/) when the application owns
+domain commands. The plugin delegates requests, availability and outermost grouping only:
+it retains no native scalar stacks or buffered actions and does not execute detached commands.
+The default native mode is unchanged.
+
+Use `requestUndo()` / `requestRedo()` after attachment; both return `void` in either mode.
+External grid shortcuts use the same request path, preserving browser-native input history
+priority and canceling depleted-history fallback on detach. When no grid is mounted, call
+your application owner directly.
+
+Capture a prospective application command during `cell-commit`, keyed by `operationId`
+in a `WeakMap`, and promote it only on the matching final `cell-change`. Preserve your own
+original owner evidence and dependent before-values; the final event supplies the normalized
+stored `newValue`, not replay authority. Rejected/no-op proposals have no final event.
+The application must suppress its recorder during replay and must not turn `sync`/`history`
+acknowledgments into new commands.
+
+`beginTransaction()` / `endTransaction()` notify `beginGroup(token)` / `endGroup(token, reason)`
+only at the outermost boundary. Tokens are distinct across groups and grids. Accepted clear
+events occur inside the group; empty/all-rejected clears still close normally. Detach closes
+an open group once with reason `detach`; a failed begin uses `error`, ordinary end uses
+`complete`. None of these reasons promises rollback. Finish outstanding scopes before
+reattaching the same plugin; their post-detach ends do not notify twice.
+
+`getState()` and `subscribe(notify)` own availability. The bridge emits initial
+`history-change` on attach and forwards owner notifications, coalescing those raised within
+a synchronous owner callback. External requests do not emit native `undo`/`redo` action
+events or fabricate mutation outcomes. Detach unsubscribes but does not clear app history;
+detached plugin availability reads are false.
+
+Callbacks must be synchronous. Reentry guards are per attached plugin; the owner guards
+direct and cross-grid calls. Reentrant requests/group mutations, recursive availability
+publication and replay inside a group raise `TBW003`. Exceptions propagate after guard cleanup;
+multiple callback/cleanup failures may produce `AggregateError`. Already accepted writes remain;
+the application owns recovery, and callbacks are not retried.
+
+Native action APIs (`undo`, `redo`, `recordEdit`, `clearHistory`, stack getters,
+`captureHistory`, `restoreHistory`) reject external mode with `TBW003`. Use request methods
+and application-owned retention instead. `maxHistorySize` applies only to native mode.
+See the [Editing acceptance contract](/grid/plugins/editing/#programmatic-row-updates) for final notifications.
+
 ### Preserving history across remounts
+
+The snapshot APIs below are for native history only.
 
 ```ts
 import type { UndoRedoSnapshot } from '@toolbox-web/grid/plugins/undo-redo';

@@ -7,6 +7,7 @@
 export type {
   CompoundEditAction,
   EditAction,
+  ExternalHistoryOwner,
   HistoryChangeDetail,
   UndoRedoAction,
   UndoRedoConfig,

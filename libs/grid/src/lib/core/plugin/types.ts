@@ -318,14 +318,27 @@ export type CellEditablePredicate = (field: string, row: unknown) => boolean;
  * in-place write.
  *
  * Handler response contract:
- * - `true` → the plugin applied AND tracked the value; core must not re-apply.
- * - `false` → a plugin vetoed the change (validation/abortion); core skips it.
+ * - `true` → the plugin applied/tracked the value, or registered a deferred writer.
+ * - `false` → a plugin vetoed the change; the caller must not execute a deferred writer.
  * - `undefined` → not handled; core applies the value directly (legacy path).
+ *
+ * Core and selected clearing supply `deferredWrite` so built-in Editing waits for
+ * aggregate acceptance. Legacy eager participants keep their boolean contract;
+ * their arbitrary side effects cannot be rolled back by this query.
  *
  * @category Plugin Development
  * @since 3.0.0
  */
 export interface CommitCellValueContext {
+  /** Correlates the precommit proposal with its final accepted notification. @internal */
+  operationId?: object;
+  /**
+   * Caller-owned slot for the built-in writer, run after all query participants accept.
+   * Callers without this slot retain the legacy eager query contract.
+   * Editing validates single-writer registration; false from the writer rejects it.
+   * @internal
+   */
+  deferredWrite?: { apply?: () => boolean };
   /**
    * Index of the row in the current (processed) `rows` array, or `-1` when the
    * row is not in the visible view (e.g. filtered or paged out).

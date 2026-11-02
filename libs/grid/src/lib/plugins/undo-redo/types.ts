@@ -8,7 +8,7 @@
 /**
  * Configuration for the undo/redo plugin.
  *
- * Controls how many edit actions are retained in the history stack.
+ * Controls native history retention or opts into application-owned history.
  *
  * @example
  * ```ts
@@ -20,8 +20,37 @@
  * @since 0.1.1
  */
 export interface UndoRedoConfig {
-  /** Maximum number of actions to keep in history. Default: 100 */
+  /** Maximum native actions to keep. Default: 100. Unused with externalHistory. */
   maxHistorySize?: number;
+  /**
+   * Delegate history ownership without retaining native scalar actions.
+   * Fixed for an attachment; application acceptance/recording remains independent.
+   * @since 3.11.0
+   */
+  externalHistory?: ExternalHistoryOwner;
+}
+
+/**
+ * Application-owned history shared by one or more attached grids.
+ * All callbacks are synchronous. The owner records accepted domain changes itself,
+ * suppresses recording during replay, and retains history independently of attachment.
+ * Callback errors propagate; the grid cannot roll back application side effects.
+ * @since 3.11.0
+ */
+export interface ExternalHistoryOwner {
+  /** Execute an application history request; never return a native action. */
+  request(direction: 'undo' | 'redo'): void;
+  /** Pure availability read. Publish changes through subscribe's callback. */
+  getState(): HistoryChangeDetail;
+  /** Subscribe while attached. Return cleanup; do not destroy history on cleanup. */
+  subscribe(notify: () => void): () => void;
+  /** Open an outermost native operation group. Token identity is unique to this group. */
+  beginGroup(token: object): void;
+  /**
+   * Close the same group once, even when it accepted no edits.
+   * Detach/error is cleanup, not rollback of edits already accepted.
+   */
+  endGroup(token: object, reason: 'complete' | 'detach' | 'error'): void;
 }
 
 /**
@@ -120,6 +149,8 @@ export interface UndoRedoDetail {
  * after an undo or redo (keyboard or programmatic), and when `clearHistory()`
  * empties a non-empty history. Also fired once after `restoreHistory()`, even for
  * an empty snapshot. This reports stack availability, not accepted row mutations.
+ * With externalHistory, initial attachment and owner subscription notifications
+ * supply availability instead. Requests do not fabricate native action events.
  * Bind toolbar buttons' `disabled` state to it.
  *
  * @since 3.10.1

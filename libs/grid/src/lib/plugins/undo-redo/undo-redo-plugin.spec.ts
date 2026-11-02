@@ -821,7 +821,7 @@ describe('UndoRedoPlugin', () => {
         Object.defineProperty(beforeInput, 'inputType', { value: 'historyUndo' });
         input.dispatchEvent(beforeInput);
 
-        await Promise.resolve(); // flush microtask
+        await new Promise((resolve) => setTimeout(resolve, 0));
 
         expect(grid.updateRow).not.toHaveBeenCalled();
       } finally {
@@ -840,7 +840,7 @@ describe('UndoRedoPlugin', () => {
         plugin.onKeyDown(dispatchOn(input, 'z'));
 
         // No beforeinput dispatched — browser had nothing to undo
-        await Promise.resolve(); // flush microtask
+        await new Promise((resolve) => setTimeout(resolve, 0));
 
         expect(grid.updateRow).toHaveBeenCalledWith('1', { name: 'Alpha' }, 'history');
       } finally {
@@ -858,7 +858,7 @@ describe('UndoRedoPlugin', () => {
       document.body.appendChild(input);
       try {
         plugin.onKeyDown(dispatchOn(input, 'y'));
-        await Promise.resolve();
+        await new Promise((resolve) => setTimeout(resolve, 0));
         expect(grid.updateRow).toHaveBeenCalledWith('1', { name: 'Changed' }, 'history');
       } finally {
         input.remove();

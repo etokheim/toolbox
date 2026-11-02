@@ -226,18 +226,31 @@ grid.updateRows([
 ]);
 
 // Listen for per-cell commits (inline edit + updateRow/updateRows)
-grid.on('cell-commit', (e) => {
-  console.log('Committed from:', e.detail.source); // 'user' | 'api' | 'paste' | 'history'
+grid.on('cell-commit', (detail) => {
+  console.log('Proposed from:', detail.source);
 });
 
 // Listen for value-change notifications
-grid.on('cell-change', (e) => {
-  console.log('Cell changed:', e.detail.field, e.detail.value);
+grid.on('cell-change', (detail) => {
+  console.log('Cell changed:', detail.field, detail.newValue);
 });
 ```
 
 :::note
-Programmatic updates via `updateRow()`/`updateRows()` flow through the same commit pipeline as inline edits (validation, dirty tracking, undo/redo integration), then emit `cell-change` as the value-change notification.
+Interactive edits, programmatic updates and selected clearing emit one `cell-change` per accepted
+field write. Use `cell-commit` for before-write validation, not accepted-write recording.
+`operationId` is shared between a proposal and its accepted notification, including nested
+cascades. Rejected and unchanged proposals have no accepted notification; the token is
+correlation only, not row ownership or replay authority.
+
+Consumers that previously recorded `cell-commit` should migrate that recording to `cell-change`
+to avoid double recording now that ordinary interactive edits emit it too. This is cell-level
+acceptance, not a successful row close or Save; later row cancellation can revert accepted cells.
+
+Built-in Editing writes through the query pipeline wait until all synchronous query participants
+accept, then recheck owner/value before writing. Independent cascade writes and arbitrary callback
+side effects are not rolled back. `source: 'history'` restores values and recomputes dirty state
+without running the normal cancelable `cell-commit` or recording new native history.
 :::
 
 See the [API Reference](/grid/api-reference/#row-update-api) for full documentation.

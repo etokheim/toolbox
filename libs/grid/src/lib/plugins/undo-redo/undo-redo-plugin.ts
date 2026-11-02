@@ -23,6 +23,7 @@ import { FOCUSABLE_EDITOR_SELECTOR } from '../../core/internal/rows';
 import { writeCellField } from '../../core/internal/value-accessor';
 import { BaseGridPlugin, type GridElement, type PluginDependency } from '../../core/plugin/base-plugin';
 import type { GridHost } from '../../core/types';
+import { ExternalHistoryBridge } from './external-history';
 import {
   canRedo,
   canUndo,
@@ -129,6 +130,7 @@ export class UndoRedoPlugin extends BaseGridPlugin<UndoRedoConfig> {
   #attached = false;
   #historyActivity = 0;
   #restoring = false;
+  #external?: ExternalHistoryBridge;
 
   /** Suppresses recording during undo/redo to prevent feedback loops. */
   #suppressRecording = false;
@@ -267,7 +269,14 @@ export class UndoRedoPlugin extends BaseGridPlugin<UndoRedoConfig> {
    * @internal
    */
   override attach(grid: GridElement): void {
+    if (this.#external?.pendingGroups) {
+      throwDiagnostic(CONFIG_RULE_ERROR, 'Finish detached transaction scopes before reattaching UndoRedo.');
+    }
     super.attach(grid);
+    this.#external =
+      this.config.externalHistory !== undefined
+        ? new ExternalHistoryBridge(this.config.externalHistory, (state) => this.emit('history-change', state))
+        : undefined;
     // Auto-record edits via Event Bus
     this.on(
       'cell-edit-committed',
@@ -284,7 +293,7 @@ export class UndoRedoPlugin extends BaseGridPlugin<UndoRedoConfig> {
         // 1. updateRow → cell-change → onValueChange → editor triggers commit
         // 2. Browser native undo (if not fully suppressed) fires input event → commit
         // The suppress flag prevents these from corrupting the history stacks.
-        if (this.#suppressRecording) return;
+        if (this.#suppressRecording || this.#external) return;
         this.#recordEdit(
           detail.rowIndex,
           detail.field,
@@ -295,6 +304,12 @@ export class UndoRedoPlugin extends BaseGridPlugin<UndoRedoConfig> {
       },
     );
     this.#attached = true;
+    try {
+      this.#external?.attach();
+    } catch (error) {
+      this.detach();
+      throw error;
+    }
   }
 
   /**
@@ -303,13 +318,17 @@ export class UndoRedoPlugin extends BaseGridPlugin<UndoRedoConfig> {
    */
   override detach(): void {
     this.#attached = false;
-    super.detach();
-    this.undoStack = [];
-    this.redoStack = [];
-    this.#transactionBuffer = null;
-    this.#transactionDepth = 0;
-    this.#pendingFocus = null;
-    this.#targets = new WeakMap();
+    try {
+      this.#external?.detach();
+    } finally {
+      super.detach();
+      this.undoStack = [];
+      this.redoStack = [];
+      this.#transactionBuffer = null;
+      this.#transactionDepth = 0;
+      this.#pendingFocus = null;
+      this.#targets = new WeakMap();
+    }
   }
 
   /**
@@ -333,12 +352,16 @@ export class UndoRedoPlugin extends BaseGridPlugin<UndoRedoConfig> {
 
     if (!isUndo && !isRedo) return false;
 
+    const path = event.composedPath();
+    const owner = path.find((node) => node instanceof Element && node.matches('tbw-grid, [data-tbw-grid]'));
+    if (owner && owner !== this.grid) return false;
     const kind: 'undo' | 'redo' = isUndo ? 'undo' : 'redo';
+    const target = path[0] ?? event.target;
 
-    if (this.#isNativeHistoryTarget(event.target)) {
+    if (this.#isNativeHistoryTarget(target)) {
       // Let the browser try its native undo/redo first. Only run ours if
       // the browser had nothing left in its own history.
-      this.#deferToNativeHistory(event.target as HTMLElement, kind);
+      this.#deferToNativeHistory(target as HTMLElement, kind);
       return true;
     }
 
@@ -346,7 +369,7 @@ export class UndoRedoPlugin extends BaseGridPlugin<UndoRedoConfig> {
     // the grid's undo by mutating the input text independently, triggering
     // re-commits that cancel the grid undo.
     event.preventDefault();
-    this.#performHistory(kind);
+    this.#requestHistory(kind);
     return true;
   }
 
@@ -399,6 +422,7 @@ export class UndoRedoPlugin extends BaseGridPlugin<UndoRedoConfig> {
   }
 
   #assertSnapshotReady(): void {
+    this.#assertInternal();
     if (!this.#attached || this.#transactionDepth > 0 || this.#historyActivity > 0 || this.#restoring) {
       throwDiagnostic(
         CONFIG_RULE_ERROR,
@@ -439,9 +463,8 @@ export class UndoRedoPlugin extends BaseGridPlugin<UndoRedoConfig> {
   /**
    * Watch for the browser's native undo/redo on `target`. The browser fires
    * `beforeinput` with `inputType: 'historyUndo' | 'historyRedo'` when it
-   * actually has something to undo/redo. If we don't observe that within a
-   * microtask of the keydown returning, the native history is depleted and
-   * we run the grid's own undo/redo to extend the chain.
+   * actually has something to undo/redo. Wait through the keydown default action:
+   * Chromium can run a microtask before its native beforeinput event.
    */
   #deferToNativeHistory(target: HTMLElement, kind: 'undo' | 'redo'): void {
     const wantedInputType = kind === 'undo' ? 'historyUndo' : 'historyRedo';
@@ -453,10 +476,10 @@ export class UndoRedoPlugin extends BaseGridPlugin<UndoRedoConfig> {
     };
     target.addEventListener('beforeinput', onBeforeInput, { capture: true });
 
-    queueMicrotask(() => {
+    setTimeout(() => {
       target.removeEventListener('beforeinput', onBeforeInput, { capture: true } as EventListenerOptions);
-      if (!nativeHandled && this.#attached && !signal.aborted) this.#performHistory(kind);
-    });
+      if (!nativeHandled && this.#attached && !signal.aborted) this.#requestHistory(kind);
+    }, 0);
   }
 
   // #region Public API Methods
@@ -479,6 +502,7 @@ export class UndoRedoPlugin extends BaseGridPlugin<UndoRedoConfig> {
    * @param rowId - Stable ID of the edited row; resolved from `rowIndex` when omitted (since 3.9.2)
    */
   recordEdit(rowIndex: number, field: string, oldValue: unknown, newValue: unknown, rowId?: string): void {
+    this.#assertInternal();
     this.#assertNotRestoring();
     this.#recordEdit(rowIndex, field, oldValue, newValue, this.#recordedRow(rowIndex, rowId));
   }
@@ -544,6 +568,8 @@ export class UndoRedoPlugin extends BaseGridPlugin<UndoRedoConfig> {
    * ```
    */
   beginTransaction(): void {
+    if (this.#external) return this.#external.begin();
+    this.#assertInternal();
     this.#assertNotRestoring();
     if (this.#transactionDepth === 0) {
       this.#transactionBuffer = [];
@@ -568,6 +594,8 @@ export class UndoRedoPlugin extends BaseGridPlugin<UndoRedoConfig> {
    * @throws Error if no transaction is in progress
    */
   endTransaction(): void {
+    if (this.#external) return this.#external.end();
+    this.#assertInternal();
     this.#assertNotRestoring();
     if (this.#transactionDepth === 0) {
       throwDiagnostic(NO_TRANSACTION, 'No transaction in progress. Call beginTransaction() first.');
@@ -592,7 +620,7 @@ export class UndoRedoPlugin extends BaseGridPlugin<UndoRedoConfig> {
   }
 
   /**
-   * Programmatically undo the last action.
+   * Programmatically undo the last native action. External mode requires requestUndo().
    *
    * Behaves exactly like Ctrl+Z: emits `undo` (with the undone action) and
    * `history-change`. These report stack movement, including skipped edits;
@@ -601,11 +629,12 @@ export class UndoRedoPlugin extends BaseGridPlugin<UndoRedoConfig> {
    * @returns The undone action, or null if nothing to undo
    */
   undo(): UndoRedoAction | null {
+    this.#assertInternal();
     return this.#performHistory('undo');
   }
 
   /**
-   * Programmatically redo the last undone action.
+   * Programmatically redo the last undone native action. External mode requires requestRedo().
    *
    * Behaves exactly like Ctrl+Y: emits `redo` (with the redone action) and
    * `history-change`.
@@ -613,6 +642,7 @@ export class UndoRedoPlugin extends BaseGridPlugin<UndoRedoConfig> {
    * @returns The redone action, or null if nothing to redo
    */
   redo(): UndoRedoAction | null {
+    this.#assertInternal();
     return this.#performHistory('redo');
   }
 
@@ -620,6 +650,7 @@ export class UndoRedoPlugin extends BaseGridPlugin<UndoRedoConfig> {
    * Check if there are any actions that can be undone.
    */
   canUndo(): boolean {
+    if (this.#external) return this.#external.state.canUndo;
     return canUndo({ undoStack: this.undoStack, redoStack: this.redoStack });
   }
 
@@ -627,6 +658,7 @@ export class UndoRedoPlugin extends BaseGridPlugin<UndoRedoConfig> {
    * Check if there are any actions that can be redone.
    */
   canRedo(): boolean {
+    if (this.#external) return this.#external.state.canRedo;
     return canRedo({ undoStack: this.undoStack, redoStack: this.redoStack });
   }
 
@@ -635,6 +667,7 @@ export class UndoRedoPlugin extends BaseGridPlugin<UndoRedoConfig> {
    * Emits `history-change` when there was history to clear.
    */
   clearHistory(): void {
+    this.#assertInternal();
     this.#assertNotRestoring();
     const hadHistory = this.undoStack.length > 0 || this.redoStack.length > 0;
     const newState = clearHistory();
@@ -650,6 +683,7 @@ export class UndoRedoPlugin extends BaseGridPlugin<UndoRedoConfig> {
    * Get a copy of the current undo stack.
    */
   getUndoStack(): UndoRedoAction[] {
+    this.#assertInternal();
     return [...this.undoStack];
   }
 
@@ -657,6 +691,7 @@ export class UndoRedoPlugin extends BaseGridPlugin<UndoRedoConfig> {
    * Get a copy of the current redo stack.
    */
   getRedoStack(): UndoRedoAction[] {
+    this.#assertInternal();
     return [...this.redoStack];
   }
 
@@ -705,6 +740,7 @@ export class UndoRedoPlugin extends BaseGridPlugin<UndoRedoConfig> {
         this.name,
       );
     }
+
     if (history.undoStack.length + history.redoStack.length > (this.config.maxHistorySize ?? 100)) {
       throwDiagnostic(
         CONFIG_RULE_ERROR,
@@ -723,6 +759,32 @@ export class UndoRedoPlugin extends BaseGridPlugin<UndoRedoConfig> {
       this.#emitHistoryChange();
     } finally {
       this.#restoring = false;
+    }
+  }
+
+  /**
+   * Request Undo from the configured owner, without returning a native action.
+   * External owners publish availability; this does not imply an accepted mutation.
+   * @since 3.11.0
+   */
+  requestUndo(): void {
+    this.#requestHistory('undo');
+  }
+
+  /** Request Redo from the configured owner. @since 3.11.0 */
+  requestRedo(): void {
+    this.#requestHistory('redo');
+  }
+
+  #requestHistory(direction: 'undo' | 'redo'): void {
+    if (!this.#attached) throwDiagnostic(CONFIG_RULE_ERROR, 'History requests require an attached plugin.');
+    if (this.#external) this.#external.request(direction);
+    else this.#performHistory(direction);
+  }
+
+  #assertInternal(): void {
+    if (this.#external || this.resolvedConfig.externalHistory !== undefined) {
+      throwDiagnostic(CONFIG_RULE_ERROR, 'Native action and snapshot APIs are unavailable with externalHistory.');
     }
   }
   // #endregion

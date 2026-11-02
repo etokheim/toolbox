@@ -10,9 +10,11 @@
  * Takes the grid reference directly (tightly coupled — this manager
  * can never live outside the grid).
  */
-import type { CellChangeDetail, GridHost, RowTransaction, TransactionResult, UpdateSource } from '../types';
+import type { GridHost, RowTransaction, TransactionResult, UpdateSource } from '../types';
+import type { CommitCellValueContext } from '../plugin/types';
 import { MISSING_ROW_ID, ROW_NOT_FOUND, throwDiagnostic, warnDiagnostic } from './diagnostics';
 import { invalidateCellContent } from './control-lifecycle';
+import { emitCellChange, queryCellCommit } from './cell-commit';
 import { RenderPhase } from './render-scheduler';
 import { animateRow } from './row-animation';
 import { tryResolveRowId } from './row-identity';
@@ -106,7 +108,7 @@ export class RowManager<T = any> {
       const oldValue = readCellField(row, field);
       if (oldValue === newValue) continue;
 
-      const responses = grid.query?.<boolean>('commitCellValue', {
+      const context: CommitCellValueContext = {
         rowIndex: index,
         rowId: id,
         row,
@@ -114,38 +116,35 @@ export class RowManager<T = any> {
         oldValue,
         newValue,
         source,
-      });
+      };
+      const accepted = queryCellCommit(grid, context);
       // A veto (`false`) from ANY plugin wins regardless of response order; a
       // `true` means a plugin applied AND tracked the value itself; otherwise
       // (no boolean response) core applies the value directly.
-      if (responses?.includes(false)) continue; // vetoed (validation/abortion)
+      if (accepted === false) continue;
 
-      if (!responses?.includes(true)) {
+      if (accepted !== true) {
         // No data plugin handled it — apply in place (legacy behavior).
         writeCellField(row, field, newValue);
+        context.newValue = readCellField(row, field);
       }
+      if (Object.is(oldValue, context.newValue)) continue;
       // Accessors can depend on any field. Core owns its cache even when a
       // separately bundled data plugin applied and tracked the value.
       this.invalidateRowContent(row);
 
-      changedFields.push({ field, oldValue, newValue });
-
-      grid.dispatchEvent(
-        new CustomEvent('cell-change', {
-          detail: {
-            row,
-            rowId: id,
-            rowIndex: index,
-            field,
-            oldValue,
-            newValue,
-            changes,
-            source,
-          } as CellChangeDetail<T>,
-          bubbles: true,
-          composed: true,
-        }),
-      );
+      changedFields.push({ field, oldValue, newValue: context.newValue });
+      emitCellChange(grid, {
+        row,
+        rowId: id,
+        rowIndex: index,
+        field,
+        oldValue,
+        newValue: context.newValue,
+        changes,
+        source,
+        operationId: context.operationId,
+      });
     }
 
     return changedFields;
@@ -396,22 +395,16 @@ export class RowManager<T = any> {
         invalidateAccessorCache(row as object);
         this.#invalidateRetainedContent(row);
 
-        grid.dispatchEvent(
-          new CustomEvent('cell-change', {
-            detail: {
-              row,
-              rowId: id,
-              rowIndex: index,
-              field,
-              oldValue,
-              newValue,
-              changes,
-              source: 'api',
-            } as CellChangeDetail<T>,
-            bubbles: true,
-            composed: true,
-          }),
-        );
+        emitCellChange(grid, {
+          row,
+          rowId: id,
+          rowIndex: index,
+          field,
+          oldValue,
+          newValue,
+          changes,
+          source: 'api',
+        });
       }
 
       if (changed) result.updated.push(row);

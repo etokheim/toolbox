@@ -103,13 +103,30 @@ gridConfig = {
 
 | Event                | Detail                        | Description                                                                                                                                |
 | -------------------- | ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
-| `cell-commit`        | `CellCommitDetail<TRow>`      | Cell value committed (cancelable)                                                                                                          |
+| `cell-commit`        | `CellCommitDetail<TRow>`      | Before-write proposal (cancelable); not acceptance evidence                                                                                |
+| `cell-change`        | `CellChangeDetail<TRow>`      | Accepted field write, including interactive edits, programmatic updates and clearing                                                       |
 | `row-commit`         | `RowCommitDetail<TRow>`       | Row edit session ended (cancelable)                                                                                                        |
 | `edit-open`          | `EditOpenDetail<TRow>`        | Row entered edit mode                                                                                                                      |
 | `before-edit-close`  | `BeforeEditCloseDetail<TRow>` | Fires synchronously before edit state is cleared on commit (row mode). Lets managed editors flush pending values. Does not fire on revert. |
 | `edit-close`         | `EditCloseDetail<TRow>`       | Row left edit mode                                                                                                                         |
 | `changed-rows-reset` | `ChangedRowsResetDetail`      | Change tracking reset                                                                                                                      |
 | `dirty-change`       | `DirtyChangeDetail<TRow>`     | Row dirty state changed (requires `dirtyTracking: true`). Detail includes `rowId`, `row`, `original`, `type`                               |
+
+`cell-commit.operationId` correlates a proposal with its final `cell-change.operationId`.
+Capture prospective application state before the write; promote it only on the matching
+accepted notification. Canceled or unchanged writes emit no `cell-change`. The identity is
+not row ownership or replay authority. Values in the final notification describe the stored
+field, not a derived `valueAccessor`.
+
+Interactive edits now emit `cell-change` too. Consumers that previously recorded both
+`cell-commit` and `cell-change` must use the former for validation and the latter for
+accepted-write recording to avoid duplicates. A cell-level acceptance is not a successful
+row close or Save: row cancellation and application commands can subsequently revert it.
+
+Core updates and selected clearing defer built-in Editing writes until every synchronous
+`commitCellValue` query participant accepts. Owner/value changes during validation reject
+the pending write. This does not roll back independent cascades or side effects performed
+by application callbacks or legacy eager third-party plugins.
 
 ## API Methods
 
