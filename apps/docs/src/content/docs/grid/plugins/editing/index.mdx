@@ -251,6 +251,12 @@ Built-in Editing writes through the query pipeline wait until all synchronous qu
 accept, then recheck owner/value before writing. Independent cascade writes and arbitrary callback
 side effects are not rolled back. `source: 'history'` restores values and recomputes dirty state
 without running the normal cancelable `cell-commit` or recording new native history.
+
+Controlled immutable updates can retain the edited row object in the processed view while
+`sourceRows` contains its same-ID replacement. Subsequent edits, clearing and native history
+recognize this built-in substitution after row processing settles; genuine duplicate IDs and
+replacement during validation still reject writes. Feed controlled updates from final
+`cell-change`, not the before-write proposal.
 :::
 
 See the [API Reference](/grid/api-reference/#row-update-api) for full documentation.

@@ -767,6 +767,7 @@ export class EditingPlugin<T = unknown> extends BaseGridPlugin<EditingConfig> {
   /** @internal */
   override detach(): void {
     const internalGrid = this.#internalGrid;
+    internalGrid._editRowProjection = undefined;
     internalGrid._isGridEditMode = false;
     this.gridElement.classList.remove('tbw-grid-mode');
     this.#activeEditRow = -1;
@@ -1449,6 +1450,7 @@ export class EditingPlugin<T = unknown> extends BaseGridPlugin<EditingConfig> {
    * @internal Plugin API — part of the render pipeline
    */
   override processRows(rows: readonly T[]): T[] {
+    this.#internalGrid._editRowProjection = undefined;
     // --- Dirty tracking: capture baselines (first-write-wins) ---
     if (this.config.dirtyTracking) this.#captureBaselines(this.sourceRows);
 
@@ -1476,6 +1478,13 @@ export class EditingPlugin<T = unknown> extends BaseGridPlugin<EditingConfig> {
 
     let result = rows as T[];
     if (rows[newIndex] !== editRowRef) {
+      if (this.sourceRows.includes(rows[newIndex])) {
+        this.#internalGrid._editRowProjection = {
+          row: editRowRef,
+          source: rows[newIndex],
+          resolver: this.#internalGrid.effectiveConfig?.getRowId,
+        };
+      }
       // Swap in the in-progress row data to preserve editor state
       result = [...rows] as T[];
       result[newIndex] = editRowRef;
@@ -2872,7 +2881,12 @@ export class EditingPlugin<T = unknown> extends BaseGridPlugin<EditingConfig> {
 
   #canApplyCommit(target: ReturnType<typeof captureEditTarget<T>>, row: T, field: string, oldValue: unknown): boolean {
     const grid = this.#internalGrid;
-    if (resolveEditTarget(grid, target)?.row === row && Object.is(readCellField(row, field), oldValue)) return true;
+    if (
+      target.projection === grid._editRowProjection &&
+      resolveEditTarget(grid, target)?.row === row &&
+      Object.is(readCellField(row, field), oldValue)
+    )
+      return true;
     warnDiagnostic(
       ROW_NOT_FOUND,
       `Cannot commit field "${field}": its owner or value changed during validation. Skipping this cell.`,

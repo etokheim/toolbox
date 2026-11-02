@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { waitUpgrade } from '../../../../test/helpers';
 import '../../core/grid';
 import type { DataGridElement } from '../../core/grid';
+import { captureEditTarget, resolveEditTarget } from '../../core/internal/row-identity';
 import { BaseGridPlugin } from '../../core/plugin/base-plugin';
 import type { PluginQuery } from '../../core/plugin/types';
 import type { CellChangeDetail } from '../../core/types';
@@ -24,14 +25,14 @@ class LaterVeto extends BaseGridPlugin {
   }
 }
 
-async function setup(vetoes = true, vetoFirst = false) {
+async function setup(vetoes = true, vetoFirst = false, configuredResolver = true) {
   const grid = document.createElement('tbw-grid') as DataGridElement<Row>;
   const editing = new EditingPlugin<Row>({ editOn: 'manual', dirtyTracking: true });
   const undo = new UndoRedoPlugin();
   const veto = new LaterVeto();
   if (!vetoes) veto.respond = () => undefined;
   grid.gridConfig = {
-    getRowId: (row) => row.id,
+    getRowId: configuredResolver ? (row) => row.id : undefined,
     columns: [
       { field: 'value', editable: true, type: 'string' },
       { field: 'other', editable: true, type: 'string' },
@@ -75,12 +76,224 @@ function commitEditor(grid: DataGridElement<Row>, editing: EditingPlugin<Row>, v
   input.dispatchEvent(new Event('blur'));
 }
 
+async function retainedRow(configuredResolver = true) {
+  const fixture = await setup(false, false, configuredResolver);
+  const { grid, row, editing } = fixture;
+  const events = track(grid);
+  grid.addEventListener('cell-change', () => {
+    grid.rows = grid.rows.map((current) => ({ ...current }));
+  });
+  commitEditor(grid, editing, 'first');
+  await waitUpgrade(grid);
+  expect(grid.rows[0]).toBe(row);
+  expect(grid.sourceRows[0]).not.toBe(row);
+  expect(grid._pendingSourceUpdate).toBeUndefined();
+  return { ...fixture, ...events };
+}
+
 afterEach(() => {
   document.body.replaceChildren();
   vi.restoreAllMocks();
 });
 
 describe('final Editing acceptance', () => {
+  describe.each([false, true])('retained source identity (configured resolver: %s)', (configuredResolver) => {
+    it.each(['editor', 'updateRow', 'clear'])('rejects source ID mutation during %s precommit', async (path) => {
+      const { grid, row, undo, changes } = await retainedRow(configuredResolver);
+      const source = grid.sourceRows[0];
+      const projection = captureEditTarget(grid, row).projection;
+      const resolver = grid.effectiveConfig.getRowId;
+      expect(resolveEditTarget(grid, captureEditTarget(grid, row))?.row).toBe(row);
+      const dirty = vi.fn();
+      const history = vi.fn();
+      grid.addEventListener('dirty-change', dirty);
+      grid.addEventListener('history-change', history);
+      grid.addEventListener('cell-commit', () => {
+        source.id = 'b';
+      });
+
+      if (path === 'editor') {
+        const input = grid.querySelector<HTMLInputElement>('.cell[data-col="1"] input')!;
+        input.value = 'second';
+        input.dispatchEvent(new Event('blur'));
+      } else if (path === 'updateRow') {
+        grid.updateRow('a', { other: 'second' });
+      } else {
+        expect(clear(grid, undo).cells[0].status).toBe('rejected');
+      }
+
+      expect(source.id).toBe('b');
+      expect(grid.sourceRows[0]).toBe(source);
+      expect(captureEditTarget(grid, row).projection).toBe(projection);
+      expect(grid.effectiveConfig.getRowId).toBe(resolver);
+      expect(row).toMatchObject({ id: 'a', value: 'first', other: 'old' });
+      expect(changes).toHaveLength(1);
+      expect(undo.getUndoStack()).toHaveLength(1);
+      expect(dirty).not.toHaveBeenCalled();
+      expect(history).not.toHaveBeenCalled();
+    });
+
+    it('skips native replay after the retained source changes ID in place', async () => {
+      const { grid, row, undo, changes } = await retainedRow(configuredResolver);
+      grid.sourceRows[0].id = 'b';
+      undo.undo();
+      expect(row.value).toBe('first');
+      expect(changes).toHaveLength(1);
+      expect(undo.getUndoStack()).toHaveLength(0);
+      expect(undo.getRedoStack()).toHaveLength(1);
+    });
+  });
+
+  it('accepts a second edit after controlled immutable feedback retains the active row', async () => {
+    const { grid, row, changes, proposals, undo } = await retainedRow();
+    const input = grid.querySelector<HTMLInputElement>('.cell[data-col="1"] input')!;
+    input.value = 'second';
+    input.dispatchEvent(new Event('blur'));
+    expect(row.other).toBe('second');
+    expect(changes).toHaveLength(2);
+    expect(proposals.get(changes[1].operationId!)).toBe('other');
+    expect(changes[1].operationId).not.toBe(changes[0].operationId);
+    expect(undo.getUndoStack()).toHaveLength(2);
+    await waitUpgrade(grid);
+    undo.undo();
+    expect(row.other).toBe('old');
+    await waitUpgrade(grid);
+    undo.redo();
+    expect(row.other).toBe('second');
+    await waitUpgrade(grid);
+
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    expect(grid.querySelector('.cell.editing')).toBeNull();
+    // Closing editors preserves the current row model, including its substitution.
+    undo.undo();
+    expect(row.other).toBe('old');
+    await waitUpgrade(grid);
+    expect(grid.rows[0]).not.toBe(row);
+    undo.redo();
+    expect(grid.rows[0].other).toBe('second');
+    expect(row.other).toBe('old');
+  });
+
+  it('clears and replays the retained owner after immutable feedback', async () => {
+    const { grid, row, undo, changes, proposals } = await retainedRow();
+    expect(clear(grid, undo).cells[0].status).toBe('cleared');
+    expect(row.value).toBe('');
+    expect(changes).toHaveLength(2);
+    expect(changes[1].source).toBe('clear');
+    expect(proposals.get(changes[1].operationId!)).toBe('value');
+    expect(undo.getUndoStack()).toHaveLength(2);
+    await waitUpgrade(grid);
+    undo.undo();
+    expect(row.value).toBe('first');
+    await waitUpgrade(grid);
+    undo.redo();
+    expect(row.value).toBe('');
+  });
+
+  it('discards the retained row without losing its native replay identity', async () => {
+    const { grid, row, undo, changes } = await retainedRow();
+    grid
+      .querySelector('.cell[data-col="0"] input')!
+      .dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    expect(grid.querySelector('.cell.editing')).toBeNull();
+    expect(row.value).toBe('before');
+    expect(changes).toHaveLength(1);
+    undo.undo();
+    undo.redo();
+    expect(row.value).toBe('first');
+    expect(changes.at(-1)?.source).toBe('history');
+  });
+
+  it.each(['distinct source copies', 'original owner also in source', 'unregistered view copy', 'source also in view'])(
+    'rejects genuine ambiguity with a retained row: %s',
+    async (kind) => {
+      const { grid, row, undo, changes } = await retainedRow();
+      if (kind === 'unregistered view copy') grid._rows = [{ ...row }];
+      else if (kind === 'source also in view') grid._rows = [row, grid.sourceRows[0]];
+      else {
+        grid.rows = [{ ...row }, kind === 'original owner also in source' ? row : { ...row }];
+        await waitUpgrade(grid);
+      }
+      expect(clear(grid, undo).cells[0]).toMatchObject({ status: 'skipped', reason: 'unavailable' });
+      expect(row.value).toBe('first');
+      expect(changes).toHaveLength(1);
+      undo.undo();
+      expect(row.value).toBe('first');
+      expect(undo.getRedoStack()).toHaveLength(1);
+    },
+  );
+
+  it.each([
+    'replace source',
+    'remove source',
+    'replace resolver',
+    'pending rows',
+    'rebuild projection',
+    'change value',
+  ])('rechecks retained ownership after precommit: %s', async (kind) => {
+    const { grid, row, editing, undo, changes } = await retainedRow();
+    grid.addEventListener('cell-commit', () => {
+      switch (kind) {
+        case 'replace source':
+          grid.sourceRows[0] = { ...row };
+          break;
+        case 'remove source':
+          grid.sourceRows.splice(0, 1);
+          break;
+        case 'replace resolver':
+          grid.effectiveConfig.getRowId = (current) => current.id;
+          break;
+        case 'pending rows':
+          grid.rows = [{ ...row }];
+          break;
+        case 'rebuild projection':
+          grid._rows = editing.processRows(grid.sourceRows);
+          break;
+        case 'change value':
+          row.other = 'nested';
+          break;
+      }
+    });
+    const input = grid.querySelector<HTMLInputElement>('.cell[data-col="1"] input')!;
+    input.value = 'second';
+    input.dispatchEvent(new Event('blur'));
+    expect(row.other).toBe(kind === 'change value' ? 'nested' : 'old');
+    expect(changes).toHaveLength(1);
+    expect(undo.getUndoStack()).toHaveLength(1);
+  });
+
+  it('rejects a later query veto while the active row is a registered projection', async () => {
+    const { grid, row, veto, undo, changes } = await retainedRow();
+    veto.respond = () => false;
+    expect(clear(grid, undo).cells[0].status).toBe('rejected');
+    grid.updateRow('a', { other: 'rejected' });
+    expect(row).toMatchObject({ value: 'first', other: 'old' });
+    expect(changes).toHaveLength(1);
+    expect(undo.getUndoStack()).toHaveLength(1);
+  });
+
+  it('does not repair missing capture-time source evidence inside precommit', async () => {
+    const { grid, row, changes, undo } = await retainedRow();
+    const source = grid.sourceRows.pop()!;
+    grid.addEventListener('cell-commit', () => grid.sourceRows.push(source));
+    const input = grid.querySelector<HTMLInputElement>('.cell[data-col="1"] input')!;
+    input.value = 'second';
+    input.dispatchEvent(new Event('blur'));
+    expect(row.other).toBe('old');
+    expect(changes).toHaveLength(1);
+    expect(undo.getUndoStack()).toHaveLength(1);
+  });
+
+  it('releases the exact projection evidence on detach', async () => {
+    const { grid, row } = await retainedRow();
+    const target = captureEditTarget(grid, row);
+    expect(target.projection).toMatchObject({ row, source: grid.sourceRows[0] });
+    expect(resolveEditTarget(grid, target)?.row).toBe(row);
+    grid.remove();
+    expect(captureEditTarget(grid, row).projection).toBeUndefined();
+    expect(resolveEditTarget(grid, target)).toBeUndefined();
+  });
+
   it('rechecks owner/value after the deferred clear editability callback', async () => {
     const { grid, row, undo, veto } = await setup(false);
     let applying = false;
