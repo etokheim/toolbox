@@ -28,9 +28,10 @@ grid.gridConfig = {
 
 ## Configuration
 
-| Option           | Type     | Default | Description                |
-| ---------------- | -------- | ------- | -------------------------- |
-| `maxHistorySize` | `number` | `100`   | Maximum actions in history |
+| Option            | Type                   | Default | Description                                            |
+| ----------------- | ---------------------- | ------- | ------------------------------------------------------ |
+| `maxHistorySize`  | `number`               | `100`   | Maximum actions in history                             |
+| `externalHistory` | `ExternalHistoryOwner` | —       | Application owns history; native retention is disabled |
 
 ## Keyboard Shortcuts
 
@@ -66,7 +67,72 @@ const undoStack = history.getUndoStack();
 const redoStack = history.getRedoStack();
 ```
 
+### Application-owned history
+
+Use `externalHistory` when the application already owns domain commands, including commands
+that outlive a grid. The default remains native scalar history.
+
+```typescript
+import type { ExternalHistoryOwner } from '@toolbox-web/grid/plugins/undo-redo';
+
+// Implemented by your application, not a grid-provided state engine.
+const owner: ExternalHistoryOwner = {
+  request: (direction) => appHistory.request(direction),
+  getState: () => appHistory.availability,
+  subscribe: (notify) => appHistory.subscribe(notify),
+  beginGroup: (token) => appHistory.beginGroup(token),
+  endGroup: (token, reason) => appHistory.endGroup(token, reason),
+};
+const history = new UndoRedoPlugin({ externalHistory: owner });
+```
+
+`requestUndo()` / `requestRedo()` return `void` in either mode. In external mode they and
+all grid shortcuts delegate once to `owner.request`. Inputs retain native browser Undo
+priority; the depleted-history fallback is canceled when its attachment ends. Requests
+are attached-only. Invoke your application owner directly while no grid is mounted.
+
+The application records **accepted domain changes**, not native action arrays.
+Prepare a prospective command during `cell-commit`, keyed in a `WeakMap` by `operationId`;
+promote it on the matching final `cell-change`, using its normalized `newValue`. Keep
+original domain identity and dependent before-values in that proposal. Neither the token
+nor the notification supplies replay authority. Do not record the proposal before acceptance,
+reconstruct its inverse after the write, or record `sync`/`history` acknowledgments again.
+The owner must suppress its own recorder during replay, including replay initiated directly
+while grids are detached. Native does not hide accepted mutation notifications.
+
+`beginTransaction()` / `endTransaction()` retain nesting, but notify the owner only on
+outermost boundaries and retain no scalar buffer. Each group gets a distinct frozen token,
+including across grids sharing an owner. Accepted clear notifications occur **inside** the
+group; empty and all-rejected clears still get balanced boundaries. Independent application
+commands and cross-grid batching remain application-owned.
+
+The owner supplies `canUndo()` / `canRedo()` through `getState` and publishes changes through
+the `subscribe` callback. The bridge emits initial availability on attach and `history-change`
+for subsequent notifications, coalescing synchronous notifications inside an owner callback.
+It does not synthesize `undo`/`redo` action events or a mutation acknowledgment for a request.
+Availability reads during notifications use the cached state.
+
+All owner callbacks are synchronous; Promise-returning callbacks are unsupported.
+Reentry guards are per attached plugin; the owner guards direct and cross-grid calls.
+Requests/group mutations during a callback or availability notification, and replay inside
+an open group, raise `TBW003`. Callback exceptions propagate after guards reset; cleanup
+failures may be combined in an `AggregateError`. Already accepted writes are **not rolled
+back**, callbacks are not retried, and the owner must clean up its own partial effects.
+
+Detach unsubscribes and closes an open group once with reason `detach`, never clearing the
+application history. A failed begin is closed with reason `error`; ordinary ends use
+`complete`. These reasons describe cleanup, not transaction rollback. Matching outstanding
+`endTransaction()` calls can unwind after detach without notifying the owner again; finish
+them before reusing that plugin instance. Detached plugin availability reads are false.
+
+`undo()`, `redo()`, `recordEdit()`, `clearHistory()`, action-stack getters and snapshot APIs
+raise `TBW003` in external mode rather than returning fabricated or empty native history.
+Use the request methods and application-owned clearing/retention instead. `maxHistorySize`
+only governs native mode. Choose the owner at attachment, not by mutating live configuration.
+
 ### Preserving history across remounts
+
+The snapshot APIs below are for native history only.
 
 ```typescript
 import type { UndoRedoSnapshot } from '@toolbox-web/grid/plugins/undo-redo';

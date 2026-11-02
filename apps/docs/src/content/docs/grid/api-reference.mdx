@@ -419,7 +419,8 @@ When the **EditingPlugin** is loaded (and the grid has a `getRowId`), `updateRow
 
 #### Listening to Row Updates
 
-The `cell-change` event fires whenever row data is updated via the Row Update API:
+The `cell-change` event reports accepted field writes from the Row Update API, ordinary
+interactive Editing commits and selected clearing:
 
 ```typescript
 grid.on('cell-change', ({ rowId, changes, source, row }) => {
@@ -430,7 +431,15 @@ grid.on('cell-change', ({ rowId, changes, source, row }) => {
 ```
 
 :::note
-The `cell-change` event is distinct from `cell-commit`, which fires during inline editing. Use `cell-change` for programmatic updates via `updateRow()`/`updateRows()`.
+`cell-commit` is a cancelable before-write proposal; use `cell-change` for accepted-write
+recording. When Editing participates, `operationId` correlates the proposal and accepted
+notification without exposing history or row-ownership authority. Rejected and unchanged
+writes emit no accepted notification. `oldValue` and `newValue` describe stored fields,
+not derived accessor values.
+
+Ordinary interactive edits now emit this event as well. Do not record the same edit from both
+events. Cell acceptance is not persistence or whole-row acceptance: a later row cancel may revert
+it. Native history replay does not rerun normal `cell-commit` validation.
 :::
 
 ### Column Methods
@@ -477,6 +486,12 @@ stacks while preserving captured ownership evidence. These are same-module,
 in-memory operations, not serializable action import. Restore emits one
 `history-change` and no row-mutation events. See
 [history snapshot lifetime and restrictions](/grid/plugins/undo-redo/#preserving-history-across-remounts).
+
+For application-owned commands, configure `UndoRedoConfig.externalHistory` with an
+`ExternalHistoryOwner` and use `requestUndo()` / `requestRedo()` (void). The plugin
+delegates attached requests, availability and outermost groups without retaining native
+actions. Native action and snapshot APIs reject this mode. See
+[application-owned history](/grid/plugins/undo-redo/#application-owned-history).
 
 ### Plugin Methods
 
