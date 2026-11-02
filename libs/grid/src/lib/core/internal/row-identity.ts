@@ -21,7 +21,10 @@ export function tryResolveRowId<T>(row: T, getRowId?: (row: T) => string): strin
   return undefined;
 }
 
-type EditTargetHost<T> = Pick<GridHost<T>, 'rows' | 'sourceRows' | 'effectiveConfig' | '_pendingSourceUpdate'>;
+type EditTargetHost<T> = Pick<
+  GridHost<T>,
+  'rows' | 'sourceRows' | 'effectiveConfig' | '_pendingSourceUpdate' | '_editRowProjection'
+>;
 
 /** Private ownership snapshot shared by edit history and selected-cell operations. */
 export interface EditTarget<T = unknown> {
@@ -29,6 +32,7 @@ export interface EditTarget<T = unknown> {
   rowId: string | undefined;
   resolver: ((row: T) => string) | undefined;
   ambiguous: boolean;
+  projection?: EditTargetHost<T>['_editRowProjection'];
 }
 
 function matchingRows<T>(grid: EditTargetHost<T>, id: string, resolver: EditTarget<T>['resolver']): (T & object)[] {
@@ -36,7 +40,20 @@ function matchingRows<T>(grid: EditTargetHost<T>, id: string, resolver: EditTarg
   for (const row of new Set([...(grid.rows ?? []), ...grid.sourceRows])) {
     if (row && typeof row === 'object' && tryResolveRowId(row, resolver) === id) matches.add(row);
   }
-  return [...matches];
+  const owners = [...matches];
+  const projection = grid._editRowProjection;
+  if (projection && owners.some((row) => row === projection.row)) {
+    if (
+      projection.resolver !== resolver ||
+      !grid.sourceRows.includes(projection.source) ||
+      !owners.some((row) => row === projection.source)
+    )
+      return [];
+    // A source containing both objects is a real duplicate, not a view substitution.
+    if (!grid.sourceRows.includes(projection.row) && !grid.rows?.includes(projection.source))
+      return owners.filter((row) => row !== projection.source);
+  }
+  return owners;
 }
 
 /** Capture existing identity, never an index-derived substitute. */
@@ -48,7 +65,8 @@ export function captureEditTarget<T>(grid: EditTargetHost<T>, row: T): EditTarge
     row: owner,
     rowId,
     resolver,
-    ambiguous: rowId !== undefined && matchingRows(grid, rowId, resolver).length > 1,
+    projection: grid._editRowProjection,
+    ambiguous: rowId !== undefined && matchingRows(grid, rowId, resolver).length !== 1,
   };
 }
 

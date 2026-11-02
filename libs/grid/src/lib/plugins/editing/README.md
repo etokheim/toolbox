@@ -128,6 +128,12 @@ Core updates and selected clearing defer built-in Editing writes until every syn
 the pending write. This does not roll back independent cascades or side effects performed
 by application callbacks or legacy eager third-party plugins.
 
+Controlled immutable row updates can leave Editing's retained row object in the processed
+view while `sourceRows` contains its same-ID replacement. After row processing settles,
+subsequent edits, clearing and native history recognize this built-in substitution.
+Genuine duplicate IDs and owner/value replacement during validation still reject writes.
+Apply controlled feedback from final `cell-change`, not from the before-write proposal.
+
 ## API Methods
 
 Access via `grid.getPluginByName('editing')`:
