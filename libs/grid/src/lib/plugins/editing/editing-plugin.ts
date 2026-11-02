@@ -19,8 +19,9 @@ import { GridDataAttrs } from '../../core/constants';
 import { announce, getA11yMessage } from '../../core/internal/aria';
 import { ensureCellVisible } from '../../core/internal/keyboard';
 import { invalidateCellContent } from '../../core/internal/control-lifecycle';
+import { emitCellChange } from '../../core/internal/cell-commit';
 import { parkCellLoadingOverlay } from '../../core/internal/loading';
-import { ROW_NOT_FOUND, warnDiagnostic } from '../../core/internal/diagnostics';
+import { CONFIG_RULE_ERROR, ROW_NOT_FOUND, throwDiagnostic, warnDiagnostic } from '../../core/internal/diagnostics';
 import { captureEditTarget, resolveEditTarget } from '../../core/internal/row-identity';
 import { compileTemplate } from '../../core/internal/sanitize';
 import { invalidateAccessorCache, readCellField, writeCellField } from '../../core/internal/value-accessor';
@@ -844,6 +845,19 @@ export class EditingPlugin<T = unknown> extends BaseGridPlugin<EditingConfig> {
       (ctx.rowId != null ? internalGrid._getRowEntry(ctx.rowId)?.row : undefined) ??
       (internalGrid._rows?.[ctx.rowIndex] as T | undefined);
 
+    if (ctx.deferredWrite && rowData && (ctx.source === 'sync' || ctx.source === 'history')) {
+      const target = captureEditTarget(internalGrid, rowData);
+      const oldValue = readCellField(rowData, ctx.field);
+      this.#deferCellWrite(ctx.deferredWrite, () => {
+        if (!this.#canApplyCommit(target, rowData, ctx.field, oldValue)) return false;
+        const execution = { ...ctx, deferredWrite: undefined };
+        const accepted = this.#handleCommitCellValue(execution);
+        ctx.newValue = execution.newValue;
+        return accepted === true;
+      });
+      return true;
+    }
+
     if (ctx.source === 'sync') {
       // Declarative host sync (a framework adapter replacing its `rows` prop in
       // place). Authoritative external data, NOT a user edit: apply the value and
@@ -853,6 +867,7 @@ export class EditingPlugin<T = unknown> extends BaseGridPlugin<EditingConfig> {
       // snapshots the whole row) are re-baselined too.
       if (!rowData || !isSafePropertyKey(ctx.field)) return undefined;
       writeCellField(rowData, ctx.field, ctx.newValue);
+      ctx.newValue = readCellField(rowData, ctx.field);
       invalidateAccessorCache(rowData as object);
       const rowId = this.#safeGetRowId(rowData);
       if (rowId && this.config.dirtyTracking) {
@@ -871,6 +886,7 @@ export class EditingPlugin<T = unknown> extends BaseGridPlugin<EditingConfig> {
       // history entry or mark the row changed — the undo stack owns this change.
       // Recompute dirty so the row's changed flag reflects its baseline.
       writeCellField(rowData, ctx.field, ctx.newValue);
+      ctx.newValue = readCellField(rowData, ctx.field);
       invalidateAccessorCache(rowData as object);
       const rowId = this.#safeGetRowId(rowData);
       if (rowId && this.config.dirtyTracking) {
@@ -885,9 +901,12 @@ export class EditingPlugin<T = unknown> extends BaseGridPlugin<EditingConfig> {
     // validation/abortion, dirty tracking, history via cell-edit-committed,
     // cascade). #commitCellValue leaves the value unchanged when a handler
     // vetoes, so compare to detect abortion.
-    const accepted = this.#commitCellValue(ctx.rowIndex, column, ctx.newValue, rowData, ctx.source);
-    if (ctx.source === 'clear') return accepted === true;
-    return readCellField(rowData, ctx.field) === ctx.newValue;
+    return this.#commitCellValue(ctx.rowIndex, column, ctx.newValue, rowData, ctx.source, ctx) === true;
+  }
+
+  #deferCellWrite(pending: NonNullable<CommitCellValueContext['deferredWrite']>, apply: () => boolean): void {
+    if (pending.apply) throwDiagnostic(CONFIG_RULE_ERROR, 'Only one deferred cell writer may own a commit.');
+    pending.apply = apply;
   }
 
   // #endregion
@@ -2674,14 +2693,18 @@ export class EditingPlugin<T = unknown> extends BaseGridPlugin<EditingConfig> {
     newValue: unknown,
     rowData: T,
     source: UpdateSource = 'user',
+    context?: CommitCellValueContext,
   ): boolean | undefined {
     const field = column.field;
     if (!isSafePropertyKey(field)) return;
     const oldValue = readCellField(rowData, field);
     if (oldValue === newValue) return;
+    const operationId = context?.operationId ?? Object.freeze({});
+    if (context) context.operationId = operationId;
 
     const internalGrid = this.#internalGrid;
-    const clearTarget = source === 'clear' ? captureEditTarget(internalGrid, rowData) : undefined;
+    const target = captureEditTarget(internalGrid, rowData);
+    const clearTarget = source === 'clear' ? target : undefined;
     if (clearTarget && (!isEntryCell(column, rowData) || !this.#isCellEditable(column, rowData))) return false;
 
     // Get row ID for change tracking (may not exist if getRowId not configured)
@@ -2732,6 +2755,7 @@ export class EditingPlugin<T = unknown> extends BaseGridPlugin<EditingConfig> {
     this.#committingCells.add(commitKey);
     try {
       cancelled = this.emitCancelable<CellCommitDetail<T>>('cell-commit', {
+        operationId,
         row: rowData,
         rowId: rowId ?? '',
         field,
@@ -2772,46 +2796,90 @@ export class EditingPlugin<T = unknown> extends BaseGridPlugin<EditingConfig> {
       }
     }
 
-    // Clear any previous invalid state for this cell ONLY if setInvalid wasn't called
-    // (if setInvalid was called, the handler wants it to remain invalid)
-    if (rowId && !invalidWasSet && this.isCellInvalid(rowId, field)) {
-      this.clearInvalid(rowId, field);
-    }
+    const apply = () => {
+      if (
+        clearTarget &&
+        (!this.#isCellEditable(column, rowData) ||
+          internalGrid._pendingSourceUpdate ||
+          internalGrid._visibleColumns.find((candidate) => candidate.field === field) !== column)
+      )
+        return false;
+      if (!this.#canApplyCommit(target, rowData, field, oldValue)) return false;
+      // Clear any previous invalid state for this cell ONLY if setInvalid wasn't called
+      // (if setInvalid was called, the handler wants it to remain invalid)
+      if (rowId && !invalidWasSet && this.isCellInvalid(rowId, field)) {
+        this.clearInvalid(rowId, field);
+      }
 
-    // Apply the value and mark row as changed.
-    // Whole-row invalidation (not per-`field`): `field` here is this column's
-    // own key, but OTHER columns' `valueAccessor`s may derive from it while
-    // being cached under their own `column.field`. Per-field invalidation would
-    // refresh only this column and leave those dependent columns stale.
-    writeCellField(rowData, field, newValue);
-    invalidateAccessorCache(rowData as object);
-    if (rowId) {
-      this.#dirty.changedRowIds.add(rowId);
-    }
-    this.#syncGridEditState();
+      // Apply the value and mark row as changed.
+      // Whole-row invalidation (not per-`field`): `field` here is this column's
+      // own key, but OTHER columns' `valueAccessor`s may derive from it while
+      // being cached under their own `column.field`. Per-field invalidation would
+      // refresh only this column and leave those dependent columns stale.
+      writeCellField(rowData, field, newValue);
+      const committedValue = readCellField(rowData, field);
+      if (context) context.newValue = committedValue;
+      if (Object.is(oldValue, committedValue)) return false;
+      invalidateAccessorCache(rowData as object);
+      if (rowId) {
+        this.#dirty.changedRowIds.add(rowId);
+      }
+      this.#syncGridEditState();
 
-    // Emit dirty-change event if dirty tracking is enabled
-    if (this.config.dirtyTracking && rowId) {
-      const dirty = this.#dirty.isRowDirty(rowId, rowData);
-      this.#emitDirtyChange(rowId, rowData, dirty ? 'modified' : 'pristine');
-    }
+      // Emit dirty-change event if dirty tracking is enabled
+      if (this.config.dirtyTracking && rowId) {
+        const dirty = this.#dirty.isRowDirty(rowId, rowData);
+        this.#emitDirtyChange(rowId, rowData, dirty ? 'modified' : 'pristine');
+      }
 
-    // Notify other plugins (e.g., UndoRedoPlugin) about the committed edit
-    this.emitPluginEvent('cell-edit-committed', {
-      rowIndex,
-      rowId,
-      row: rowData,
-      field,
-      oldValue,
-      newValue,
-    });
+      // Notify other plugins (e.g., UndoRedoPlugin) about the committed edit
+      this.emitPluginEvent('cell-edit-committed', {
+        rowIndex,
+        rowId,
+        row: rowData,
+        field,
+        oldValue,
+        newValue: committedValue,
+      });
 
-    // Mark the row visually as changed (animation happens when row edit closes)
-    const rowEl = internalGrid.findRenderedRowElement?.(rowIndex);
-    if (rowEl) {
-      rowEl.classList.add('changed');
+      if (!context) {
+        emitCellChange(internalGrid, {
+          row: rowData,
+          rowId: rowId ?? '',
+          rowIndex: internalGrid._rows.indexOf(rowData),
+          field,
+          oldValue,
+          newValue: committedValue,
+          changes: { [field]: committedValue },
+          source,
+          operationId,
+        });
+      }
+
+      // Mark the row visually as changed (animation happens when row edit closes)
+      const rowEl = internalGrid.findRenderedRowElement?.(rowIndex);
+      if (rowEl) {
+        rowEl.classList.add('changed');
+      }
+      return true;
+    };
+    if (context?.deferredWrite) {
+      this.#deferCellWrite(context.deferredWrite, apply);
+      return true;
     }
-    return true;
+    return apply();
+  }
+
+  #canApplyCommit(target: ReturnType<typeof captureEditTarget<T>>, row: T, field: string, oldValue: unknown): boolean {
+    const grid = this.#internalGrid;
+    if (resolveEditTarget(grid, target)?.row === row && Object.is(readCellField(row, field), oldValue)) return true;
+    warnDiagnostic(
+      ROW_NOT_FOUND,
+      `Cannot commit field "${field}": its owner or value changed during validation. Skipping this cell.`,
+      this.grid.id,
+      this.name,
+    );
+    return false;
   }
 
   /**

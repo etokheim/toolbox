@@ -3683,8 +3683,8 @@ export interface UpdateSourceMap {
 }
 
 /**
- * Detail for cell-change event (emitted by core after mutation).
- * This is an informational event that fires for ALL data mutations.
+ * Detail for cell-change after an accepted field write from the Row Update API,
+ * interactive Editing or selected clearing. This is not a persistence acknowledgment.
  *
  * Use this event for:
  * - Logging/auditing changes
@@ -3710,6 +3710,12 @@ export interface UpdateSourceMap {
  * @since 1.0.0
  */
 export interface CellChangeDetail<TRow = unknown> {
+  /**
+   * Identity shared with the matching cell-commit proposal, when Editing participates.
+   * Correlation only, not row ownership or replay authority.
+   * @since 3.11.0
+   */
+  operationId?: object;
   /** The row object (after mutation) */
   row: TRow;
   /** Stable row identifier */

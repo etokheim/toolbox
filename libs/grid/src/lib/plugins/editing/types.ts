@@ -46,6 +46,12 @@ export interface CellCancelDetail {
  * @since 0.4.0
  */
 export interface CellCommitDetail<TRow = unknown> {
+  /**
+   * Identity shared with the final cell-change when this proposal is accepted.
+   * A canceled proposal has no accepted notification. Not replay authority.
+   * @since 3.11.0
+   */
+  operationId?: object;
   /** The row object (not yet mutated if event is cancelable). */
   row: TRow;
   /** Stable row identifier (from getRowId). */

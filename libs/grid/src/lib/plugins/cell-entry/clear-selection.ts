@@ -1,10 +1,11 @@
 import { CONFIG_RULE_ERROR, ROW_NOT_FOUND, throwDiagnostic, warnDiagnostic } from '../../core/internal/diagnostics';
+import { emitCellChange, queryCellCommit } from '../../core/internal/cell-commit';
 import { RenderPhase } from '../../core/internal/render-scheduler';
 import { captureEditTarget, resolveEditTarget } from '../../core/internal/row-identity';
 import { invalidateCellCache } from '../../core/internal/rows';
 import { readCellField } from '../../core/internal/value-accessor';
 import type { GridElement } from '../../core/plugin/base-plugin';
-import type { CellEditablePredicate } from '../../core/plugin/types';
+import type { CellEditablePredicate, CommitCellValueContext } from '../../core/plugin/types';
 import { isEntryCell } from '../editing/internal/single-cell-entry';
 import type { CellRange } from '../selection/types';
 import type { UndoRedoPlugin } from '../undo-redo';
@@ -140,7 +141,7 @@ export function clearSelectedCells(grid: GridElement, ranges: CellRange[], undo:
         result.reason = 'unchanged';
         continue;
       }
-      const responses = grid.query<boolean>('commitCellValue', {
+      const context: CommitCellValueContext = {
         row: current.row,
         rowId: current.rowId,
         rowIndex: current.rowIndex,
@@ -148,8 +149,9 @@ export function clearSelectedCells(grid: GridElement, ranges: CellRange[], undo:
         oldValue,
         newValue: replacement.value,
         source: 'clear',
-      });
-      if (responses.includes(false) || !responses.includes(true)) {
+      };
+      const accepted = queryCellCommit(grid, context);
+      if (accepted !== true) {
         result.status = 'rejected';
         result.reason = 'validation';
         continue;
@@ -158,29 +160,27 @@ export function clearSelectedCells(grid: GridElement, ranges: CellRange[], undo:
       result.row = current.row;
       changed = true;
       grid._invalidateRowContent(current.row);
-      grid.dispatchEvent(
-        new CustomEvent('cell-change', {
-          bubbles: true,
-          composed: true,
-          detail: {
-            row: current.row,
-            rowId: current.rowId ?? '',
-            rowIndex: grid.rows.indexOf(current.row),
-            field,
-            oldValue,
-            newValue: replacement.value,
-            changes: { [field]: replacement.value },
-            source: 'clear',
-          },
-        }),
-      );
+      emitCellChange(grid, {
+        row: current.row,
+        rowId: current.rowId ?? '',
+        rowIndex: grid.rows.indexOf(current.row),
+        field,
+        oldValue,
+        newValue: context.newValue,
+        changes: { [field]: replacement.value },
+        source: 'clear',
+        operationId: context.operationId,
+      });
     }
   } finally {
-    undo.endTransaction();
-    if (changed) {
-      invalidateCellCache(grid);
-      grid._requestSchedulerPhase(RenderPhase.VIRTUALIZATION, 'clearSelection');
-      grid._emitDataChange();
+    try {
+      undo.endTransaction();
+    } finally {
+      if (changed) {
+        invalidateCellCache(grid);
+        grid._requestSchedulerPhase(RenderPhase.VIRTUALIZATION, 'clearSelection');
+        grid._emitDataChange();
+      }
     }
   }
   return { cells, limitExceeded: false };
