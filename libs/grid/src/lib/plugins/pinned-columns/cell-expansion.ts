@@ -90,7 +90,18 @@ export class CellExpansion {
     if (!current) {
       const owner: CellOwner = { cell, row, data, id, field: column.field, leases: new Set() };
       this.#owners.set(cell, owner);
-      registerControlCleanup(cell, () => this.#retire(owner), owner);
+      registerControlCleanup(
+        cell,
+        () => this.#retire(owner),
+        owner,
+        (next, column, retainsAdapterView) =>
+          retainsAdapterView &&
+          this.#owners.get(cell) === owner &&
+          this.#live(owner) &&
+          column.field === owner.field &&
+          owner.id !== undefined &&
+          tryResolveRowId(next, this.#grid.effectiveConfig?.getRowId) === owner.id,
+      );
     } else {
       current.data = data;
     }

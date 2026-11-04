@@ -22,6 +22,65 @@ afterEach(() => {
 });
 
 describe('mixed DOM columns and JSX GridColumn', () => {
+  it.each(['missing predicate', 'explicit veto'] as const)(
+    'retires the pinned adapter view when a co-owner has a %s',
+    async (mode) => {
+      vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
+      const container = document.createElement('div');
+      document.body.append(container);
+      const root = createRoot(container);
+      const pinned = new PinnedColumnsPlugin();
+      const config: GridConfig<Row> = { getRowId: (row) => row.id, plugins: [pinned] };
+      function Actions({ row }: { row: Row }) {
+        const [count, setCount] = useState(0);
+        return (
+          <button onClick={() => setCount(count + 1)}>
+            {row.name}:{count}
+          </button>
+        );
+      }
+      const renderer = ({ row }: { row: Row }) => <Actions row={row} />;
+      const render = (name: string) => (
+        <DataGrid
+          rows={[{ id: 'one', name }]}
+          gridConfig={config}
+          columns={[
+            { field: 'name', renderer: ({ row }) => row.name },
+            { field: '__actions', utility: true, pinned: 'right', width: 88, expandedCellWidth: 240 },
+          ]}
+        >
+          <GridColumn<Row> field="__actions">{renderer}</GridColumn>
+        </DataGrid>
+      );
+      const cleanup = vi.fn();
+      try {
+        await act(async () => root.render(render('Original')));
+        await vi.waitFor(() => expect(container.querySelector('.rows button')?.textContent).toBe('Original:0'));
+        const button = container.querySelector<HTMLButtonElement>('.rows button')!;
+        const cell = button.closest<HTMLElement>('.cell')!;
+        await act(async () => button.click());
+        const obsoleteRelease = pinned.retainCellExpansion('one', '__actions');
+        // Inject a foreign owner through the cross-bundle protocol, not a private core import.
+        const owners: unknown = Reflect.get(cell, Symbol.for('tbw.grid.control.cleanup'));
+        if (!(owners instanceof Map)) throw new Error('Expected the pinned cell cleanup owner');
+        owners.set({}, { dispose: cleanup, retain: mode === 'explicit veto' ? () => false : undefined });
+        await act(async () => root.render(render('Updated')));
+        await vi.waitFor(() => expect(container.querySelector('.rows button')?.textContent).toBe('Updated:0'));
+        expect(cell.isConnected).toBe(false);
+        expect(cleanup).toHaveBeenCalledOnce();
+        const successor = container.querySelector('.rows button')!.closest<HTMLElement>('.cell')!;
+        const release = pinned.retainCellExpansion('one', '__actions');
+        obsoleteRelease();
+        expect(successor.hasAttribute('data-tbw-cell-expanded')).toBe(true);
+        release();
+        expect(successor.hasAttribute('data-tbw-cell-expanded')).toBe(false);
+      } finally {
+        await act(async () => root.unmount());
+      }
+      expect(cleanup).toHaveBeenCalledOnce();
+    },
+  );
+
   it('preserves inline callback types and rejects unsupported renderer results', () => {
     const inline = (
       <DataGrid<Row> rows={[]} columns={[{ field: 'name', renderer: ({ row }) => <span>{row.name}</span> }]} />

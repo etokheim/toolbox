@@ -1,4 +1,4 @@
-import type { GridHost } from '../types';
+import type { ColumnConfig, GridHost } from '../types';
 
 // Symbols cross the independently bundled core/plugin entry points.
 const CLEANUP = Symbol.for('tbw.grid.control.cleanup');
@@ -7,8 +7,10 @@ const BOUNDARY_OWNER = Symbol.for('tbw.grid.control.boundary.owner');
 const DISCLOSURE = Symbol.for('tbw.grid.control.disclosure');
 const CONTENT_INVALID = Symbol.for('tbw.grid.cell.content-invalid');
 
+type RetainControl = (row: unknown, column: ColumnConfig, retainsAdapterView: boolean) => boolean;
+
 type ControlElement = HTMLElement & {
-  [CLEANUP]?: Map<object, () => void>;
+  [CLEANUP]?: Map<object, { dispose: () => void; retain?: RetainControl }>;
   [BOUNDARY]?: HTMLElement;
   [BOUNDARY_OWNER]?: object;
   [DISCLOSURE]?: boolean;
@@ -29,9 +31,26 @@ export function consumeCellContentInvalidation(cell: HTMLElement): boolean {
   return true;
 }
 
-export function registerControlCleanup(cell: HTMLElement, cleanup: () => void, owner: object = cell): void {
+export function registerControlCleanup(
+  cell: HTMLElement,
+  cleanup: () => void,
+  owner: object = cell,
+  retain?: RetainControl,
+): void {
   const element = cell as ControlElement;
-  (element[CLEANUP] ??= new Map()).set(owner, cleanup);
+  (element[CLEANUP] ??= new Map()).set(owner, { dispose: cleanup, retain });
+}
+
+/** Undefined means no owners; any registered owner's rejection forbids fallback retention. */
+export function canRetainControl(
+  cell: HTMLElement,
+  row: unknown,
+  column: ColumnConfig,
+  retainsAdapterView = false,
+): boolean | undefined {
+  const cleanups = (cell as ControlElement)[CLEANUP];
+  if (!cleanups?.size) return undefined;
+  return [...cleanups.values()].every((owner) => owner.retain?.(row, column, retainsAdapterView));
 }
 
 export function unregisterControlCleanup(cell: HTMLElement, owner: object): void {
@@ -42,7 +61,7 @@ export function releaseControl(cell: HTMLElement): void {
   const element = cell as ControlElement;
   const cleanups = element[CLEANUP];
   delete element[CLEANUP];
-  cleanups?.forEach((cleanup) => cleanup());
+  cleanups?.forEach((cleanup) => cleanup.dispose());
 }
 
 export function releaseCell(grid: GridHost, cell: HTMLElement): void {

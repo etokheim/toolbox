@@ -56,6 +56,13 @@ The default name source remains "Expand details" / "Collapse details"; custom co
 Call `setExpanded` from click only, not from additional Space/Enter handlers. Prefer `ControlView`
 for focus-preserving state updates. The grid owns cell navigation.
 
+Persistent standalone disclosures, including React portals, also keep focus across benign
+column/config refreshes ([WCAG 2.4.3](https://www.w3.org/WAI/WCAG22/Understanding/focus-order.html)).
+The same row object and logical ID/resolver, disclosure renderer and effective expander options
+must remain; unrelated column callbacks can change. Current context still reaches `update`.
+Changed ownership, renderer or expander options and genuine removal/teardown dispose normally.
+Plain `HTMLElement` outputs keep replacement semantics.
+
 ## Configuration
 
 | Option             | Type                                                                        | Default   | Description                 |

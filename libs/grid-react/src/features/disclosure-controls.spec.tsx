@@ -130,6 +130,69 @@ afterEach(async () => {
 });
 
 describe('React disclosure controls', () => {
+  it.each(['columns', 'config', 'sibling-callbacks'] as const)(
+    'retains the focused portal across a benign %s epoch',
+    async (refresh) => {
+      const features = config('stable');
+      const gridConfig = { columns, features };
+      const { grid, root } = await mount(
+        <Provider.Provider value="continuity">
+          <DataGrid rows={rows} gridConfig={gridConfig} />
+        </Provider.Provider>,
+      );
+      const button = grid.querySelector<HTMLButtonElement>('[data-control="detail"]')!;
+      const host = contexts.get('detail-p')!.host;
+      const events = vi.fn();
+      grid.addEventListener('detail-expand', events);
+      button.focus();
+      button.click();
+      await vi.waitFor(() => expect(button.getAttribute('aria-expanded')).toBe('true'));
+      expect(grid.querySelector('[data-control="detail"]')).toBe(button);
+      if (refresh === 'sibling-callbacks') {
+        root.render(
+          <Provider.Provider value="continuity">
+            <DataGrid
+              rows={rows}
+              gridConfig={gridConfig}
+              columns={[
+                {
+                  field: 'name',
+                  renderer: ({ row }) => {
+                    const link = document.createElement('a');
+                    link.dataset['name'] = `${row.name} refreshed`;
+                    link.textContent = `${row.name} refreshed`;
+                    return link;
+                  },
+                },
+              ]}
+            />
+          </Provider.Provider>,
+        );
+        await vi.waitFor(() => expect(grid.querySelector('[data-name="Parent refreshed"]')).not.toBeNull());
+      } else if (refresh === 'columns') grid.columns = [...grid.columns];
+      else grid.gridConfig = { ...grid.gridConfig };
+      await grid.ready();
+      await new Promise(requestAnimationFrame);
+      await new Promise(requestAnimationFrame);
+      expect(grid.querySelector('[data-control="detail"]')).toBe(button);
+      expect(document.activeElement).toBe(button);
+      expect(contexts.get('detail-p')!.host).toBe(host);
+      expect(button.dataset['provider']).toBe('continuity');
+      expect(button.dataset['owned']).toBe('true');
+      expect(liveControls.has(host)).toBe(true);
+      button.click();
+      await vi.waitFor(() => expect(button.getAttribute('aria-expanded')).toBe('false'));
+      expect(events).toHaveBeenCalledTimes(2);
+      const stale = contexts.get('detail-p')!;
+      grid.columns = grid.columns.map((col) => (col.field === '__tbw_expander' ? { ...col, width: 64 } : col));
+      await vi.waitFor(() => expect(button.isConnected).toBe(false));
+      expect(document.activeElement).toBe(grid);
+      await vi.waitFor(() => expect(liveControls.has(host)).toBe(false));
+      stale.setExpanded(true);
+      expect(events).toHaveBeenCalledTimes(2);
+    },
+  );
+
   it('preserves unscoped disclosure actions through same-callback JSX/DOM transitions', async () => {
     let dom = false;
     const renderer = (kind: string) => (context: TreeDisclosureContext<Row> | MasterDetailDisclosureContext<Row>) => {

@@ -108,6 +108,10 @@ Keyboard shortcuts that depend on a plugin being installed are documented on eac
 
 ## Focus Management
 
+Persistent [MasterDetail disclosure controls](/grid/plugins/master-detail/#accessibility) retain
+focus during benign column/config refreshes, including unrelated column callback changes.
+Changed row/control ownership still uses normal disposal and focus fallback.
+
 ### Focus Indicators
 
 The grid uses visible focus indicators that meet WCAG 2.2 Level AA requirements:

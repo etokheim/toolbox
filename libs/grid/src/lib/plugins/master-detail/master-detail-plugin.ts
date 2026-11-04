@@ -13,6 +13,7 @@ import {
 } from '../../core/internal/control-lifecycle';
 import { getRowIndexFromCell } from '../../core/internal/utils';
 import { getRowWindow } from '../../core/internal/row-window';
+import { tryResolveRowId } from '../../core/internal/row-identity';
 import { resolveConfiguredRowHeight } from '../../core/internal/virtualization';
 import {
   BaseGridPlugin,
@@ -59,6 +60,14 @@ function disclosureLabel(expanded: boolean): string {
 
 const RETIRED_DETAIL_REQUEST = Symbol.for('tbw.grid.retired-detail-request');
 type DetailRequestContext = FetchChildrenQuery['context'] & { [RETIRED_DETAIL_REQUEST]?: boolean };
+
+interface DisclosureRecord<TRow> {
+  row: object;
+  id: string | undefined;
+  resolver: NonNullable<GridHost['effectiveConfig']>['getRowId'];
+  element: HTMLElement;
+  slot?: ControlSlot<MasterDetailDisclosureContext<TRow>>;
+}
 
 /**
  * Master-Detail Plugin for tbw-grid
@@ -524,14 +533,7 @@ export class MasterDetailPlugin<TRow = unknown> extends BaseGridPlugin<MasterDet
   private detailDataMap: WeakMap<any, unknown[]> = new WeakMap();
   #cachedRows = new Set<WeakRef<object>>();
   #cacheRefs = new WeakMap<object, WeakRef<object>>();
-  #controls = new Map<
-    HTMLElement,
-    {
-      row: object;
-      element: HTMLElement;
-      slot?: ControlSlot<MasterDetailDisclosureContext<TRow>>;
-    }
-  >();
+  #controls = new Map<HTMLElement, DisclosureRecord<TRow>>();
   #expandedMasters = new Map<Element, unknown>();
   /**
    * Set by `expandAll()`, cleared by `collapseAll()` / `detach()`. While set,
@@ -722,6 +724,7 @@ export class MasterDetailPlugin<TRow = unknown> extends BaseGridPlugin<MasterDet
   }
 
   #createExpanderColumn(): ColumnConfig {
+    if (this.#expanderColumn) return this.#expanderColumn;
     const expanderCol = createExpanderColumnConfig(this);
     expanderCol.viewRenderer = (renderCtx) => {
       const { row, cellEl } = renderCtx;
@@ -747,10 +750,15 @@ export class MasterDetailPlugin<TRow = unknown> extends BaseGridPlugin<MasterDet
       return container;
     };
 
+    this.#expanderColumn = expanderCol;
     return expanderCol;
   }
 
-  #renderDisclosure(cell: HTMLElement, row: object): HTMLElement {
+  #expanderColumn?: ColumnConfig;
+
+  #getDisclosureRecord(cell: HTMLElement, row: object, custom: boolean): DisclosureRecord<TRow> {
+    const resolver = custom ? this.grid.effectiveConfig?.getRowId : undefined;
+    const id = custom ? tryResolveRowId(row, resolver) : undefined;
     let record = this.#controls.get(cell);
     if (record && (record.row !== row || record.element.closest('.cell') !== cell)) {
       this.#releaseDisclosure(cell);
@@ -759,10 +767,28 @@ export class MasterDetailPlugin<TRow = unknown> extends BaseGridPlugin<MasterDet
     if (!record) {
       const element = document.createElement('span');
       element.className = 'master-detail-expander expander-cell';
-      record = { row, element };
+      record = { row, id, resolver, element };
       this.#controls.set(cell, record);
     }
+    if (record.id !== id || record.resolver !== resolver) {
+      record.slot?.dispose();
+      record.slot = undefined;
+      record.id = id;
+      record.resolver = resolver;
+    }
+    return record;
+  }
+
+  #hasCurrentDisclosureIdentity(record: DisclosureRecord<TRow>): boolean {
+    return (
+      record.resolver === this.grid.effectiveConfig?.getRowId &&
+      record.id === tryResolveRowId(record.row, record.resolver)
+    );
+  }
+
+  #renderDisclosure(cell: HTMLElement, row: object): HTMLElement {
     const renderer = this.config.disclosureRenderer;
+    const record = this.#getDisclosureRecord(cell, row, !!renderer);
     const expanded = this.#isRowExpanded(row);
     if (!this.#hasDetail(row)) {
       record.slot?.dispose();
@@ -812,6 +838,7 @@ export class MasterDetailPlugin<TRow = unknown> extends BaseGridPlugin<MasterDet
             current.element.closest('.cell') !== cell ||
             !current.element.contains(slot.host) ||
             this.rows[rowIndex] !== row ||
+            !this.#hasCurrentDisclosureIdentity(current) ||
             this.config.disclosureRenderer !== renderer ||
             this.config.showExpandColumn === false ||
             !this.#hasDetail(row) ||
@@ -836,7 +863,44 @@ export class MasterDetailPlugin<TRow = unknown> extends BaseGridPlugin<MasterDet
   /** @internal */
   override afterCellRender(context: AfterCellRenderContext): void {
     const cell = context.cellElement;
-    if (this.#controls.has(cell)) registerControlCleanup(cell, () => this.#releaseDisclosure(cell), this);
+    const record = this.#controls.get(cell);
+    if (!record) return;
+    if (!record.slot?.persistent) {
+      registerControlCleanup(cell, () => this.#releaseDisclosure(cell), this);
+      return;
+    }
+    const column = context.column;
+    // Config merging records the original width lazily; it is not a rendered option.
+    const optionKeys = (value: ColumnConfig) => Reflect.ownKeys(value).filter((key) => key !== '__originalWidth');
+    const options = optionKeys(column).map((key) => [key, Reflect.get(column, key)] as const);
+    const meta = { ...column.meta };
+    const comparable =
+      options.every(([key, value]) => value === this || !value || typeof value !== 'object' || key === 'meta') &&
+      Object.values(meta).every((value) => !value || typeof value !== 'object');
+    registerControlCleanup(
+      cell,
+      () => this.#releaseDisclosure(cell),
+      this,
+      (row, next) => {
+        return (
+          comparable &&
+          row === record.row &&
+          this.#hasCurrentDisclosureIdentity(record) &&
+          this.#controls.get(cell) === record &&
+          !!record.slot?.persistent &&
+          record.slot.renderer === this.config.disclosureRenderer &&
+          record.element.contains(record.slot.host) &&
+          record.element.parentElement === cell &&
+          cell.firstElementChild === record.element &&
+          this.config.showExpandColumn !== false &&
+          this.#hasDetail(row) &&
+          optionKeys(next).length === options.length &&
+          options.every(([key, value]) => Object.hasOwn(next, key) && Object.is(Reflect.get(next, key), value)) &&
+          Object.keys(next.meta ?? {}).length === Object.keys(meta).length &&
+          Object.entries(meta).every(([key, value]) => Object.is(next.meta?.[key], value))
+        );
+      },
+    );
   }
 
   /** Replace only disclosure controls, preserving expanded details. @since 3.9.0 */

@@ -16,6 +16,10 @@ export class ControlSlot<TContext> {
     return !this.#disposed;
   }
 
+  get persistent(): boolean {
+    return this.active && !!this.#view;
+  }
+
   update(context: TContext): void {
     if (this.#disposed) return;
     try {
