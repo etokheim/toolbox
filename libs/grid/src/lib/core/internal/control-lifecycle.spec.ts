@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  canRetainControl,
   isControlEvent,
   markControlBoundary,
   ownControlBoundary,
@@ -13,6 +14,30 @@ afterEach(() => {
 });
 
 describe('composite cell control cleanup', () => {
+  it('requires every current owner to consent to continuity', () => {
+    const cell = document.createElement('div');
+    const owner = {};
+    const sibling = {};
+    const row = {};
+    const column = { field: 'test' };
+    const retain = vi.fn(() => true);
+    expect(canRetainControl(cell, row, column)).toBeUndefined();
+    registerControlCleanup(cell, vi.fn(), owner, retain);
+    expect(canRetainControl(cell, row, column)).toBe(true);
+    expect(retain).toHaveBeenCalledWith(row, column, false);
+    registerControlCleanup(cell, vi.fn(), sibling);
+    expect(canRetainControl(cell, row, column)).toBe(false);
+    unregisterControlCleanup(cell, sibling);
+    expect(canRetainControl(cell, row, column)).toBe(true);
+    registerControlCleanup(cell, vi.fn(), sibling, () => false);
+    expect(canRetainControl(cell, row, column)).toBe(false);
+    releaseControl(cell);
+    expect(canRetainControl(cell, row, column)).toBeUndefined();
+    registerControlCleanup(cell, vi.fn(), owner, retain);
+    unregisterControlCleanup(cell, owner);
+    expect(canRetainControl(cell, row, column)).toBeUndefined();
+  });
+
   it('does not stamp an obsolete owner while a foreign-grid successor owns the host', () => {
     const grid = document.createElement('div');
     const other = document.createElement('div');

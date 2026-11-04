@@ -229,6 +229,14 @@ This is the custom control's responsibility under
 [WCAG 4.1.2: Name, Role, Value](https://www.w3.org/WAI/WCAG22/Understanding/name-role-value.html);
 the grid owns navigation and the plugin owns expansion.
 
+For [WCAG 2.4.3: Focus Order](https://www.w3.org/WAI/WCAG22/Understanding/focus-order.html),
+a persistent standalone disclosure stays attached during a column/config refresh when its row
+object, logical ID/resolver, renderer and effective expander options remain unchanged.
+Unrelated column callbacks can change without removing its focus; `update` receives current state.
+This includes React portal controls. Row recycling/removal, changed identity or expander options,
+renderer replacement and plugin teardown still dispose the control, returning owned focus to the
+grid when connected. Plain `HTMLElement` outputs retain their replace-on-update semantics.
+
 ## Configuration Options
 
 See [`MasterDetailConfig`](./interfaces/masterdetailconfig/) for the full list of options and their defaults.

@@ -1,9 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ColumnInternal, FrameworkAdapter, GridHost, RowElementInternal } from '../types';
-import { registerControlCleanup } from './control-lifecycle';
+import { registerControlCleanup, unregisterControlCleanup } from './control-lifecycle';
 import { renderInlineRow, renderVisibleRows } from './rows';
 
-function fixture(owned = true) {
+function fixture(owned = true, registerCleanup = true) {
   const views = new WeakMap<HTMLElement, HTMLElement>();
   const tracked = new WeakSet<HTMLElement>();
   const context = vi.fn();
@@ -55,7 +55,7 @@ function fixture(owned = true) {
   const cell = rowEl.children[1] as HTMLElement;
   const button = cell.firstElementChild as HTMLButtonElement;
   const cleanup = vi.fn();
-  registerControlCleanup(cell, cleanup);
+  if (registerCleanup) registerControlCleanup(cell, cleanup);
   release.mockClear();
   return { grid, rowEl, row, cell, button, cleanup, release, columns, renderer, context };
 }
@@ -77,7 +77,7 @@ describe('bounded utility view retention', () => {
   });
 
   it('retains explicit identities without hiding resolver errors', () => {
-    const f = fixture();
+    const f = fixture(true, false);
     const resolver = vi.fn((row: { name: string }) => row.name);
     f.grid.effectiveConfig = { ...f.grid.effectiveConfig, getRowId: resolver };
     renderInlineRow(f.grid, f.rowEl, { name: f.row.name, action: 'Updated' }, 0, true);
@@ -89,7 +89,7 @@ describe('bounded utility view retention', () => {
   });
 
   it('keeps the owned cell physically attached, runs changed siblings and delivers fresh context', () => {
-    const f = fixture();
+    const f = fixture(true, false);
     f.button.focus();
     const removed: Node[] = [];
     const observer = new MutationObserver((records) => records.forEach((r) => removed.push(...r.removedNodes)));
@@ -110,6 +110,60 @@ describe('bounded utility view retention', () => {
     expect(f.cleanup).not.toHaveBeenCalled();
     expect(f.release).not.toHaveBeenCalledWith(f.cell);
   });
+
+  it.each([
+    ['missing predicate', false],
+    ['explicit veto', false],
+    ['missing predicate', true],
+    ['explicit veto', true],
+  ] as const)('honors a co-owner %s with immutable replacement=%s over adapter retention', (mode, replace) => {
+    const f = fixture(true, false);
+    const consentingCleanup = vi.fn();
+    registerControlCleanup(f.cell, consentingCleanup, {}, () => true);
+    registerControlCleanup(f.cell, f.cleanup, {}, mode === 'explicit veto' ? () => false : undefined);
+    expect(f.grid.__frameworkAdapter?.canRetainCellView?.(f.cell)).toBe(true);
+    const next = replace ? { ...f.row } : f.row;
+    renderInlineRow(f.grid, f.rowEl, next, 0, true);
+    expect(f.cell.isConnected).toBe(false);
+    expect(f.rowEl.children[1]).not.toBe(f.cell);
+    expect(consentingCleanup).toHaveBeenCalledOnce();
+    expect(f.cleanup).toHaveBeenCalledOnce();
+    expect(f.release).toHaveBeenCalledWith(f.cell);
+    renderInlineRow(f.grid, f.rowEl, next, 0, true);
+    expect(consentingCleanup).toHaveBeenCalledOnce();
+    expect(f.cleanup).toHaveBeenCalledOnce();
+  });
+
+  it('keeps the adapter path when its last registered control owner unregisters', () => {
+    const f = fixture();
+    unregisterControlCleanup(f.cell, f.cell);
+    renderInlineRow(f.grid, f.rowEl, { ...f.row, action: 'Updated' }, 0, true);
+    expect(f.rowEl.children[1]).toBe(f.cell);
+    expect(f.button.textContent).toBe('Updated');
+    expect(f.cleanup).not.toHaveBeenCalled();
+    expect(f.release).not.toHaveBeenCalledWith(f.cell);
+  });
+
+  it.each(['renderer', 'width', 'occurrence', 'adapter-release', 'raw-dom'] as const)(
+    'does not let contingent co-owner consent bypass adapter %s invalidation',
+    (change) => {
+      const f = fixture(change !== 'raw-dom', false);
+      const consent = vi.fn(
+        (_row: unknown, _column: ColumnInternal, retainsAdapterView: boolean) => retainsAdapterView,
+      );
+      registerControlCleanup(f.cell, f.cleanup, {}, consent);
+      let next = f.row;
+      if (change === 'renderer')
+        f.columns[1] = { ...f.columns[1], viewRenderer: () => document.createElement('button') };
+      if (change === 'width') f.columns[1] = { ...f.columns[1], width: 120 };
+      if (change === 'occurrence') next = { ...f.row, id: 'different' };
+      if (change === 'adapter-release') f.release(f.cell);
+      renderInlineRow(f.grid, f.rowEl, next, 0, true);
+      expect(consent).toHaveBeenCalledWith(next, f.columns[1], false);
+      expect(f.cell.isConnected).toBe(false);
+      expect(f.cleanup).toHaveBeenCalledOnce();
+    },
+  );
 
   it.each(['renderer', 'width', 'reorder', 'remove', 'occurrence', 'nested', 'explicit-rebuild'] as const)(
     'revokes on %s without duplicate control cleanup',
@@ -149,7 +203,7 @@ describe('bounded utility view retention', () => {
   });
 
   it('does not compare option snapshots on ordinary row patches', () => {
-    const f = fixture();
+    const f = fixture(true, false);
     const keys = vi.fn(Reflect.ownKeys);
     f.columns[1] = new Proxy<ColumnInternal>(f.columns[1], { ownKeys: keys });
     renderVisibleRows(f.grid, 0, 1, 1);

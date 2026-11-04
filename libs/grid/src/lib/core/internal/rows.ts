@@ -1,6 +1,6 @@
 import { FOCUSABLE_EDITOR_SELECTOR, GridClasses } from '../constants';
 import type { ColumnInternal, ColumnViewRenderer, GridHost, InternalGrid, RowElementInternal } from '../types';
-import { consumeCellContentInvalidation, isControlEvent, releaseCell } from './control-lifecycle';
+import { canRetainControl, consumeCellContentInvalidation, isControlEvent, releaseCell } from './control-lifecycle';
 import {
   CELL_CLASS_ERROR,
   FORMAT_ERROR,
@@ -990,22 +990,40 @@ function rememberUtilityView(grid: GridHost, cell: HTMLElement, col: ColumnInter
   utilityViewOptions.set(cell, { adapter, view: cell.firstElementChild, options });
 }
 
+function canRetainUtilityView(
+  adapter: GridHost['__frameworkAdapter'],
+  cell: HTMLElement,
+  column: ColumnInternal,
+): boolean {
+  const previous = utilityViewOptions.get(cell);
+  if (
+    !previous ||
+    previous.adapter !== adapter ||
+    previous.view !== cell.firstElementChild ||
+    !adapter?.canRetainCellView?.(cell)
+  )
+    return false;
+  return (
+    Reflect.ownKeys(column).length === previous.options.length &&
+    previous.options.every(([key, value]) => Object.hasOwn(column, key) && Object.is(Reflect.get(column, key), value))
+  );
+}
+
+function hasSameUtilityOccurrence(grid: GridHost, previous: unknown, next: unknown): boolean {
+  if (!grid.__frameworkAdapter?.canRetainCellView || previous === undefined) return false;
+  const getRowId = grid.effectiveConfig?.getRowId;
+  const id = tryResolveRowId(previous, getRowId);
+  return id !== undefined && id === tryResolveRowId(next, getRowId);
+}
+
 function retainedUtilityViews(
   grid: GridHost,
   rowEl: RowElementInternal,
   rowData: unknown,
 ): Set<HTMLElement> | undefined {
   const adapter = grid.__frameworkAdapter;
-  if (
-    !adapter?.canRetainCellView ||
-    !rowEl.isConnected ||
-    isSyntheticRow(rowData) ||
-    isSyntheticRow(rowEl.__rowDataRef)
-  )
-    return undefined;
-  const getRowId = grid.effectiveConfig?.getRowId;
-  const oldId = rowEl.__rowDataRef !== undefined ? tryResolveRowId(rowEl.__rowDataRef, getRowId) : undefined;
-  if (oldId === undefined || oldId !== tryResolveRowId(rowData, getRowId)) return undefined;
+  if (!rowEl.isConnected || isSyntheticRow(rowData) || isSyntheticRow(rowEl.__rowDataRef)) return undefined;
+  const sameId = hasSameUtilityOccurrence(grid, rowEl.__rowDataRef, rowData);
   const columns = grid._visibleColumns;
   const cells = Array.from(rowEl.children);
   if (cells.length !== columns.length || cells.some((cell, i) => cell.getAttribute('data-field') !== columns[i].field))
@@ -1013,21 +1031,10 @@ function retainedUtilityViews(
   const retained = new Set<HTMLElement>();
   for (let i = 0; i < cells.length; i++) {
     const cell = cells[i] as HTMLElement;
-    const previous = utilityViewOptions.get(cell);
-    if (
-      !previous ||
-      previous.adapter !== adapter ||
-      previous.view !== cell.firstElementChild ||
-      !adapter.canRetainCellView(cell)
-    )
-      continue;
-    const options = Reflect.ownKeys(columns[i]);
-    if (
-      options.length === previous.options.length &&
-      previous.options.every(
-        ([key, value]) => Object.hasOwn(columns[i], key) && Object.is(Reflect.get(columns[i], key), value),
-      )
-    ) {
+    const retainsAdapterView = sameId && canRetainUtilityView(adapter, cell, columns[i]);
+    const controlRetention = canRetainControl(cell, rowData, columns[i], retainsAdapterView);
+    if (controlRetention === false) continue;
+    if (retainsAdapterView || (controlRetention && rowEl.__rowDataRef === rowData)) {
       retained.add(cell);
     }
   }
