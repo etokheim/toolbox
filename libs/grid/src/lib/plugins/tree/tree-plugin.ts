@@ -968,7 +968,9 @@ export class TreePlugin<TRow = unknown> extends BaseGridPlugin<TreeConfig<TRow>>
    * This follows the same pattern as GroupingRowsPlugin.resolveGroupSortDirections.
    */
   private resolveEffectiveSortState(): { field: string; direction: 1 | -1 } | null {
-    this.#multiSort = undefined;
+    // Controlled sorting (`gridConfig.sortMode: 'external'`): the caller ordered every level.
+    // (`#multiSort` is already reset by the only caller, `processRows`.)
+    if (this.grid?.effectiveConfig?.sortMode === 'external') return null;
     // When MultiSort is loaded, prefer its model for consistency
     const multiSortResults = this.grid?.query?.('sort:get-model', null);
     if (Array.isArray(multiSortResults) && multiSortResults.length > 0) {

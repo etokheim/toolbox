@@ -261,7 +261,9 @@ for first:
 The remainder of `GridConfig` covers grid-wide toggles (`sortable`, `resizable`), initial state
 (`initialSort`, `columnState`), presentation overrides (`icons`, `animation`, `rowClass`,
 `loadingRenderer`, `emptyRenderer`, `emptyOverlay`), accessibility (`a11y`, `gridAriaLabel`,
-`gridAriaDescribedBy`) and the low-level `sortHandler` escape hatch.
+`gridAriaDescribedBy`), the low-level `sortHandler` escape hatch and `sortMode: 'external'` for
+[controlled sorting](/grid/plugins/multi-sort/#controlled-external-sorting) (the grid keeps its sort
+UI and `sort-change` events but renders `rows` in the order you supply).
 
 **Precedence (low → high):**
 

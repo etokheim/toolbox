@@ -214,6 +214,17 @@ const props = defineProps({
     default: undefined,
   },
   /**
+   * Who orders the rows when a sort is active (`gridConfig.sortMode`).
+   * `'external'` = controlled sorting: the grid keeps its sort UI and
+   * `sort-change` events but renders `rows` in the order you pass.
+   * @default 'local'
+   * @since 2.7.0
+   */
+  sortMode: {
+    type: String as PropType<'local' | 'external'>,
+    default: undefined,
+  },
+  /**
    * Grid-wide filtering toggle.
    * When false, disables filtering for all columns regardless of their individual `filterable` setting.
    * Requires the FilteringPlugin to be loaded (via `filtering` prop or feature import).
@@ -588,6 +599,9 @@ const mergedConfig = computed<GridConfig<TRow> | undefined>(() => {
   const coreConfigOverrides: Record<string, unknown> = {};
   if (props.sortable !== undefined) {
     coreConfigOverrides['sortable'] = props.sortable;
+  }
+  if (props.sortMode !== undefined) {
+    coreConfigOverrides['sortMode'] = props.sortMode;
   }
   if (props.filterable !== undefined) {
     coreConfigOverrides['filterable'] = props.filterable;

@@ -298,3 +298,24 @@ describe('DataGrid cell loading renderer lifecycle', () => {
     });
   });
 });
+
+describe('DataGrid sortMode prop', () => {
+  afterEach(() => {
+    document.body.innerHTML = '';
+  });
+
+  it('forwards sortMode to gridConfig.sortMode', async () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    const rows: Row[] = [{ id: 1, name: 'one' }];
+
+    await act(async () => {
+      root.render(<DataGrid<Row> rows={rows} columns={[{ field: 'id' }]} sortMode="external" />);
+    });
+
+    const gridEl = container.querySelector('tbw-grid') as DataGridElement<Row>;
+    expect((gridEl.gridConfig as GridConfig<Row>).sortMode).toBe('external');
+    await act(async () => root.unmount());
+  });
+});

@@ -193,7 +193,12 @@ export class MultiSortPlugin extends BaseGridPlugin<MultiSortConfig> {
     // A ServerSide data source in `sortMode: 'server'` already sorted the rows
     // (via `getRows({ sortModel })`) with its own collation / computed keys, and
     // its loading placeholders sit at their block positions — keep that order (#521).
-    if (this.grid?.query?.<'server' | 'local'>('datasource:sort-mode', null)?.[0] === 'server') {
+    // `gridConfig.sortMode: 'external'` (controlled sorting) is the same contract:
+    // the caller ordered the rows, the model only drives indicators and events.
+    if (
+      this.grid?.effectiveConfig?.sortMode === 'external' ||
+      this.grid?.query?.<'server' | 'local'>('datasource:sort-mode', null)?.[0] === 'server'
+    ) {
       this.cachedSortResult = null;
       return rows as unknown[];
     }

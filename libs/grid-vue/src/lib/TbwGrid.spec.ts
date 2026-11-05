@@ -162,6 +162,20 @@ describe('TbwGrid integration', () => {
     // Individual prop wins over default
     expect(cols[1]).toMatchObject({ field: 'b', sortable: false, resizable: true });
   });
+
+  it('forwards the sortMode prop to gridConfig.sortMode', async () => {
+    app = createApp({
+      setup() {
+        return () => h(TbwGrid, { rows: [], columns: [{ field: 'a' }] as unknown as never, sortMode: 'external' });
+      },
+    });
+    app.mount(mountEl);
+    await nextTick();
+    await nextTick();
+
+    const gridEl = mountEl.querySelector('tbw-grid') as HTMLElement & { gridConfig?: { sortMode?: string } };
+    expect(gridEl.gridConfig?.sortMode).toBe('external');
+  });
 });
 
 type DiffRow = { id: number; name: string };
