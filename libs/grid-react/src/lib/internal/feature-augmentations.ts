@@ -16,6 +16,7 @@
 
 export type { _Augmentation as _CellEntryAugmentation } from '@toolbox-web/grid/features/cell-entry';
 export type { _Augmentation as _ClipboardAugmentation } from '@toolbox-web/grid/features/clipboard';
+export type { _Augmentation as _FillHandleAugmentation } from '@toolbox-web/grid/features/fill-handle';
 export type { _Augmentation as _ColumnVirtualizationAugmentation } from '@toolbox-web/grid/features/column-virtualization';
 export type { _Augmentation as _ContextMenuAugmentation } from '@toolbox-web/grid/features/context-menu';
 export type { _Augmentation as _EditingAugmentation } from '@toolbox-web/grid/features/editing';

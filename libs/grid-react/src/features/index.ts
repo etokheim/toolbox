@@ -34,6 +34,7 @@ import './context-menu';
 import './editing';
 import './cell-entry';
 import './export';
+import './fill-handle';
 import './filtering';
 import './grouping-columns';
 import './grouping-rows';

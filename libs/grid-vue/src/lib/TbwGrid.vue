@@ -13,6 +13,9 @@ import type {
   BeforeEditCloseDetail,
   CellActivateDetail,
   CellClearDetail,
+  FillCompleteDetail,
+  FillHandleConfig,
+  FillStartDetail,
   CellCancelDetail,
   CellChangeDetail,
   CellClickDetail,
@@ -275,6 +278,11 @@ const props = defineProps({
     type: [Boolean, Object] as PropType<boolean | CellEntryConfig>,
     default: undefined,
   },
+  /** Vertical automatic fill; requires range selection, editing and undo-redo. */
+  fillHandle: {
+    type: [Boolean, Object] as PropType<boolean | FillHandleConfig<TRow>>,
+    default: undefined,
+  },
   /** Enable inline cell editing */
   editing: {
     type: [Boolean, String, Object] as PropType<boolean | 'click' | 'dblclick' | 'manual' | EditingConfig>,
@@ -401,6 +409,8 @@ const FORWARDED_EVENTS = [
   'row-click',
   'cell-activate',
   'cell-clear',
+  'fill-start',
+  'fill-complete',
   'cell-change',
   'cell-commit',
   'cell-cancel',
@@ -488,6 +498,10 @@ const emit = defineEmits<{
   (e: 'cell-activate', event: CustomEvent<CellActivateDetail<TRow>>): void;
   /** Selected-cell clear outcomes. @since 2.7.0 */
   (e: 'cell-clear', event: CustomEvent<CellClearDetail<TRow>>): void;
+  /** Cancelable notification before a fill writes. @since 2.7.0 */
+  (e: 'fill-start', event: CustomEvent<FillStartDetail>): void;
+  /** Fill outcomes, cancellation or oversized-action rejection. @since 2.7.0 */
+  (e: 'fill-complete', event: CustomEvent<FillCompleteDetail<TRow>>): void;
   (e: 'cell-change', event: CustomEvent<CellChangeDetail<TRow>>): void;
   (e: 'cell-commit', event: CustomEvent<CellCommitDetail<TRow>>): void;
   (e: 'cell-cancel', event: CustomEvent<CellCancelDetail>): void;

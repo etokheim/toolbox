@@ -177,6 +177,14 @@ enable `undoRedo`, set `cellEntry={{ clearOnDelete: true }}` and handle
 See [Cell Entry](https://toolboxjs.com/grid/plugins/cell-entry/) for keyboard,
 validation and boundary-focus behaviour.
 
+### Fill Handle
+
+For vertical automatic fill, import `features/fill-handle`, `features/selection`,
+`features/editing` and `features/undo-redo`, then use `fillHandle`,
+`selection="range"` and `undoRedo`. Handle `onFillComplete(detail)` for outcomes;
+`onFillStart(detail, event)` may call `event.preventDefault()` to cancel.
+See [Fill Handle](https://toolboxjs.com/grid/plugins/fill-handle/).
+
 With `features/pinned-rows` imported, `pinnedRows.slots` updates live on both the
 feature prop and `gridConfig.features.pinnedRows`. Inline panel renderers, aggregation
 formatters and cell callbacks use their latest values without resetting editing,

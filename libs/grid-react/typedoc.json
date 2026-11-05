@@ -3,6 +3,7 @@
   "entryPoints": [
     "src/index.ts",
     "src/features/cell-entry.ts",
+    "src/features/fill-handle.ts",
     "src/features/selection.ts",
     "src/features/filtering.ts",
     "src/features/export.ts",

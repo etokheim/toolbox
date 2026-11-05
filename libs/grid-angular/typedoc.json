@@ -25,6 +25,7 @@
     "features/sticky-rows/src/index.ts",
     "features/tooltip/src/index.ts",
     "features/cell-entry/src/index.ts",
+    "features/fill-handle/src/index.ts",
     "features/tree/src/index.ts",
     "features/undo-redo/src/index.ts",
     "features/visibility/src/index.ts"

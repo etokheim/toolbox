@@ -167,6 +167,14 @@ enable `undo-redo`, set `:cell-entry="{ clearOnDelete: true }"` and handle
 See [Cell Entry](https://toolboxjs.com/grid/plugins/cell-entry/) for keyboard,
 validation and boundary-focus behaviour.
 
+### Fill Handle
+
+For vertical automatic fill, import `features/fill-handle`, `features/selection`,
+`features/editing` and `features/undo-redo`, then use `:fill-handle="true"`,
+`selection="range"` and `:undo-redo="true"`. Handle `@fill-complete` and the
+cancelable `@fill-start` (native `CustomEvent`s).
+See [Fill Handle](https://toolboxjs.com/grid/plugins/fill-handle/).
+
 ### Import All Features
 
 For prototyping or when bundle size isn't critical, import all features at once:

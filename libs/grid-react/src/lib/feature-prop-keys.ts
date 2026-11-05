@@ -84,6 +84,7 @@ const BUILTIN_FEATURE_PROP_KEYS: readonly FeatureName[] = [
   'selection',
   'editing',
   'cellEntry',
+  'fillHandle',
   'filtering',
   'multiSort',
   'clipboard',
