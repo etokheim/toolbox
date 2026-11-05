@@ -168,11 +168,15 @@ export class Grid implements OnInit, AfterContentInit, OnDestroy {
 
       // Build core config overrides from individual inputs
       const sortableValue = this.sortable();
+      const sortModeValue = this.sortMode();
       const filterableValue = this.filterable();
       const selectableValue = this.selectable();
       const coreConfigOverrides: Record<string, unknown> = {};
       if (sortableValue !== undefined) {
         coreConfigOverrides['sortable'] = sortableValue;
+      }
+      if (sortModeValue !== undefined) {
+        coreConfigOverrides['sortMode'] = sortModeValue;
       }
       if (filterableValue !== undefined) {
         coreConfigOverrides['filterable'] = filterableValue;
@@ -360,6 +364,23 @@ export class Grid implements OnInit, AfterContentInit, OnDestroy {
    * ```
    */
   sortable = input<boolean>();
+
+  /**
+   * Who orders the rows when a sort is active (`gridConfig.sortMode`).
+   *
+   * `'external'` enables controlled sorting: the grid keeps its sort UI and
+   * `(sortChange)` events but renders `rows` in exactly the order you pass.
+   *
+   * @default 'local'
+   *
+   * @example
+   * ```html
+   * <tbw-grid [rows]="sortedRows()" sortMode="external" (sortChange)="onSort($event)" />
+   * ```
+   *
+   * @since 2.7.0
+   */
+  sortMode = input<'local' | 'external'>();
 
   /**
    * Grid-wide filtering toggle.

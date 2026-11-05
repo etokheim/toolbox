@@ -194,6 +194,25 @@ export interface DataGridProps<TRow = unknown> extends AllFeatureProps<TRow>, Ev
    */
   sortable?: boolean;
   /**
+   * Who orders the rows when a sort is active. Shorthand for `gridConfig.sortMode`.
+   *
+   * `'external'` enables **controlled sorting**: the grid keeps its sort UI,
+   * `sortModel` and `onSortChange` events but renders `rows` in exactly the
+   * order you pass — sort them yourself in response to `onSortChange`.
+   *
+   * @default 'local'
+   *
+   * @example
+   * ```tsx
+   * const [sort, setSort] = useState<SortChangeDetail | null>(null);
+   * const sorted = useMemo(() => sortRows(rows, sort), [rows, sort]);
+   * <DataGrid rows={sorted} sortMode="external" onSortChange={setSort} />
+   * ```
+   *
+   * @since 2.7.0
+   */
+  sortMode?: 'local' | 'external';
+  /**
    * Grid-wide filtering toggle.
    * When false, disables filtering for all columns regardless of their individual `filterable` setting.
    * When true (default), columns with `filterable: true` can be filtered.
@@ -401,6 +420,7 @@ export const DataGrid = forwardRef<DataGridRef, DataGridProps>(function DataGrid
     fitMode,
     columnInference,
     sortable,
+    sortMode,
     filterable,
     selectable,
     loading,
@@ -584,6 +604,9 @@ export const DataGrid = forwardRef<DataGridRef, DataGridProps>(function DataGrid
     if (sortable !== undefined) {
       coreConfigOverrides['sortable'] = sortable;
     }
+    if (sortMode !== undefined) {
+      coreConfigOverrides['sortMode'] = sortMode;
+    }
     if (filterable !== undefined) {
       coreConfigOverrides['filterable'] = filterable;
     }
@@ -620,7 +643,7 @@ export const DataGrid = forwardRef<DataGridRef, DataGridProps>(function DataGrid
     }
 
     return processed;
-  }, [rendererStableConfig, allPlugins, sortable, filterable, selectable, iconOverrides, getGridOwner]);
+  }, [rendererStableConfig, allPlugins, sortable, sortMode, filterable, selectable, iconOverrides, getGridOwner]);
 
   useLayoutEffect(() => {
     const grid = gridRef.current;
