@@ -11,9 +11,12 @@ import type { A11yMessages, AnimationConfig, GridIcons } from './types';
 /**
  * Default English announcement messages.
  * Used when no custom messages are provided via {@link A11yConfig.messages}.
+ * FillHandle message defaults ship in the FillHandle plugin bundle.
  * @since 2.0.0
  */
-export const DEFAULT_A11Y_MESSAGES: Required<A11yMessages> = {
+export const DEFAULT_A11Y_MESSAGES: Required<
+  Omit<A11yMessages, 'fillHandleLabel' | 'fillPreview' | 'cellsFilled' | 'fillLimitExceeded' | 'fillCanceled'>
+> = {
   sortApplied: (column, direction) => `Sorted by ${column}, ${direction}`,
   sortCleared: () => 'Sort cleared',
   filterApplied: (column) => `Filter applied on ${column}`,
@@ -24,11 +27,6 @@ export const DEFAULT_A11Y_MESSAGES: Required<A11yMessages> = {
   selectionChanged: (count) => `${count} rows selected`,
   cellsCleared: (cleared, notCleared) => `${cleared} cells cleared, ${notCleared} cells not cleared`,
   cellClearLimitExceeded: () => 'Clear rejected: select no more than 10,000 cells',
-  fillHandleLabel: () => 'Fill handle: drag or press Enter to fill rows',
-  fillPreview: (rows, direction) => `Fill ${direction} ${rows} rows. Enter applies, Escape cancels`,
-  cellsFilled: (filled, notFilled) => `${filled} cells filled, ${notFilled} cells not filled`,
-  fillLimitExceeded: () => 'Fill rejected: fill no more than 10,000 cells',
-  fillCanceled: () => 'Fill canceled',
   selectAllRows: () => 'Select all rows',
   selectRow: (rowIndex) => `Select row ${rowIndex + 1}`,
   columnSelected: (label) => `Column ${label} selected`,

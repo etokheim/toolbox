@@ -1,4 +1,4 @@
-import { announce, getA11yMessage } from '../../core/internal/aria';
+import { announce } from '../../core/internal/aria';
 import { CONFIG_RULE_ERROR, throwDiagnostic } from '../../core/internal/diagnostics';
 import { startPointerDrag } from '../../core/internal/pointer-drag';
 import {
@@ -22,6 +22,7 @@ import {
   rebaseFillPlan,
 } from './fill-cells';
 import styles from './fill-handle.css?inline';
+import type { A11yMessages, GridConfig } from '../../core/types';
 import type { FillCompleteDetail, FillDirection, FillHandleConfig, FillRequest } from './types';
 
 interface FillSession {
@@ -34,6 +35,28 @@ interface FillSession {
 
 const HANDLE_CLASS = 'tbw-fill-handle';
 const PREVIEW_CLASS = 'tbw-fill-preview';
+
+// English defaults live here, not in core DEFAULT_A11Y_MESSAGES, to keep them out of the core bundle.
+const FILL_MESSAGES = {
+  fillHandleLabel: () => 'Fill handle: drag or press Enter to fill rows',
+  fillPreview: (rows: number, direction: FillDirection) =>
+    `Fill ${direction} ${rows} rows. Enter applies, Escape cancels`,
+  cellsFilled: (filled: number, notFilled: number) => `${filled} cells filled, ${notFilled} cells not filled`,
+  fillLimitExceeded: () => 'Fill rejected: fill no more than 10,000 cells',
+  fillCanceled: () => 'Fill canceled',
+} satisfies Required<
+  Pick<A11yMessages, 'fillHandleLabel' | 'fillPreview' | 'cellsFilled' | 'fillLimitExceeded' | 'fillCanceled'>
+>;
+type FillMessageKey = keyof typeof FILL_MESSAGES;
+
+function getA11yMessage<K extends FillMessageKey>(
+  gridEl: HTMLElement,
+  key: K,
+  ...args: Parameters<(typeof FILL_MESSAGES)[K]>
+): string {
+  const custom = (gridEl as HTMLElement & { effectiveConfig?: GridConfig }).effectiveConfig?.a11y?.messages?.[key];
+  return ((custom ?? FILL_MESSAGES[key]) as (...a: typeof args) => string)(...args);
+}
 
 /**
  * Vertical automatic fill from a single selected range.
