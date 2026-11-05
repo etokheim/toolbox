@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { ColumnConfig } from '../../core/types';
-import { canMoveColumn, moveColumn } from './column-drag';
+import { canMoveColumn, columnOffsets, moveColumn, moveColumnBlock } from './column-drag';
 import { ReorderPlugin } from './reorder-plugin';
 
 describe('column-drag', () => {
@@ -156,6 +156,54 @@ describe('column-drag', () => {
       const columns = ['a', 'b', 'c'];
       const result = moveColumn(columns, 1, 10);
       expect(result).toEqual(['a', 'b', 'c']);
+    });
+  });
+
+  describe('moveColumnBlock', () => {
+    const order = ['a', 'b', 'c', 'd', 'e'];
+
+    it('inserts a single column before or after the anchor', () => {
+      expect(moveColumnBlock(order, ['a'], 'd', true)).toEqual(['b', 'c', 'a', 'd', 'e']);
+      expect(moveColumnBlock(order, ['a'], 'd', false)).toEqual(['b', 'c', 'd', 'a', 'e']);
+      expect(moveColumnBlock(order, ['e'], 'a', true)).toEqual(['e', 'a', 'b', 'c', 'd']);
+    });
+
+    it('moves a block keeping its relative order, regardless of the given order', () => {
+      expect(moveColumnBlock(order, ['c', 'b'], 'e', false)).toEqual(['a', 'd', 'e', 'b', 'c']);
+    });
+
+    it('returns null when the anchor is missing or dragged', () => {
+      expect(moveColumnBlock(order, ['a'], 'z', true)).toBeNull();
+      expect(moveColumnBlock(order, ['a', 'b'], 'b', true)).toBeNull();
+    });
+
+    it('does not mutate the input', () => {
+      const copy = [...order];
+      moveColumnBlock(copy, ['a'], 'e', false);
+      expect(copy).toEqual(order);
+    });
+  });
+
+  describe('columnOffsets', () => {
+    const widths = new Map([
+      ['a', 50],
+      ['b', 100],
+      ['c', 150],
+    ]);
+
+    it('returns the position delta of each moved column', () => {
+      const deltas = columnOffsets(['a', 'b', 'c'], ['b', 'c', 'a'], widths);
+      expect(Object.fromEntries(deltas)).toEqual({ a: 250, b: -50, c: -50 });
+    });
+
+    it('omits columns that keep their position', () => {
+      expect(columnOffsets(['a', 'b', 'c'], ['a', 'b', 'c'], widths).size).toBe(0);
+      expect([...columnOffsets(['a', 'b', 'c'], ['b', 'a', 'c'], widths).keys()]).toEqual(['b', 'a']);
+    });
+
+    it('gives hidden columns (no width) no space', () => {
+      const deltas = columnOffsets(['a', 'hidden', 'b', 'c'], ['b', 'hidden', 'a', 'c'], widths);
+      expect(Object.fromEntries(deltas)).toEqual({ a: 100, b: -50 });
     });
   });
 });

@@ -48,3 +48,53 @@ export function moveColumn(columns: string[], fromIndex: number, toIndex: number
   result.splice(toIndex, 0, removed);
   return result;
 }
+
+/**
+ * Move a block of fields so it sits directly before or after an anchor field.
+ *
+ * This is the shape of every drag drop: a single column or a whole group
+ * fragment is lifted out and re-inserted next to the hovered column (or the
+ * first/last column of the hovered group fragment).
+ *
+ * @param order - Field names in current order
+ * @param dragged - Fields being moved; kept in their current relative order
+ * @param anchor - Field to insert next to; must not be one of `dragged`
+ * @param before - Insert before (`true`) or after (`false`) the anchor
+ * @returns The new order, or `null` when the anchor is not in the order
+ */
+export function moveColumnBlock(order: string[], dragged: string[], anchor: string, before: boolean): string[] | null {
+  const remaining = order.filter((f) => !dragged.includes(f));
+  const at = remaining.indexOf(anchor);
+  if (at === -1) return null;
+  remaining.splice(before ? at : at + 1, 0, ...order.filter((f) => dragged.includes(f)));
+  return remaining;
+}
+
+/**
+ * Horizontal offset each visible column needs to travel from its slot in
+ * `from` to its slot in `to`, given every visible column's width.
+ * Fields missing from `widths` (hidden columns) take no space.
+ *
+ * @returns Map of field to delta in px; columns that do not move are omitted
+ */
+export function columnOffsets(from: string[], to: string[], widths: Map<string, number>): Map<string, number> {
+  const lefts = (order: string[]): Map<string, number> => {
+    const out = new Map<string, number>();
+    let x = 0;
+    for (const f of order) {
+      const w = widths.get(f);
+      if (w === undefined) continue;
+      out.set(f, x);
+      x += w;
+    }
+    return out;
+  };
+  const before = lefts(from);
+  const after = lefts(to);
+  const deltas = new Map<string, number>();
+  after.forEach((left, f) => {
+    const d = left - (before.get(f) ?? left);
+    if (Math.abs(d) > 0.5) deltas.set(f, d);
+  });
+  return deltas;
+}

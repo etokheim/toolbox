@@ -76,7 +76,7 @@ These are authorized roadmap items, not finalized APIs. Recheck current code/ups
 | Pinned hover backgrounds                               | Theme/CSS bug repro                               | Verify light/dark, selection and pinned/unpinned parity.                                 |
 | Sticky boundary shadows                                | State/CSS extension or theme                      | Shared edge state rather than per-consumer geometry reads.                               |
 | Auto height/width with outer-page sticky header/footer | Scroll-layout design                              | Which element owns scrolling; header/group/footer offsets, resizing and virtualization.  |
-| Live column movement / transient scrollbar             | Separate repro + opt-in experiment                | Reproduce release-time width glitch; measure preview costs and cancellation.             |
+| Live column movement / transient scrollbar             | Delivered: `reorderColumns.livePreview` (opt-in)  | Scrollbar flash fixed (resize handles hidden while transformed); Roma adoption pending.  |
 | Numeric right alignment                                | Theme/default policy                              | Preserve explicit alignment; assess compatibility before changing defaults.              |
 | Hover-expanding sticky action column                   | Consumer overlay first                            | Identify reusable clipping/stacking hook without moving business actions into core.      |
 | Rendered-row identity/hooks                            | Public extension-point gap assessment             | Reuse existing identity contract; avoid index-as-ID or parallel metadata systems.        |

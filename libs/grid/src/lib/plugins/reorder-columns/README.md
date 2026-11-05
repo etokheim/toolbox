@@ -37,6 +37,7 @@ grid.columns = [
 | ------------------- | --------------------------- | -------- | ------------------------------------------------------------------------- |
 | `animation`         | `false \| 'flip' \| 'fade'` | `'flip'` | Animation type: `false` (instant), `'flip'` (slide), `'fade'` (crossfade) |
 | `animationDuration` | `number`                    | `200`    | Animation duration in ms (applies to FLIP animation)                      |
+| `livePreview`       | `boolean`                   | `false`  | Slide columns live while dragging; persist only on drop                   |
 
 ### Animation Types
 
@@ -50,6 +51,20 @@ new ReorderPlugin({ animation: 'flip', animationDuration: 300 });
 // Fade animation - uses View Transitions API for cross-fade effect
 new ReorderPlugin({ animation: 'fade' });
 ```
+
+### Live Preview
+
+Set `livePreview: true` to make the columns slide into place while a header is dragged, instead of only showing a drop indicator:
+
+```typescript
+new ReorderPlugin({ livePreview: true });
+```
+
+- The preview is visual only (CSS transforms). `column-move` and `column-state-change` fire once, on drop, so persisted state only changes when the user commits.
+- Escape, releasing outside a valid target, or vetoing `column-move` with `preventDefault()` slides the columns back to their exact original order.
+- Valid targets are unchanged: pinned and locked columns still refuse drops, and group rules such as `lockGroupOrder` still apply.
+- Releasing over the dragged column's own slot is a no-op and emits no event.
+- It is opt-in, so the default drop-indicator drag is unchanged. It is ignored while `ColumnVirtualizationPlugin` is active, because off-screen columns cannot be previewed.
 
 ## Limitations
 
