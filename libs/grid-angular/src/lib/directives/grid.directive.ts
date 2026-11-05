@@ -771,6 +771,8 @@ export class Grid implements OnInit, AfterContentInit, OnDestroy {
    */
   declare private _intentionallyOmittedEvents:
     | 'cell-clear' // GridCellEntryDirective
+    | 'fill-start' // GridFillHandleDirective
+    | 'fill-complete' // GridFillHandleDirective
     | 'cell-commit'
     | 'cell-cancel'
     | 'row-commit'
@@ -949,6 +951,7 @@ export class Grid implements OnInit, AfterContentInit, OnDestroy {
     addPlugin('stickyRows');
     addPlugin('tooltip');
     addPlugin('cellEntry');
+    addPlugin('fillHandle');
 
     return plugins;
   }

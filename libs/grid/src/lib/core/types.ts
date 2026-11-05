@@ -2616,6 +2616,16 @@ export interface A11yMessages {
   cellsCleared?: (cleared: number, notCleared: number) => string;
   /** Whole-action rejection for an oversized selected-cell clear. @since 3.10.0 */
   cellClearLimitExceeded?: () => string;
+  /** Accessible name of the FillHandle corner button. @since 3.11.0 */
+  fillHandleLabel?: () => string;
+  /** Fill preview while dragging or using the keyboard. @since 3.11.0 */
+  fillPreview?: (rows: number, direction: 'up' | 'down') => string;
+  /** Fill summary; omitted keys use English defaults. @since 3.11.0 */
+  cellsFilled?: (filled: number, notFilled: number) => string;
+  /** Whole-action rejection for an oversized fill. @since 3.11.0 */
+  fillLimitExceeded?: () => string;
+  /** A fill was canceled by the user, a `fill-start` listener or a stale gesture. @since 3.11.0 */
+  fillCanceled?: () => string;
   /** Announced when row editing starts. */
   editingStarted: (rowIndex: number) => string;
   /** Announced when row editing is committed. */

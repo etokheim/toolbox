@@ -88,6 +88,7 @@ Loaded on demand from `.github/knowledge/` — read relevant files before starti
 | `grid-plugin-responsive`    | Responsive plugin           | Breakpoints, card layout, view transitions & morph, column fades/`hiddenColumns`, card height                               |
 | `grid-plugins-editing`      | Editing & CellEntry         | Editor injection, final acceptance, keyboard guards, dirty tracking, selected clearing                                      |
 | `grid-plugin-undo-redo`     | History ownership           | Native replay identity/snapshots, external owner delegation, grouping and native-input priority                             |
+| `grid-plugin-fill-handle`   | FillHandle plugin           | Vertical fill session, series inference, baseline conflicts, shared strict bulk policy, handle stacking                     |
 | `grid-plugins-shell`        | Shell plugin                | v3 opt-in model, HARD RULE #370, tool panels, header/toolbar content, dropdown mode                                         |
 | `grid-features`             | Feature registry            | Feature vs plugin distinction, registry pattern, feature catalog, opt-out validation                                        |
 | `a11y`                      | Accessibility (WCAG 2.2 AA) | Role tree & `presentation` promotion, `A11yMessages` naming, surface-vs-text colour tokens, landmarks, SC 2.5.8, test gates |

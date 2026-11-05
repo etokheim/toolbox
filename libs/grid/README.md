@@ -686,6 +686,7 @@ The grid uses a plugin architecture for optional features. Each plugin has its o
 | --------------------- | ------------------------------ | ----------------------------------------------------------- |
 | Editing               | Inline cell editing            | [README](./src/lib/plugins/editing/README.md)               |
 | Cell Entry            | Opt-in single-cell activation  | [README](./src/lib/plugins/cell-entry/README.md)            |
+| Fill Handle           | Vertical automatic fill        | [README](./src/lib/plugins/fill-handle/README.md)           |
 | Selection             | Cell, row, and range selection | [README](./src/lib/plugins/selection/README.md)             |
 | Multi-Sort            | Multi-column sorting           | [README](./src/lib/plugins/multi-sort/README.md)            |
 | Filtering             | Column filters                 | [README](./src/lib/plugins/filtering/README.md)             |

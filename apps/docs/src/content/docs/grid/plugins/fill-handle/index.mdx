@@ -1,0 +1,172 @@
+---
+title: "Fill Handle Plugin"
+description: "Fill a selected range down or up with inferred number and date series, as one undo step."
+pluginKinds: [functional]
+---
+
+import { TabItem, Tabs } from '@astrojs/starlight/components';
+
+The Fill Handle plugin adds spreadsheet-style **vertical automatic fill**. Select a range, then drag the square at its bottom-right corner up or down. Each column continues its own series: numbers keep their step, dates keep their calendar rhythm and anything else repeats. Every accepted write of one fill is a **single undo step**.
+
+> ⚠️ **Required Dependencies:** [Selection](/grid/plugins/selection/) in `'range'` mode, [Editing](/grid/plugins/editing/) and [Undo/Redo](/grid/plugins/undo-redo/). Editing owns writes and validation, Selection owns the range and Undo/Redo owns history (native or `externalHistory`).
+
+## Installation
+
+```ts
+import '@toolbox-web/grid/features/selection';
+import '@toolbox-web/grid/features/editing';
+import '@toolbox-web/grid/features/undo-redo';
+import '@toolbox-web/grid/features/fill-handle';
+```
+
+## Basic Usage
+
+<Tabs syncKey="framework">
+  <TabItem label="TypeScript">
+```ts
+import { queryGrid } from '@toolbox-web/grid';
+
+const grid = queryGrid('tbw-grid');
+grid.gridConfig = {
+  columns: [
+    { field: 'qty', header: 'Qty', type: 'number', editable: true },
+    { field: 'due', header: 'Due', type: 'date', editable: true },
+  ],
+  features: {
+    selection: 'range',
+    editing: 'dblclick',
+    undoRedo: true,
+    fillHandle: true,
+  },
+};
+
+grid.on('fill-complete', (detail) => {
+  const rejected = detail.cells.filter((cell) => cell.status === 'rejected');
+  if (rejected.length) console.warn('Not filled:', rejected);
+});
+```
+  </TabItem>
+  <TabItem label="React">
+```tsx
+import '@toolbox-web/grid-react/features/selection';
+import '@toolbox-web/grid-react/features/editing';
+import '@toolbox-web/grid-react/features/undo-redo';
+import '@toolbox-web/grid-react/features/fill-handle';
+import { DataGrid } from '@toolbox-web/grid-react';
+import type { GridConfig } from '@toolbox-web/grid-react';
+
+const gridConfig: GridConfig = {
+  columns: [
+    { field: 'qty', header: 'Qty', type: 'number', editable: true },
+    { field: 'due', header: 'Due', type: 'date', editable: true },
+  ],
+  features: { selection: 'range', editing: 'dblclick', undoRedo: true, fillHandle: true },
+};
+
+function MyGrid({ data }) {
+  return (
+    <DataGrid
+      rows={data}
+      gridConfig={gridConfig}
+      onFillStart={(detail, event) => {
+        if (detail.request.targetRow > 500) event?.preventDefault();
+      }}
+      onFillComplete={(detail) => console.log(detail.cells)}
+    />
+  );
+}
+```
+  </TabItem>
+  <TabItem label="Vue">
+```html
+<script setup lang="ts">
+import '@toolbox-web/grid-vue/features/selection';
+import '@toolbox-web/grid-vue/features/editing';
+import '@toolbox-web/grid-vue/features/undo-redo';
+import '@toolbox-web/grid-vue/features/fill-handle';
+import { TbwGrid } from '@toolbox-web/grid-vue';
+</script>
+
+<template>
+  <!-- gridConfig as in the TypeScript tab -->
+  <TbwGrid :rows="data" :grid-config="gridConfig" @fill-complete="(event) => console.log(event.detail.cells)" />
+</template>
+```
+  </TabItem>
+  <TabItem label="Angular">
+```typescript
+import '@toolbox-web/grid-angular/features/selection';
+import '@toolbox-web/grid-angular/features/editing';
+import '@toolbox-web/grid-angular/features/undo-redo';
+import { Component } from '@angular/core';
+import { Grid } from '@toolbox-web/grid-angular';
+import { GridFillHandleDirective } from '@toolbox-web/grid-angular/features/fill-handle';
+
+@Component({
+  selector: 'app-my-grid',
+  imports: [Grid, GridFillHandleDirective],
+  template: `
+    <tbw-grid [rows]="rows" [gridConfig]="gridConfig" [fillHandle]="true" (fillComplete)="onFill($event)"></tbw-grid>
+  `,
+})
+export class MyGridComponent {
+  // gridConfig as in the TypeScript tab, without features.fillHandle
+}
+```
+  </TabItem>
+</Tabs>
+
+Or construct `FillHandlePlugin` from `@toolbox-web/grid/plugins/fill-handle` after `SelectionPlugin({ mode: 'range' })`, `EditingPlugin` and `UndoRedoPlugin`.
+
+## Input
+
+| Input | How |
+| ----- | --- |
+| Pointer | Drag the square at the range's bottom-right corner up or down. A dashed preview outlines the target rows. |
+| Tap (no drag) | Tap the handle (it shows as pressed), then tap a cell in the target row. |
+| Keyboard | With a cell focused, `Alt+ArrowDown` / `Alt+ArrowUp` starts a preview and focuses the handle. Arrows move the target, `Enter` applies and `Escape` cancels. On the focused handle, `Enter` or `Space` starts the same preview. |
+| API | `grid.getPluginByName('fillHandle').fill({ source, targetRow })` returns the `FillCompleteDetail`. |
+
+The preview row count and the outcome are announced to screen readers.
+
+## Series inference
+
+With the default `mode: 'auto'`, each column is inferred from its own seed cells:
+
+| Seeds | Result |
+| ----- | ------ |
+| One number | Repeats |
+| Numbers with a constant step | Continues the step (keeps decimal precision) |
+| One `YYYY-MM-DD`, `Date` or ISO timestamp | +1 calendar day (−1 day when filling upward) |
+| Dates a whole number of months or years apart | Calendar months/years, clamped from the first seed without drift (`Jan 30 → Feb 28 → Mar 30`) |
+| All month-ends | Month-ends (`Jan 31 → Feb 29 → Mar 31`) |
+| Dates with a constant day or time step | Continues the step |
+| Anything else (text, mixed, locale text) | Repeats the seed cycle |
+
+`Date` objects use UTC fields and ISO timestamps keep their written offset. Locale date strings are never parsed. Set `mode: 'copy'` to always repeat the seeds.
+
+## Configuration
+
+| Option | Type | Default | Description |
+| ------ | ---- | ------- | ----------- |
+| `mode` | `'auto' \| 'copy'` | `'auto'` | Infer series per column, or always repeat the seed cycle. |
+| `fillValue` | `(context) => { value } \| { reject: string }` | — | Override or reject each computed value. The context has `row`, `rowIndex`, `field`, `column`, `sourceValues`, `direction`, `offset`, `oldValue` and `proposedValue`. Return `{ value: context.proposedValue }` to keep it. |
+
+## Rules and outcomes
+
+- Only **existing displayed data rows** are filled, in their processed (sorted/filtered) order, including rows outside the virtualized viewport. Group, loading and other structural rows are skipped. Rows are never appended.
+- Each target cell is reported as `filled`, `skipped` (`readonly`, `unavailable`, `out-of-range`, `unchanged`) or `rejected` (`conflict`, `rule`, `validation`). Accepted cells are written even when others are rejected.
+- A target whose value changed after it entered the preview is a `conflict` and is left alone.
+- Fill shares Editing's strict bulk-write policy with Clear: column `editable` rules, `cell-commit` vetoes and validation reject a cell instead of writing it.
+- More than 10,000 target cells rejects the whole fill (`limitExceeded`).
+
+## Events
+
+| Event | Detail | Description |
+| ----- | ------ | ----------- |
+| `fill-start` | `FillStartDetail` (`request`, `direction`) | Cancelable. Call `preventDefault()` to stop the fill. |
+| `fill-complete` | `FillCompleteDetail` (`request`, `direction`, `cells`, `limitExceeded`, `canceled`) | Fired once per attempted fill with every cell outcome. |
+
+## Not included
+
+Formulas, horizontal fill and double-click auto-extension are not part of this plugin.

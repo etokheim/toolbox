@@ -213,6 +213,15 @@ outcomes. Column `clearValue` rules use the shared API.
 See [Cell Entry](https://toolboxjs.com/grid/plugins/cell-entry/) for keyboard,
 validation and boundary-focus behaviour.
 
+### Fill Handle
+
+For vertical automatic fill, import `GridFillHandleDirective` from
+`@toolbox-web/grid-angular/features/fill-handle` with the Selection, Editing and
+UndoRedo directives. Bind `[fillHandle]="true"` (or `{ mode: 'copy' }`),
+`[selection]="'range'"` and `[undoRedo]="true"`. `(fillStart)` receives the
+cancelable `CustomEvent`; `(fillComplete)` receives the unwrapped outcome detail.
+See [Fill Handle](https://toolboxjs.com/grid/plugins/fill-handle/).
+
 ### Import All Features
 
 For prototyping or when bundle size isn't critical, import all features at once:

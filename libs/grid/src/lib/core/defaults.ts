@@ -11,9 +11,12 @@ import type { A11yMessages, AnimationConfig, GridIcons } from './types';
 /**
  * Default English announcement messages.
  * Used when no custom messages are provided via {@link A11yConfig.messages}.
+ * FillHandle message defaults ship in the FillHandle plugin bundle.
  * @since 2.0.0
  */
-export const DEFAULT_A11Y_MESSAGES: Required<A11yMessages> = {
+export const DEFAULT_A11Y_MESSAGES: Required<
+  Omit<A11yMessages, 'fillHandleLabel' | 'fillPreview' | 'cellsFilled' | 'fillLimitExceeded' | 'fillCanceled'>
+> = {
   sortApplied: (column, direction) => `Sorted by ${column}, ${direction}`,
   sortCleared: () => 'Sort cleared',
   filterApplied: (column) => `Filter applied on ${column}`,

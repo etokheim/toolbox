@@ -22,6 +22,7 @@
 // name are imported with a `Core*` alias to avoid a local naming collision.
 import type {
   CellEntryConfig,
+  FillHandleConfig,
   ClipboardConfig,
   ColumnVirtualizationConfig,
   ContextMenuConfig,
@@ -310,6 +311,13 @@ export interface FeatureProps<TRow = unknown> {
    * @since 2.7.0
    */
   cellEntry?: boolean | CellEntryConfig;
+
+  /**
+   * Vertical automatic fill from a single selected range. Requires `selection: 'range'`,
+   * Editing and UndoRedo, plus the `features/fill-handle` import.
+   * @since 2.7.0
+   */
+  fillHandle?: boolean | FillHandleConfig;
 
   /**
    * Enable clipboard copy/paste.

@@ -240,7 +240,7 @@ export function announce(gridEl: HTMLElement, message: string): void {
  * @param key - The message key from A11yMessages
  * @param args - Arguments to pass to the message function
  */
-export function getA11yMessage<K extends keyof A11yMessages>(
+export function getA11yMessage<K extends keyof typeof DEFAULT_A11Y_MESSAGES>(
   gridEl: HTMLElement,
   key: K,
   ...args: Parameters<Required<A11yMessages>[K]>

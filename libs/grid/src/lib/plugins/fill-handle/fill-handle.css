@@ -1,0 +1,48 @@
+/**
+ * Fill Handle Plugin Styles
+ *
+ * Scoped to tbw-grid using CSS nesting for light DOM compatibility.
+ */
+@layer tbw-plugins {
+  tbw-grid {
+    /* Square corner handle: small visible mark inside a 24px hit area (WCAG 2.5.8).
+       `touch-action` is off because the drag runs on pointer capture. */
+    .tbw-fill-handle {
+      position: absolute;
+      z-index: 26;
+      width: var(--tbw-touch-target-min, 24px);
+      height: var(--tbw-touch-target-min, 24px);
+      translate: -50% -50%;
+      background: linear-gradient(var(--tbw-color-accent) 0 0) center / 8px 8px no-repeat;
+      cursor: crosshair;
+      touch-action: none;
+
+      &[hidden] {
+        display: none;
+      }
+
+      /* Selection's touch end-corner dot shares the corner; move below it. */
+      &.beside-range-handle {
+        translate: -50% 50%;
+      }
+
+      &.armed,
+      &:focus-visible {
+        outline: 2px solid var(--tbw-color-accent);
+        outline-offset: -4px;
+      }
+    }
+
+    .tbw-fill-preview {
+      position: absolute;
+      z-index: 24;
+      pointer-events: none;
+      box-sizing: border-box;
+      border: 1px dashed var(--tbw-range-border-color, var(--tbw-color-accent));
+
+      &[hidden] {
+        display: none;
+      }
+    }
+  }
+}

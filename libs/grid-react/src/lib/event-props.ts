@@ -26,6 +26,8 @@ import type {
   CellChangeDetail,
   CellClearDetail,
   CellClickDetail,
+  FillCompleteDetail,
+  FillStartDetail,
   CellCommitDetail,
   ChangedRowsResetDetail,
   ColumnMoveDetail,
@@ -116,6 +118,12 @@ export interface EventProps<TRow = unknown> {
 
   /** Selected-cell clear outcomes. @since 2.7.0 */
   onCellClear?: EventHandler<CellClearDetail<TRow>>;
+
+  /** Cancelable notification before a fill writes. @since 2.7.0 */
+  onFillStart?: EventHandler<FillStartDetail>;
+
+  /** Fill outcomes, cancellation or oversized-action rejection. @since 2.7.0 */
+  onFillComplete?: EventHandler<FillCompleteDetail<TRow>>;
 
   /**
    * Fired when a cell value changes (before commit).
@@ -717,6 +725,8 @@ export const EVENT_PROP_MAP = {
   onRowClick: 'row-click',
   onCellActivate: 'cell-activate',
   onCellClear: 'cell-clear',
+  onFillStart: 'fill-start',
+  onFillComplete: 'fill-complete',
   onCellChange: 'cell-change',
   onCellCommit: 'cell-commit',
   onCellCancel: 'cell-cancel',
