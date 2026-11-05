@@ -1,13 +1,14 @@
 @layer tbw-plugins {
-  .header-row > .cell[draggable='true'] {
+  :is(.header-row, .header-group-row) > .cell[draggable='true'] {
     cursor: grab;
     position: relative;
   }
-  .header-row > .cell.dragging {
+  :is(.header-row, .header-group-row) > .cell.dragging {
     opacity: 0.5;
     cursor: grabbing;
   }
-  .header-row > .cell.drop-before::before {
+  /* Group header cells carry the same drop classes; without them a group drop showed no indicator. */
+  :is(.header-row, .header-group-row) > .cell.drop-before::before {
     content: '';
     position: absolute;
     left: 0;
@@ -17,7 +18,7 @@
     background: var(--tbw-reorder-indicator, var(--tbw-color-accent));
     z-index: 1;
   }
-  .header-row > .cell.drop-after::after {
+  :is(.header-row, .header-group-row) > .cell.drop-after::after {
     content: '';
     position: absolute;
     right: 0;
@@ -26,6 +27,14 @@
     width: 2px;
     background: var(--tbw-reorder-indicator, var(--tbw-color-accent));
     z-index: 1;
+  }
+
+  /* While cells are translated out of DOM order (FLIP or live preview), the
+     column drawn last is not :last-child, so its resize handle — which only the
+     real last child keeps inside the cell — overhangs the scroll area and briefly
+     raises a horizontal scrollbar. Handles are unusable mid-move anyway. */
+  :is([data-tbw-reorder-flip], [data-tbw-reorder-preview]) .header-row .resize-handle {
+    display: none;
   }
 
   /* FLIP animation: cells slide smoothly during reorder */

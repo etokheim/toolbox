@@ -40,6 +40,26 @@ export interface ReorderConfig {
    * @default 200
    */
   animationDuration?: number;
+
+  /**
+   * Rearrange columns live while a header is dragged, instead of only marking
+   * the drop position with an indicator.
+   *
+   * The preview is visual only: cells slide with CSS transforms and neither the
+   * column order, `column-move`, nor `column-state-change` change until the
+   * drop. Escape, releasing outside a valid target, or a `column-move` listener
+   * calling `preventDefault()` slides the columns back to their original order.
+   * Drop targets are the same as without the preview, so pinned, locked and
+   * group-locked columns stay where they are. Releasing a column on its own
+   * slot is a no-op and emits no `column-move`.
+   *
+   * Ignored when the ColumnVirtualizationPlugin is loaded, because not every
+   * column has a rendered header to measure.
+   *
+   * @default false
+   * @since 3.11.0
+   */
+  livePreview?: boolean;
 }
 
 /** Internal state managed by the reorder plugin */

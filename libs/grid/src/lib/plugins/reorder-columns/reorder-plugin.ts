@@ -19,7 +19,7 @@ import {
   createDragAlternativeMenu,
   prefersInlineDragAlternative,
 } from '../shared/drag-alternative-menu';
-import { canMoveColumn, moveColumn } from './column-drag';
+import { canMoveColumn, columnOffsets, moveColumn, moveColumnBlock } from './column-drag';
 import styles from './reorder.css?inline';
 import type { ColumnMoveDetail, ReorderConfig } from './types';
 
@@ -28,6 +28,37 @@ const QUERY_GET_CONTEXT_MENU_ITEMS = 'getContextMenuItems';
 
 /** Menu order band for column moving — after pinning (40-49). */
 const MOVE_ITEM_ORDER = 50;
+
+/** Grid attribute scoping the live-preview stylesheet to one grid. */
+const PREVIEW_ATTR = 'data-tbw-reorder-preview';
+/** Grid attribute present while FLIP transforms are in flight. */
+const FLIP_ATTR = 'data-tbw-reorder-flip';
+
+let previewScopeSeq = 0;
+
+/** An in-flight drag with `livePreview` enabled. */
+interface LiveDrag {
+  /** Column order when the drag started — the rollback target. */
+  original: string[];
+  /** Fields being dragged, in display order. */
+  dragged: string[];
+  /** Field reported as `column-move` detail.field. */
+  primary: string;
+  /** Rendered width of every visible column, measured at drag start. */
+  widths: Map<string, number>;
+  /** Slot of every visible column in the original order, relative to the first column. */
+  lefts: Map<string, number>;
+  /** Distance from the header row's left edge to the first column's slot. */
+  origin: number;
+  /** Group-row fragments and whether each one accepts drops. */
+  fragments: { fields: string[]; target: boolean }[];
+  /** Order currently previewed. */
+  order: string[];
+  /** Per-field offsets of the current preview; stationary fields are omitted. */
+  deltas: Map<string, number>;
+}
+
+const sameOrder = (a: string[], b: string[]): boolean => a.length === b.length && a.every((f, i) => f === b[i]);
 
 /**
  * Column Reorder Plugin for tbw-grid
@@ -181,6 +212,13 @@ export class ReorderPlugin extends BaseGridPlugin<ReorderConfig> {
   private originalColumnOrder: string[] | null = null;
   /** Lazily created click-only move menu (WCAG 2.2 SC 2.5.7). */
   private moveMenu: DragAlternativeMenu | null = null;
+  /** Active live-preview drag, or `null` (also `null` for classic drags). */
+  #live: LiveDrag | null = null;
+  /** Stylesheet holding the preview transforms, so recycled body rows pick them up too. */
+  #previewStyle: HTMLStyleElement | null = null;
+  #previewScope = '';
+  #previewTimer: ReturnType<typeof setTimeout> | undefined;
+  #flipToken = 0;
 
   /** Typed internal grid accessor. */
   get #internalGrid(): GridHost {
@@ -437,10 +475,32 @@ export class ReorderPlugin extends BaseGridPlugin<ReorderConfig> {
       },
       { signal: this.disconnectSignal },
     );
+
+    // Live preview hit-tests against the original layout rather than the
+    // transformed cell under the pointer, so it listens once on the grid.
+    const opts = { signal: this.disconnectSignal };
+    // dragenter too: when the preview slides a cell under a still pointer, the
+    // release's dragenter alone decides whether the drop is accepted.
+    this.gridElement.addEventListener('dragenter', (e) => this.#onLiveDragOver(e), opts);
+    this.gridElement.addEventListener('dragover', (e) => this.#onLiveDragOver(e), opts);
+    this.gridElement.addEventListener('drop', (e) => this.#onLiveDrop(e), opts);
+    this.gridElement.addEventListener(
+      'dragleave',
+      (e) => {
+        const live = this.#live;
+        const to = e.relatedTarget;
+        if (live && !(to instanceof Node && this.gridElement.contains(to))) this.#preview(live, live.original);
+      },
+      opts,
+    );
   }
 
   /** @internal */
   override detach(): void {
+    this.#live = null;
+    clearTimeout(this.#previewTimer);
+    this.#previewStyle?.remove();
+    this.#previewStyle = null;
     this.isDragging = false;
     this.draggedField = null;
     this.draggedIndex = null;
@@ -508,9 +568,11 @@ export class ReorderPlugin extends BaseGridPlugin<ReorderConfig> {
         }
 
         headerEl.classList.add(GridClasses.DRAGGING);
+        this.#startLive([field], field);
       });
 
       headerEl.addEventListener('dragend', () => {
+        this.#cancelLive();
         this.isDragging = false;
         this.draggedField = null;
         this.draggedIndex = null;
@@ -520,10 +582,14 @@ export class ReorderPlugin extends BaseGridPlugin<ReorderConfig> {
       });
 
       headerEl.addEventListener('dragover', (e: DragEvent) => {
+        if (this.#live) return;
         e.preventDefault();
         if (!this.isDragging) return;
-        // Skip if dragging this same individual column
-        if (this.draggedField === field && this.draggedGroupFields.length === 0) return;
+        // Back over its own slot: forget the last target, or releasing here would still move it.
+        if (this.draggedField === field && this.draggedGroupFields.length === 0) {
+          this.dropIndex = null;
+          return;
+        }
         // Skip if this column is part of the dragged group fragment
         if (this.draggedGroupFields.includes(field)) return;
 
@@ -552,11 +618,14 @@ export class ReorderPlugin extends BaseGridPlugin<ReorderConfig> {
         headerEl.classList.toggle('drop-after', e.clientX >= midX);
       });
 
-      headerEl.addEventListener('dragleave', () => {
+      headerEl.addEventListener('dragleave', (e: DragEvent) => {
+        // Moving onto the label, sort icon or resize handle is not leaving the cell.
+        if (e.relatedTarget instanceof Node && headerEl.contains(e.relatedTarget)) return;
         headerEl.classList.remove('drop-target', 'drop-before', 'drop-after');
       });
 
       headerEl.addEventListener('drop', (e: DragEvent) => {
+        if (this.#live) return;
         e.preventDefault();
         if (!this.isDragging) return;
 
@@ -666,9 +735,11 @@ export class ReorderPlugin extends BaseGridPlugin<ReorderConfig> {
         for (const f of fragmentFields) {
           gridEl.querySelector(`.header-row > .cell[data-field="${f}"]`)?.classList.add(GridClasses.DRAGGING);
         }
+        this.#startLive(fragmentFields, fragmentFields[0]);
       });
 
       groupHeaderEl.addEventListener('dragend', () => {
+        this.#cancelLive();
         this.isDragging = false;
         this.draggedField = null;
         this.draggedIndex = null;
@@ -679,6 +750,7 @@ export class ReorderPlugin extends BaseGridPlugin<ReorderConfig> {
 
       // Group header is also a drop target for other groups / individual columns
       groupHeaderEl.addEventListener('dragover', (e: DragEvent) => {
+        if (this.#live) return;
         e.preventDefault();
         if (!this.isDragging) return;
         // If dragging the same fragment, ignore
@@ -699,11 +771,13 @@ export class ReorderPlugin extends BaseGridPlugin<ReorderConfig> {
         groupHeaderEl.classList.toggle('drop-after', !before);
       });
 
-      groupHeaderEl.addEventListener('dragleave', () => {
+      groupHeaderEl.addEventListener('dragleave', (e: DragEvent) => {
+        if (e.relatedTarget instanceof Node && groupHeaderEl.contains(e.relatedTarget)) return;
         groupHeaderEl.classList.remove('drop-target', 'drop-before', 'drop-after');
       });
 
       groupHeaderEl.addEventListener('drop', (e: DragEvent) => {
+        if (this.#live) return;
         e.preventDefault();
         if (!this.isDragging) return;
 
@@ -886,6 +960,218 @@ export class ReorderPlugin extends BaseGridPlugin<ReorderConfig> {
   }
   // #endregion
 
+  // #region Live Preview
+
+  /**
+   * Begin a live-preview drag when `livePreview` is on. Measures every visible
+   * column once, so hit-testing runs against the original layout and does not
+   * oscillate as the hovered cell slides away under the pointer.
+   */
+  #startLive(dragged: string[], primary: string): void {
+    this.#live = null;
+    const gridEl = this.gridElement;
+    if (!this.config.livePreview || !gridEl || this.grid.getPluginByName('columnVirtualization')) return;
+    const row = gridEl.querySelector<HTMLElement>('.header-row');
+    if (!row) return;
+
+    // Settle any rollback still sliding back, so the measurement is untransformed.
+    this.#endPreview(false);
+
+    const widths = new Map<string, number>();
+    const lefts = new Map<string, number>();
+    let x = 0;
+    let primaryCell: Element | null = null;
+    for (const { field } of this.visibleColumns) {
+      const cell = row.querySelector(`:scope > .cell[data-field="${CSS.escape(field)}"]`);
+      if (!cell) return;
+      if (field === primary) primaryCell = cell;
+      const width = cell.getBoundingClientRect().width;
+      widths.set(field, width);
+      lefts.set(field, x);
+      x += width;
+    }
+    if (!primaryCell) return;
+
+    // Header cells are never transformed here outside a FLIP, which `translateX` keeps exact.
+    const transform = getComputedStyle(primaryCell).transform;
+    const shift =
+      transform && transform !== 'none' && typeof DOMMatrixReadOnly === 'function'
+        ? new DOMMatrixReadOnly(transform).m41
+        : 0;
+    const origin =
+      primaryCell.getBoundingClientRect().left - shift - row.getBoundingClientRect().left - (lefts.get(primary) ?? 0);
+
+    const original = this.getColumnOrder();
+    this.#live = {
+      original,
+      dragged: original.filter((f) => dragged.includes(f)),
+      primary,
+      widths,
+      lefts,
+      origin,
+      fragments: this.#groupFragments(gridEl).map(({ id, fields }) => ({
+        fields,
+        target: !id.startsWith('__implicit__') && fields.every((f) => this.#isMoveTarget(f)),
+      })),
+      order: original,
+      deltas: new Map(),
+    };
+  }
+
+  /**
+   * The order a drop at this pointer position would produce, or `null` when it
+   * is not a drop target. Targets match the classic drag exactly: a movable
+   * column header, or a draggable (explicit, fully movable) group fragment.
+   */
+  #liveOrderAt(e: DragEvent, live: LiveDrag): string[] | null {
+    const gridEl = this.gridElement;
+    const cell =
+      e.target instanceof Element ? e.target.closest('.header-row > .cell, .header-group-row > .cell') : null;
+    const row = gridEl?.querySelector('.header-row');
+    if (!cell || !row || cell.closest('tbw-grid') !== gridEl) return null;
+
+    // An immovable column that is still in place (a sticky pinned column over
+    // scrolled content, or a locked one) refuses the drop, as it always has.
+    const hovered = cell.getAttribute('data-field');
+    if (hovered && !live.deltas.has(hovered) && !live.dragged.includes(hovered) && !this.#isMoveTarget(hovered))
+      return null;
+
+    const x = e.clientX - row.getBoundingClientRect().left - live.origin;
+    const end = (f: string) => (live.lefts.get(f) ?? 0) + (live.widths.get(f) ?? 0);
+    let fields: string[] | undefined;
+    if (cell.parentElement?.classList.contains('header-group-row')) {
+      const fragment = live.fragments.find(
+        (g) => x >= (live.lefts.get(g.fields[0]) ?? 0) && x < end(g.fields[g.fields.length - 1]),
+      );
+      if (!fragment?.target) return null;
+      fields = fragment.fields;
+    } else {
+      const field = [...live.lefts.keys()].find((f) => x >= (live.lefts.get(f) ?? 0) && x < end(f));
+      if (!field || (!live.dragged.includes(field) && !this.#isMoveTarget(field))) return null;
+      fields = [field];
+    }
+
+    const anchors = fields.filter((f) => !live.dragged.includes(f));
+    if (anchors.length === 0) return live.original;
+    const before = x < ((live.lefts.get(fields[0]) ?? 0) + end(fields[fields.length - 1])) / 2;
+    return moveColumnBlock(live.original, live.dragged, anchors[before ? 0 : anchors.length - 1], before);
+  }
+
+  #onLiveDragOver(e: DragEvent): void {
+    const live = this.#live;
+    if (!live) return;
+    const order = this.#liveOrderAt(e, live);
+    this.#preview(live, order ?? live.original);
+    if (!order) return;
+    e.preventDefault();
+    if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+  }
+
+  /** Commit the previewed order — the only point a live drag persists anything. */
+  #onLiveDrop(e: DragEvent): void {
+    const live = this.#live;
+    if (!live) return;
+    e.preventDefault();
+    this.#live = null;
+
+    const order = live.order;
+    if (sameOrder(order, live.original)) {
+      this.#endPreview(false);
+      return;
+    }
+    const cancelled = this.emitCancelable<ColumnMoveDetail>('column-move', {
+      field: live.primary,
+      fromIndex: live.original.indexOf(live.primary),
+      toIndex: order.indexOf(live.primary),
+      columnOrder: order,
+    });
+    if (cancelled) {
+      this.#endPreview(true);
+      return;
+    }
+    // Same task as setColumnOrder, and its body rebuild runs in the next frame
+    // before paint, so the cells never show in the old order without transforms.
+    this.#endPreview(false);
+    this.grid.setColumnOrder(order);
+    this.grid.requestStateChange?.();
+  }
+
+  /** Escape, a release outside a target, or a re-render ending the drag: slide back. */
+  #cancelLive(): void {
+    if (!this.#live) return;
+    this.#live = null;
+    this.#endPreview(true);
+  }
+
+  /** Show `order` by translating every cell from its original slot. */
+  #preview(live: LiveDrag, order: string[]): void {
+    if (sameOrder(order, live.order)) return;
+    live.order = order;
+    live.deltas = columnOffsets(live.original, order, live.widths);
+    this.#writePreview(live.deltas);
+  }
+
+  /**
+   * Write the preview transforms. A scoped stylesheet rather than inline styles,
+   * so body rows recycled by vertical scrolling during the drag are shifted too.
+   */
+  #writePreview(deltas: Map<string, number>): void {
+    const gridEl = this.gridElement;
+    if (!gridEl) return;
+    clearTimeout(this.#previewTimer);
+    if (!this.#previewStyle) {
+      this.#previewScope ||= String(++previewScopeSeq);
+      const style = document.createElement('style');
+      const root = gridEl.getRootNode();
+      (root instanceof ShadowRoot ? root : document.head).appendChild(style);
+      this.#previewStyle = style;
+    }
+    gridEl.setAttribute(PREVIEW_ATTR, this.#previewScope);
+
+    const scope = `[${PREVIEW_ATTR}="${this.#previewScope}"]`;
+    // Skip cells of a nested grid (e.g. a master-detail row) that share field names.
+    const own = `:not(${scope} tbw-grid *)`;
+    const rules: string[] = [];
+    if (this.animationType) {
+      rules.push(`${scope} .cell[data-field]${own}{transition:transform ${this.animationDuration}ms ease-out}`);
+    }
+    deltas.forEach((dx, f) =>
+      rules.push(`${scope} .cell[data-field="${CSS.escape(f)}"]${own}{transform:translateX(${dx}px)}`),
+    );
+    this.#previewStyle.textContent = rules.join('\n');
+
+    // A group header slides with its columns only when they all move together.
+    gridEl.querySelectorAll<HTMLElement>('.header-group-row > .cell[data-group]').forEach((cell) => {
+      const fields = this.getGroupFragmentFields(cell, '');
+      const dx = deltas.get(fields[0]) ?? 0;
+      const together = fields.every((f) => (deltas.get(f) ?? 0) === dx);
+      cell.style.transition = this.animationType ? `transform ${this.animationDuration}ms ease-out` : '';
+      cell.style.transform = together && dx ? `translateX(${dx}px)` : '';
+    });
+  }
+
+  /** Drop the preview; `animate` slides cells back to their slots first. */
+  #endPreview(animate: boolean): void {
+    const gridEl = this.gridElement;
+    if (!gridEl || !this.#previewStyle) return;
+    const clear = () => {
+      if (this.#previewStyle) this.#previewStyle.textContent = '';
+      gridEl.removeAttribute(PREVIEW_ATTR);
+      gridEl.querySelectorAll<HTMLElement>('.header-group-row > .cell[data-group]').forEach((cell) => {
+        cell.style.transition = '';
+        cell.style.transform = '';
+      });
+    };
+    if (animate && this.animationType) {
+      this.#writePreview(new Map());
+      this.#previewTimer = setTimeout(clear, this.animationDuration + 50);
+    } else {
+      clearTimeout(this.#previewTimer);
+      clear();
+    }
+  }
+  // #endregion
+
   // #region View Transition
 
   /**
@@ -938,6 +1224,10 @@ export class ReorderPlugin extends BaseGridPlugin<ReorderConfig> {
 
     if (cells.length === 0) return;
 
+    // Hides resize handles while cells are out of DOM order — see reorder.css.
+    const token = ++this.#flipToken;
+    gridEl.setAttribute(FLIP_ATTR, '');
+
     // Force reflow then animate to final position via CSS transition
     void gridEl.offsetHeight;
 
@@ -955,6 +1245,7 @@ export class ReorderPlugin extends BaseGridPlugin<ReorderConfig> {
           el.style.transform = '';
           el.classList.remove('flip-animating');
         });
+        if (token === this.#flipToken) gridEl.removeAttribute(FLIP_ATTR);
       }, duration + 50);
     });
   }

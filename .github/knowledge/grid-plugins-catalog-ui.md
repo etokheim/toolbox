@@ -88,7 +88,9 @@ OWNS: column order, drag state, `BaseColumnConfig.lockPosition` augmentation. HO
 - DECIDED: ReorderColumns owns the authoritative `canMoveColumn` query — other plugins (Visibility panel-drag) MUST `grid.query<boolean>('canMoveColumn', column)` and treat any `false` as a veto. Without the plugin it returns `[]` (= non-reorderable); an eager local check keeps test mocks (`query: () => []`) working.
 - DECIDED: ALL column-level flags are top-level on `ColumnConfig` via module augmentation from the owning plugin's `types.ts` — never `meta.<flag>`, never directly in core. Flags: `lockVisible` (core), `lockPosition` (reorder-columns), `lockPinning`/`pinned` (pinned-columns), `utility` (public, core), `checkboxColumn` (`@internal`, selection), `group` (grouping-columns).
 - INVARIANT: plugin-owned flags MUST NOT appear on the `grid.getAllColumns()` projection — only grid-universal fields (`field`, `header`, `visible`, `lockVisible`, `utility`). Plugins read raw config via `this.grid.columns.find(...)`.
-- DECIDED (Apr 2026): `ColumnConfig.utility` is PUBLIC — "system column" flag (checkbox, expander, drag handle, action menu); prefix `__`. Honored by Visibility (chooser filter), Reorder (`canMoveColumn` false), Print (hidden unless `printHidden:false`), Clipboard/Export (`resolveColumns()` skips), Selection (clicks ignored), Filtering (no filter UI).
+- DECIDED (Apr 2026): public `ColumnConfig.utility` = system column (`__` prefix); honored by Visibility, Reorder, Print (`printHidden`), Clipboard/Export, Selection, Filtering.
+- DECIDED (Jul 2026): `livePreview` OPT-IN. Preview = scoped `<style>` per-field `translateX` (covers recycled rows); NEVER `setColumnOrder` mid-drag (kills drag source, emits state). Hit-test dragstart geometry; persist on drop only; self-slot drop silent; Escape/veto slide back. Also accept `dragenter` (release onto a slid-in cell).
+- INVARIANT: `.resize-handle` overhangs unless DOM `:last-child`; hidden while cells are transformed (`data-tbw-reorder-flip`/`-preview`), else a transient scrollbar flashes (Roma last slot).
 
 ### ReorderRows
 
