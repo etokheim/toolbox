@@ -46,6 +46,7 @@ import { isStructuralToggleTarget } from '../shared/structural-toggle';
 import styles from './editing.css?inline';
 import { getInputValue, isSameEditorValue } from './editors';
 import type {} from '../cell-entry/types';
+import type {} from '../fill-handle/types';
 import { CellValidationManager } from './internal/cell-validation';
 import { type BaselinesCapturedDetail, type DirtyChangeDetail, type DirtyRowEntry } from './internal/dirty-tracking';
 import { DirtyTrackingManager } from './internal/dirty-tracking-manager';
@@ -2713,7 +2714,9 @@ export class EditingPlugin<T = unknown> extends BaseGridPlugin<EditingConfig> {
 
     const internalGrid = this.#internalGrid;
     const target = captureEditTarget(internalGrid, rowData);
-    const clearTarget = source === 'clear' ? target : undefined;
+    // Bulk writes (selected clearing, fill) share one strict per-cell policy.
+    const strictBulk = source === 'clear' || source === 'fill';
+    const clearTarget = strictBulk ? target : undefined;
     if (clearTarget && (!isEntryCell(column, rowData) || !this.#isCellEditable(column, rowData))) return false;
 
     // Get row ID for change tracking (may not exist if getRowId not configured)
@@ -2729,14 +2732,14 @@ export class EditingPlugin<T = unknown> extends BaseGridPlugin<EditingConfig> {
     // Track whether setInvalid was called during event handling
     let invalidWasSet = false;
 
-    // ID-less clear validation can veto without persisting an ID-keyed invalid marker.
+    // ID-less bulk validation can veto without persisting an ID-keyed invalid marker.
     const setInvalid = rowId
       ? (message?: string) => {
           invalidWasSet = true;
           this.setInvalid(rowId!, field, message ?? '');
         }
       : () => {
-          if (source === 'clear') invalidWasSet = true;
+          if (strictBulk) invalidWasSet = true;
         };
 
     // Emit cancelable event BEFORE applying the value.
@@ -2797,9 +2800,9 @@ export class EditingPlugin<T = unknown> extends BaseGridPlugin<EditingConfig> {
       ) {
         warnDiagnostic(
           ROW_NOT_FOUND,
-          `Cannot clear field "${field}": its owner, column or value changed during validation. Skipping this cell.`,
+          `Cannot ${source} field "${field}": its owner, column or value changed during validation. Skipping this cell.`,
           this.grid.id,
-          'cellEntry',
+          source === 'fill' ? 'fillHandle' : 'cellEntry',
         );
         return false;
       }

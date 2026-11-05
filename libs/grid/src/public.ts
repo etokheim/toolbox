@@ -14,6 +14,13 @@ export type {
   CellClearResult,
   CellClearValue,
 } from './lib/plugins/cell-entry/types';
+export type {
+  FillCellResult,
+  FillCompleteDetail,
+  FillDirection,
+  FillRequest,
+  FillStartDetail,
+} from './lib/plugins/fill-handle/types';
 export { DataGridElement, DataGridElement as GridElement } from './lib/core/grid';
 
 /**
