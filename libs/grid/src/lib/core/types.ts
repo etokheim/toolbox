@@ -3018,6 +3018,44 @@ export interface GridConfig<TRow = any, TField extends string = ColumnFieldKey<T
   sortHandler?: SortHandler<TRow>;
 
   /**
+   * Who orders the rows when a sort is active.
+   *
+   * - `'local'` (default): the grid sorts rows itself (core sort, `MultiSortPlugin`,
+   *   `TreePlugin` per-level sort).
+   * - `'external'`: **controlled sorting**. The grid keeps its full sort UI —
+   *   header click cycle, indicators, multi-sort priority badges, `sortModel`,
+   *   column-state persistence and `sort-change` events — but never reorders
+   *   rows. The caller listens to `sort-change`, sorts the data however it likes
+   *   (server, worker, custom collation, hidden keys) and assigns the new
+   *   `rows`; the grid renders them in exactly that order.
+   *
+   * In `'external'` mode:
+   * - Clearing the sort keeps the current row order (the caller re-orders).
+   * - `grid.sort(field, direction)` and `initialSort` accept fields that have
+   *   no (or a hidden) column, so sort keys outside the visible columns survive.
+   * - `SelectionPlugin` keeps row/cell selection across a `sort-change` and
+   *   re-maps it by row identity (`getRowId`, else the row object) when the
+   *   re-ordered rows arrive. Range selections are cleared (a re-ordered range
+   *   is no longer contiguous).
+   *
+   * This replaces neutralizing comparators such as `sortComparator: () => 0`.
+   *
+   * @default 'local'
+   *
+   * @example
+   * ```ts
+   * grid.gridConfig = { sortMode: 'external', columns };
+   * grid.on('sort-change', (detail) => {
+   *   // Core: { field, direction: 1 | -1 | 0 }; MultiSort: { sortModel }
+   *   grid.rows = sortOnServerOrLocally(rows, detail);
+   * });
+   * ```
+   *
+   * @since 3.11.0
+   */
+  sortMode?: 'local' | 'external';
+
+  /**
    * Initial sort state applied when the grid first renders.
    *
    * Equivalent to calling `grid.sort(field, direction)` after the grid is created,

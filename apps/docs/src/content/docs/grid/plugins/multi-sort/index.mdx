@@ -307,6 +307,47 @@ grid.gridConfig = {
 `a` first, `> 0` for `b`, `0` for equal. Direction (`asc`/`desc`) is applied
 automatically by the sort engine.
 
+## Controlled (External) Sorting
+
+When your application already owns row order (a store, a query, a backend
+call), set **`gridConfig.sortMode: 'external'`**. The grid keeps everything
+about sorting _except_ the reordering: header clicks still cycle
+`asc → desc → none`, indicators and multi-sort badges still render, `sortModel`
+and `sort-change` still report the state — but the rows are rendered in exactly
+the order you pass. Sort them yourself and assign the result to `rows`.
+
+```ts
+grid.gridConfig = { columns, sortMode: 'external' };
+
+grid.on('sort-change', (detail) => {
+  // Single sort: { field, direction: 1 | -1 | 0 }; MultiSort: { sortModel }
+  grid.rows = sortMyRows(allRows, detail);
+});
+
+// Reflect a sort the app chose itself — any field, even one with no
+// (visible) column. Clearing keeps the current row order.
+grid.sort('rank', 'desc');
+grid.sort(null);
+```
+
+```tsx
+// React
+<DataGrid rows={sortedRows} sortMode="external" onSortChange={setSort} />
+```
+
+Behaviour in external mode:
+
+- Works with or without `MultiSortPlugin`; Tree keeps the caller's order at every level.
+- `initialSort` and `grid.sort()` accept fields that have no column or a hidden one.
+- Row identity is untouched (no copies), so editing, undo/redo (by `getRowId`)
+  and row-reorder gating on `sortModel` keep working.
+- Selection survives the sort: row/cell selections follow their rows by
+  identity (`getRowId`, otherwise the row object) once you assign the
+  re-ordered **new** array. Range selections are cleared, as they are no longer contiguous.
+- This replaces the `sortComparator: () => 0` workaround.
+
+Use [`ServerSidePlugin`](../server-side/) instead when the backend also pages the data.
+
 ## Server-Side Sorting
 
 For backends that own sort ordering, use

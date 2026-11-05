@@ -280,15 +280,38 @@ function hasRowStructurePlugins(grid: GridHost): boolean {
 }
 
 /**
+ * Whether `gridConfig.sortMode === 'external'` — the caller owns row order and
+ * the grid only tracks sort state, renders indicators and emits `sort-change`.
+ * @internal
+ */
+export function isExternalSort(grid: { effectiveConfig?: { sortMode?: string } }): boolean {
+  return grid.effectiveConfig?.sortMode === 'external';
+}
+
+/**
+ * External-sort counterpart of the clear path: drop the sort state, re-render the
+ * header and emit — but keep the current row order (the caller re-orders).
+ */
+function clearExternalSort(grid: GridHost, col: ColumnConfig<unknown>): void {
+  grid._sortState = null;
+  grid.__originalOrder = [];
+  grid._schedulerRenderHeader();
+  emitSortChange(grid, col, 0);
+}
+
+/**
  * Cycle sort state for a column: none -> ascending -> descending -> none.
  * Restores original row order when clearing sort.
  */
 export function toggleSort(grid: GridHost, col: ColumnConfig<any>): void {
+  const external = isExternalSort(grid);
   if (!grid._sortState || grid._sortState.field !== col.field) {
-    if (!grid._sortState) grid.__originalOrder = grid._rows.slice();
+    if (!grid._sortState && !external) grid.__originalOrder = grid._rows.slice();
     applySort(grid, col, 1);
   } else if (grid._sortState.direction === 1) {
     applySort(grid, col, -1);
+  } else if (external) {
+    clearExternalSort(grid, col);
   } else {
     grid._sortState = null;
 
@@ -338,7 +361,8 @@ export function toggleSort(grid: GridHost, col: ColumnConfig<any>): void {
  *   Avoids an O(n) `rows.slice()` in the hot path.
  */
 export function reapplyCoreSort<T>(grid: InternalGrid<T>, rows: T[], skipOriginalOrderSave = false): T[] {
-  if (!grid._sortState) return rows;
+  // External sort: the caller already ordered `rows` — keep that order.
+  if (!grid._sortState || isExternalSort(grid)) return rows;
 
   const handler: SortHandler<any> = grid.effectiveConfig?.sortHandler ?? builtInSort;
 
@@ -388,6 +412,13 @@ export function applySort(grid: GridHost, col: ColumnConfig<any>, dir: 1 | -1): 
   if (hasRowStructurePlugins(grid)) {
     // RenderPhase.ROWS = 4
     grid._requestSchedulerPhase(4, 'sort-apply');
+    emitSortChange(grid, col, dir);
+    return;
+  }
+
+  // External sort: update indicators and notify; the caller re-orders the rows.
+  if (isExternalSort(grid)) {
+    grid._schedulerRenderHeader();
     emitSortChange(grid, col, dir);
     return;
   }

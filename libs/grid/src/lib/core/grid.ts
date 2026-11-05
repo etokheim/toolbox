@@ -34,7 +34,7 @@ import { resolveRowIdOrThrow, RowManager, tryResolveRowId } from './internal/row
 import { releasePooledRow } from './internal/row-teardown';
 import { invalidateCellCache, renderVisibleRows } from './internal/rows';
 import { getRowWindow } from './internal/row-window';
-import { applySort, reapplyCoreSort, toggleSort } from './internal/sorting';
+import { applySort, isExternalSort, reapplyCoreSort, toggleSort } from './internal/sorting';
 import { addPluginStyles, injectStyles } from './internal/style-injector';
 import { getActiveGridTag, GRID_TAG_NAME, setActiveGridTag } from './internal/tag-registry';
 import {
@@ -2101,7 +2101,8 @@ export class DataGridElement<T = any> extends HTMLElement implements InternalGri
     if (!this._sortState && this.#effectiveConfig.initialSort) {
       const { field, direction } = this.#effectiveConfig.initialSort;
       const col = (this._columns as ColumnConfig<T>[]).find((c) => c.field === field);
-      if (col) {
+      // External sort may key on fields without a column (hidden sort keys).
+      if (col || isExternalSort(this)) {
         this._sortState = { field, direction: direction === 'desc' ? -1 : 1 };
       }
     }
@@ -3688,29 +3689,40 @@ export class DataGridElement<T = any> extends HTMLElement implements InternalGri
    * ```
    */
   sort(field: string | null, direction?: 'asc' | 'desc'): void {
+    const external = isExternalSort(this);
     // Clear sort
     if (field === null) {
       if (!this._sortState) return;
       const prevField = this._sortState.field;
       this._sortState = null;
-      this.__rowRenderEpoch++;
-      for (let i = 0; i < this._rowPool.length; i++) this._rowPool[i].__epoch = -1;
-      this._rows = this.__originalOrder.slice();
-      this.__originalOrder = [];
-      renderHeader(this);
-      this.refreshVirtualWindow(true);
+      if (external) {
+        // Controlled sort: the caller owns row order — keep it.
+        this.__originalOrder = [];
+        renderHeader(this);
+      } else {
+        this.__rowRenderEpoch++;
+        for (let i = 0; i < this._rowPool.length; i++) this._rowPool[i].__epoch = -1;
+        this._rows = this.__originalOrder.slice();
+        this.__originalOrder = [];
+        renderHeader(this);
+        this.refreshVirtualWindow(true);
+      }
       this.dispatchEvent(new CustomEvent('sort-change', { detail: { field: prevField, direction: 0 } }));
       this._pluginManager?.emitPluginEvent?.('sort-change', { field: prevField, direction: 0 });
       this.requestStateChange?.();
       return;
     }
 
-    const col = (this._columns as ColumnConfig<T>[]).find((c) => c.field === field);
+    // External sort keeps sort keys that have no column (e.g. a hidden sort key):
+    // a stand-in column carries the field for the event and announcement.
+    const col =
+      (this._columns as ColumnConfig<T>[]).find((c) => c.field === field) ??
+      (external ? ({ field } as ColumnConfig<T>) : undefined);
     if (!col) return;
 
     if (direction) {
       // Explicit direction
-      if (!this._sortState) this.__originalOrder = this._rows.slice();
+      if (!this._sortState && !external) this.__originalOrder = this._rows.slice();
       applySort(this, col, direction === 'desc' ? -1 : 1);
     } else {
       // Toggle: delegates to existing cycle logic

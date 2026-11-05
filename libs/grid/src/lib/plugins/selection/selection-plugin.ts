@@ -383,6 +383,9 @@ export class SelectionPlugin<TRow = unknown> extends BaseGridPlugin<SelectionCon
   private lastSelected: number | null = null;
   private anchor: number | null = null;
 
+  /** Row array the stored indices point into (controlled-sort identity re-map). */
+  #indexedRows: readonly unknown[] | null = null;
+
   /** Range selection state (range mode) */
   private ranges: InternalCellRange[] = [];
   private activeRange: InternalCellRange | null = null;
@@ -508,7 +511,14 @@ export class SelectionPlugin<TRow = unknown> extends BaseGridPlugin<SelectionCon
     this.on('filter-change', () => this.clearSelectionSilent());
     this.on('group-toggle', () => this.clearSelectionSilent());
     this.on('tree-expand', () => this.clearSelectionSilent());
-    this.on('sort-change', () => this.clearSelectionSilent());
+    // Controlled sorting (`sortMode: 'external'`): the caller re-orders the rows
+    // after `sort-change`, so keep row/cell selection and re-map it by identity
+    // when the re-ordered rows arrive (`data-change` below). Ranges cannot follow
+    // a re-order (no longer contiguous), so they still clear.
+    this.on('sort-change', () => {
+      if (this.#isExternalSort() && this.ranges.length === 0) return;
+      this.clearSelectionSilent();
+    });
 
     // Auto-select the row currently being edited so consumers of getSelectedRows()
     // / selectedRows() always see the row the user is actually working with.
@@ -548,6 +558,14 @@ export class SelectionPlugin<TRow = unknown> extends BaseGridPlugin<SelectionCon
       ((event: CustomEvent<{ sourceRowCount: number }>) => {
         const { sourceRowCount } = event.detail;
         const hasSelection = this.selected.size > 0 || this.ranges.length > 0 || this.selectedCell !== null;
+        const prevRows = this.#indexedRows;
+        const nextRows = this.grid._rows as readonly unknown[];
+        this.#indexedRows = nextRows;
+        if (this.#isExternalSort()) {
+          if (hasSelection && prevRows && prevRows !== nextRows) this.#remapByIdentity(prevRows, nextRows);
+          lastSourceRowCount = sourceRowCount;
+          return;
+        }
         if (lastSourceRowCount !== -1 && sourceRowCount !== lastSourceRowCount && hasSelection) {
           this.clearSelectionSilent();
         }
@@ -1656,6 +1674,53 @@ export class SelectionPlugin<TRow = unknown> extends BaseGridPlugin<SelectionCon
 
   #checkboxIdentity(row: TRow): string | TRow {
     return tryResolveRowId(row, this.grid.effectiveConfig.getRowId) ?? row;
+  }
+
+  #isExternalSort(): boolean {
+    return this.grid?.effectiveConfig?.sortMode === 'external';
+  }
+
+  /**
+   * Re-map stored row indices from `prev` to `next` by row identity (`getRowId`,
+   * else the row object). Rows no longer present drop out of the selection;
+   * ranges clear. Used under controlled sorting, where the caller swaps in a
+   * re-ordered `rows` array after `sort-change`.
+   */
+  #remapByIdentity(prev: readonly unknown[], next: readonly unknown[]): void {
+    const indexById = new Map<unknown, number>();
+    for (let i = 0; i < next.length; i++) {
+      const row = next[i];
+      if (row != null) indexById.set(this.#checkboxIdentity(row as TRow), i);
+    }
+    const move = (index: number | null): number | null => {
+      if (index == null) return null;
+      const row = prev[index];
+      return row == null ? null : (indexById.get(this.#checkboxIdentity(row as TRow)) ?? null);
+    };
+
+    let changed = false;
+    const selected = new Set<number>();
+    for (const index of this.selected) {
+      const moved = move(index);
+      if (moved !== index) changed = true;
+      if (moved != null) selected.add(moved);
+    }
+    this.selected = selected;
+    this.lastSelected = move(this.lastSelected);
+    this.anchor = move(this.anchor);
+    if (this.selectedCell) {
+      const row = move(this.selectedCell.row);
+      if (row !== this.selectedCell.row) changed = true;
+      this.selectedCell = row == null ? null : { row, col: this.selectedCell.col };
+    }
+    if (this.ranges.length > 0) {
+      changed = true;
+      this.ranges = [];
+      this.activeRange = null;
+      this.cellAnchor = null;
+    }
+    if (changed) this.emit<SelectionChangeDetail>('selection-change', this.#buildEvent());
+    this.requestAfterRender();
   }
 
   #rowCheckboxContext(
