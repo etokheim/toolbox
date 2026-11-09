@@ -326,6 +326,54 @@ of options and defaults. Three of them decide the plugin's overall shape:
 Use `canDrag` and `canDrop` to veto individual drags and drops; both are called synchronously,
 so keep them cheap.
 
+### Live Preview
+
+Set `livePreview: true` to lift the dragged rows and let the other rows slide aside to make room,
+instead of showing a drop indicator. With `dragFrom: 'row'` or `'both'` a drag can start anywhere
+on a row:
+
+```typescript
+new RowDragDropPlugin({
+  livePreview: true,
+  dragFrom: 'row',
+  rowType: (row) => row.kind,
+  canDropAt: ({ rows, targetParent, index }) =>
+    targetParent?.kind === 'facility' ? { reason: 'Movements cannot go under a facility' } : true,
+  shouldStartDrag: () => !spreadsheetMode,
+});
+```
+
+- **Mouse and pen.** There is no drag image. The grabbed rows lift (a shadow, `.tbw-row-lifted`)
+  and follow the pointer vertically, clamped to the body. The other rows slide aside once the
+  block passes half of a neighbour, with a small hysteresis and geometry measured at drag start,
+  so they never swap back and forth. Holding near the top or bottom edge auto-scrolls.
+- **Starting a drag.** The drag starts after the pointer travels 6px, so a plain click still
+  focuses, selects or opens the row, and the click that ends a drag is swallowed. It never starts
+  from links, buttons, inputs, an open cell editor, selected text, or anything inside
+  `[data-tbw-no-row-drag]` / `.tbw-no-row-drag`. Return `false` from
+  `shouldStartDrag({ row, index, event, origin })` to refuse a drag, for example while a
+  spreadsheet or selection mode is active. The handle stays a visible affordance with `'both'`.
+- **Several rows.** When the grabbed row is selected, every selected row of the same `rowType`
+  moves with it, wherever it is. Rows of another type stay. The rows close up into one block and
+  land together at the target, and a badge (`data-tbw-drag-count`) shows how many move.
+- **Trees.** With the Tree plugin, a dragged parent carries its whole subtree, and rows can move
+  to another parent. A row can never be dropped into its own subtree. The gap between two rows can
+  mean several places (for example, the end of a group or the next top-level slot);
+  candidates nearest the dragged row's depth are tried first.
+- **Invalid targets.** `canDropAt({ rows, row, targetParent, index, prevRow, nextRow })` returns
+  `true`, `false`, or `{ reason }`. While the pointer is over a rejected slot, the room stays where
+  it last was valid, the cursor is `not-allowed`, the reason appears next to the pointer
+  (`.tbw-row-drop-reason`), and it is announced. Releasing there reverts. The older
+  `canDrop(payload, index)` still applies too.
+- **Committing.** The preview is visual only (CSS transforms). On release the rows settle into
+  place, then one cancelable `row-move` fires with `movedRows`, `targetParent` and `targetIndex`.
+  Children arrays of tree parents are updated in place and `grid.rows` receives the new top-level
+  array. Escape, an invalid target, a no-op release or `preventDefault()` on `row-move` slides
+  everything back.
+- **Screen readers.** Pick-up, position (after the pointer rests), invalid target, cancel and drop
+  are announced. Override the English texts with `liveMessages`.
+- **Touch** keeps the native drag from the handle. Customize the lift with `--tbw-row-lift-shadow`.
+
 ## Events
 
 | Event             | Detail                                                              | Cancelable | When                                                          |
@@ -369,6 +417,10 @@ The plugin adds these CSS classes you can customise:
 | `.tbw-grid--drop-target-active`        | The target grid during a valid dragover             |
 | `.tbw-grid--drop-target-rejected`      | The target grid during a `canDrop`-rejected drag    |
 | `.tbw-grid--auto-scrolling`            | A grid currently auto-scrolling during a drag       |
+| `.data-grid-row.tbw-row-lifted`        | A row lifted by a live-preview drag                 |
+| `[data-tbw-row-lifting]`               | The grid while a live-preview drag is held          |
+| `[data-tbw-row-drop-invalid]`          | The grid while hovering a rejected target           |
+| `.tbw-row-drop-reason`                 | The rejection reason shown next to the pointer      |
 
 ### Custom Handle Icon
 

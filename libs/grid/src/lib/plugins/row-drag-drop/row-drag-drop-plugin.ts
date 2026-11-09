@@ -71,6 +71,14 @@ import {
   setCurrentDragSession,
 } from '../shared/drag-drop-protocol';
 import styles from './row-drag-drop.css?inline';
+import {
+  broadcastRemoteTransfer,
+  registerRemoteTransferListener,
+  unregisterRemoteTransferListener,
+  type RemoteTransferListener,
+  type RemoteTransferMessage,
+} from './cross-window';
+import { LiveRowDragController } from './row-live-drag';
 import type {
   PendingMove,
   RowDragDropConfig,
@@ -88,74 +96,6 @@ import type {
  */
 export const ROW_DRAG_HANDLE_FIELD = '__tbw_row_drag';
 
-// ---------------------------------------------------------------------------
-// Cross-window coordination via BroadcastChannel
-// ---------------------------------------------------------------------------
-//
-// Same-window cross-grid drops can locate the source grid and its plugin via
-// `document.getElementById(sourceGridId)` — the target plugin handles both
-// sides of the transfer in `onDrop` (insert into target + remove from source
-// + emit `row-transfer` on both grids).
-//
-// Cross-window drops can't reach the source DOM that way. The target window
-// broadcasts a `tbw-row-drag-drop:transfer` message; each window has a single
-// channel and fans the message out to every attached plugin instance, which
-// matches on `sourceGridId === this.gridId` and runs the source-side path
-// (row removal on `move`, `row-transfer` emit, `dragAccepted` flip).
-//
-// The channel is created lazily on the first plugin that needs it and shared
-// across all instances in the window. It's torn down when the last instance
-// detaches so we don't leak a handle in environments where the plugin is
-// repeatedly attached/detached.
-
-/** @internal */
-interface RemoteTransferMessage {
-  type: 'tbw-row-drag-drop:transfer';
-  sessionId: string;
-  sourceGridId: string;
-  toGridId: string;
-  dropZone: string;
-  rowIndices: number[];
-  toIndex: number;
-  operation: 'move' | 'copy';
-  /** Pre-serialized rows (the same shape `serializeRow` produced on dragstart). */
-  serializedRows: unknown[];
-}
-
-type RemoteTransferListener = (msg: RemoteTransferMessage) => void;
-
-const CROSS_WINDOW_CHANNEL_NAME = 'tbw-row-drag-drop';
-let sharedChannel: BroadcastChannel | null = null;
-const remoteListeners = new Set<RemoteTransferListener>();
-
-function ensureCrossWindowChannel(): BroadcastChannel | null {
-  if (typeof BroadcastChannel === 'undefined') return null;
-  if (sharedChannel) return sharedChannel;
-  try {
-    sharedChannel = new BroadcastChannel(CROSS_WINDOW_CHANNEL_NAME);
-    sharedChannel.addEventListener('message', (event: MessageEvent) => {
-      const data = event.data as RemoteTransferMessage | undefined;
-      if (!data || data.type !== 'tbw-row-drag-drop:transfer') return;
-      // Snapshot to tolerate listeners that detach during dispatch.
-      for (const listener of Array.from(remoteListeners)) {
-        try {
-          listener(data);
-        } catch {
-          /* listener errors must not break sibling listeners */
-        }
-      }
-    });
-  } catch {
-    sharedChannel = null;
-  }
-  return sharedChannel;
-}
-
-function registerRemoteTransferListener(listener: RemoteTransferListener): void {
-  remoteListeners.add(listener);
-  ensureCrossWindowChannel();
-}
-
 /**
  * Every plugin instance attached in this window.
  *
@@ -167,29 +107,6 @@ function registerRemoteTransferListener(listener: RemoteTransferListener): void 
  * instance in the window may have a different one; `peersInDropZone()` narrows.
  */
 const attachedPlugins = new Set<unknown>();
-
-function unregisterRemoteTransferListener(listener: RemoteTransferListener): void {
-  remoteListeners.delete(listener);
-  if (remoteListeners.size === 0 && sharedChannel) {
-    try {
-      sharedChannel.close();
-    } catch {
-      /* noop */
-    }
-    sharedChannel = null;
-  }
-}
-
-function broadcastRemoteTransfer(msg: RemoteTransferMessage): void {
-  const channel = ensureCrossWindowChannel();
-  if (!channel) return;
-  try {
-    channel.postMessage(msg);
-  } catch {
-    /* postMessage may throw on uncloneable payloads — acceptable; user can
-     * supply `serializeRow` to provide a structured-cloneable shape. */
-  }
-}
 
 /**
  * Row Drag-Drop Plugin for `<tbw-grid>`.
@@ -297,6 +214,23 @@ export class RowDragDropPlugin<T = unknown> extends BaseGridPlugin<RowDragDropCo
   #controls = new Map<HTMLElement, HandleRecord<T>>();
   #customHandleCount = 0;
 
+  /** Live preview (`livePreview`): lifted rows following the pointer. */
+  #liveDrag = new LiveRowDragController<T>({
+    grid: () => this.internalGrid,
+    config: () => this.config,
+    rowIndex: (el) => this.getRowIndex(el),
+    interactive: (el) => this.isInteractiveDragOrigin(el),
+    rowDraggable: () => this.rowIsDraggable,
+    busy: () => this.isDragging,
+    settleMs: () => (this.animationType ? this.animationDuration : 0),
+    emit: (name, detail) => this.emitCancelable(name, detail),
+    scroller: (ensure) => {
+      if (ensure && this.config.autoScroll !== false) this.ensureAutoScroller();
+      return this.autoScroller;
+    },
+    gridId: () => this.gridId,
+  });
+
   /** Typed internal grid accessor. */
   private get internalGrid(): GridHost {
     return this.grid;
@@ -321,6 +255,7 @@ export class RowDragDropPlugin<T = unknown> extends BaseGridPlugin<RowDragDropCo
   override detach(): void {
     for (const cell of this.#controls.keys()) this.#releaseHandle(cell);
     this.clearDebounceTimer();
+    this.#liveDrag.destroy();
     this.autoScroller?.stop();
     this.autoScroller = null;
     unregisterRemoteTransferListener(this.remoteTransferListener);
@@ -504,6 +439,7 @@ export class RowDragDropPlugin<T = unknown> extends BaseGridPlugin<RowDragDropCo
   override afterRender(): void {
     this.applyRowDraggable();
     this.#refreshHandles();
+    this.#liveDrag.refresh();
   }
 
   /** @internal */
@@ -512,6 +448,7 @@ export class RowDragDropPlugin<T = unknown> extends BaseGridPlugin<RowDragDropCo
     // `draggable` attribute so newly-shown rows still accept HTML5 drag.
     this.applyRowDraggable();
     this.#refreshHandles();
+    this.#liveDrag.refresh();
   }
 
   /**
@@ -625,6 +562,9 @@ export class RowDragDropPlugin<T = unknown> extends BaseGridPlugin<RowDragDropCo
     gridEl.addEventListener('dragover', (e) => this.onDragOver(e as DragEvent), { signal });
     gridEl.addEventListener('dragleave', (e) => this.onDragLeave(e as DragEvent), { signal });
     gridEl.addEventListener('drop', (e) => this.onDrop(e as DragEvent), { signal });
+    gridEl.addEventListener('pointerdown', (e) => this.#liveDrag.pointerDown(e as PointerEvent), { signal });
+    // Scroll does not bubble; capture catches the rows viewport scrolling under a held drag.
+    gridEl.addEventListener('scroll', () => this.#liveDrag.scrolled(), { signal, capture: true });
   }
 
   /** Resolve a live pickup origin before selecting rows or mutating the drag session. */
@@ -656,6 +596,11 @@ export class RowDragDropPlugin<T = unknown> extends BaseGridPlugin<RowDragDropCo
   }
 
   private onDragStart(de: DragEvent): void {
+    // A mouse/pen press armed for the live preview: no native drag image.
+    if (this.#liveDrag.active) {
+      de.preventDefault();
+      return;
+    }
     const origin = this.resolveDragOrigin(de);
     if (!origin) return;
     const { rowEl, handle } = origin;
@@ -750,7 +695,7 @@ export class RowDragDropPlugin<T = unknown> extends BaseGridPlugin<RowDragDropCo
     'input,textarea,select,button,a,[contenteditable=""],[contenteditable="true"],.dg-cell-editor,.tbw-checkbox-cell';
 
   /** @internal */
-  private isInteractiveDragOrigin(target: HTMLElement): boolean {
+  private isInteractiveDragOrigin(target: Element): boolean {
     return target.closest(RowDragDropPlugin.INTERACTIVE_DRAG_SELECTORS) !== null;
   }
 

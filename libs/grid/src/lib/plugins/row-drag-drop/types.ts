@@ -188,6 +188,119 @@ export interface RowDragDropConfig<T = unknown> {
    * @default true
    */
   autoScroll?: boolean | { edgeSize?: number; speed?: number; maxSpeed?: number };
+
+  /**
+   * Lifted, smooth intra-grid drag for mouse and pen. Once the pointer
+   * travels 6px the dragged rows lift (shadow, no drag image) and follow the
+   * pointer vertically; neighbouring rows slide aside to open room. Release
+   * settles the rows, then commits once through `row-move`; `Escape` or a
+   * release over an invalid target reverts. Touch keeps the native drag.
+   *
+   * With `dragFrom: 'row' | 'both'` the drag may start from anywhere on the
+   * row except links, buttons, form controls, open editors, selected text and
+   * elements marked `data-tbw-no-row-drag` / `.tbw-no-row-drag`. The click
+   * that follows a drag is suppressed, so a plain click still activates the row.
+   *
+   * Tree-aware with the Tree plugin: a dragged parent carries its subtree,
+   * a row never lands inside its own subtree, and the drop target parent is
+   * resolved from the gap the rows land in.
+   *
+   * @default false
+   * @since 3.11.0
+   */
+  livePreview?: boolean;
+
+  /**
+   * Live preview only. Classifies rows for multi-row drags: when the grabbed
+   * row is selected, only selected rows whose type equals the grabbed row's
+   * type move with it. Rows without a type match each other.
+   *
+   * @since 3.11.0
+   */
+  rowType?: (row: T) => string | undefined;
+
+  /**
+   * Live preview only. Decides whether the dragged rows may land in a
+   * target. Return `{ reason }` to reject with a message shown next to the
+   * pointer and announced to screen readers; `false` rejects with the
+   * generic message. On a rejected target no room opens and the cursor shows
+   * `not-allowed`; releasing there reverts. `canDrop` is still consulted.
+   *
+   * @since 3.11.0
+   */
+  canDropAt?: (context: RowDropTargetContext<T>) => boolean | { reason: string };
+
+  /**
+   * Live preview only. Veto starting a pointer drag, e.g. while the app is
+   * in a spreadsheet or selection mode. Return `false` to leave the press to
+   * other features.
+   *
+   * @since 3.11.0
+   */
+  shouldStartDrag?: (context: RowDragStartContext<T>) => boolean;
+
+  /**
+   * Live preview only. Screen-reader announcements and the default
+   * invalid-target text. Each entry overrides the English default.
+   *
+   * @since 3.11.0
+   */
+  liveMessages?: Partial<RowLiveMessages>;
+}
+
+/**
+ * Where a live-preview drag would land, passed to `canDropAt`.
+ *
+ * @since 3.11.0
+ */
+export interface RowDropTargetContext<T = unknown> {
+  /** Rows that move (the grabbed row plus same-type selected rows; descendants travel inside their parents). */
+  rows: T[];
+  /** The row the pointer grabbed. */
+  row: T;
+  /** Parent the rows would land under; `null` for the top level (or for flat data). */
+  targetParent: T | null;
+  /** Insertion index among the target parent's children (or the top-level rows), with the moving rows removed. */
+  index: number;
+  /** Visible row directly above the gap, if any. */
+  prevRow: T | undefined;
+  /** Visible row directly below the gap, if any. */
+  nextRow: T | undefined;
+}
+
+/**
+ * Passed to `shouldStartDrag` before a live-preview drag arms.
+ *
+ * @since 3.11.0
+ */
+export interface RowDragStartContext<T = unknown> {
+  /** Row under the press. */
+  row: T;
+  /** Its index in the processed rows. */
+  index: number;
+  /** The originating `pointerdown`. */
+  event: PointerEvent;
+  /** Whether the press started on the drag handle or elsewhere on the row. */
+  origin: 'handle' | 'row';
+}
+
+/**
+ * Live-preview announcement texts. `{count}`, `{position}` and `{total}` are
+ * replaced with numbers.
+ *
+ * @since 3.11.0
+ */
+export interface RowLiveMessages {
+  /** @default 'Picked up {count} row(s).' */
+  start: string;
+  /** @default 'Position {position} of {total}.' */
+  position: string;
+  /** @default 'Cannot drop here.' */
+  invalid: string;
+  /** @default 'Move cancelled.' */
+  cancel: string;
+  /** @default 'Dropped at position {position} of {total}.' */
+  drop: string;
 }
 
 /**
@@ -208,6 +321,18 @@ export interface RowMoveDetail<T = unknown> {
   rows: T[];
   /** How the move was initiated. */
   source: 'keyboard' | 'drag';
+  /**
+   * Live preview only: every row that moved (descendants travel inside
+   * their parents). With the Tree plugin, `rows` is the new top level and the
+   * affected parents' children arrays are replaced once the event is not
+   * cancelled; cancel it to persist the move yourself.
+   * @since 3.11.0
+   */
+  movedRows?: T[];
+  /** Live preview only: parent the rows landed under (`null` = top level). @since 3.11.0 */
+  targetParent?: T | null;
+  /** Live preview only: insertion index among the target parent's children. @since 3.11.0 */
+  targetIndex?: number;
 }
 
 /**

@@ -358,11 +358,8 @@ export class TreePlugin<TRow = unknown> extends BaseGridPlugin<TreeConfig<TRow>>
     if (query.type === 'canMoveRow') {
       // Tree rows with children cannot be reordered
       const row = query.context as { [key: string]: unknown } | null | undefined;
-      const childrenField = this.config.childrenField ?? 'children';
-      const children = row?.[childrenField];
-      if (Array.isArray(children) && children.length > 0) {
-        return false;
-      }
+      const children = row?.[this.getChildrenField()];
+      if (Array.isArray(children) && children.length > 0) return false;
     }
 
     if (query.type === 'datasource:viewport-mapping') {
@@ -1558,6 +1555,15 @@ export class TreePlugin<TRow = unknown> extends BaseGridPlugin<TreeConfig<TRow>>
    */
   getRowByKey(key: string): TreeRow | undefined {
     return this.rowKeyMap.get(key)?.data;
+  }
+
+  /**
+   * Row property that holds child rows.
+   *
+   * @since 3.11.0
+   */
+  getChildrenField(): string {
+    return this.config.childrenField ?? 'children';
   }
 
   /**

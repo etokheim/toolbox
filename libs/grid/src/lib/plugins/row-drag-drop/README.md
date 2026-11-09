@@ -36,6 +36,18 @@ grid.gridConfig = {
   `canDrop` is invoked during `dragover` (so it must be sync) and again at
   drop time; `canDrag` validates pickup and keyboard moves. Custom handle
   renderers also evaluate it during visual refresh (see below).
+- **Live preview** — `livePreview: true` lifts the dragged rows (mouse/pen)
+  and slides the other rows aside to open room, vertically only. With
+  `dragFrom: 'row' | 'both'` a drag starts anywhere on a row after 6px, so a
+  plain click still works; links, buttons, inputs, open editors, selected
+  text and `[data-tbw-no-row-drag]` / `.tbw-no-row-drag` never start one, and
+  `shouldStartDrag` can refuse it. Selected rows of the grabbed row's
+  `rowType` move together; tree parents carry their subtree and may be
+  re-parented, never into their own subtree. `canDropAt` returns `true`,
+  `false` or `{ reason }` — rejected slots keep the room closed, show a
+  `not-allowed` cursor and the reason, and announce it. Release commits one
+  `row-move` (with `movedRows`, `targetParent`, `targetIndex`); Escape, an
+  invalid target or `preventDefault()` reverts. Touch keeps the native drag.
 - **TSV / plain-text** — every drag also exposes a tab-separated text payload
   on the clipboard MIME so rows can be pasted into spreadsheets.
 

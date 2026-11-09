@@ -219,4 +219,69 @@
       cursor: default;
     }
   }
+  /* ------------------------------------------------------------------ */
+  /* Live preview (mouse/pen): dragged rows lift and follow the pointer   */
+  /* vertically; neighbours slide to open room. No drag image.          */
+  /* ------------------------------------------------------------------ */
+  [data-tbw-row-lifting],
+  [data-tbw-row-lifting] * {
+    cursor: grabbing !important;
+    user-select: none;
+  }
+
+  [data-tbw-row-lifting][data-tbw-row-drop-invalid],
+  [data-tbw-row-lifting][data-tbw-row-drop-invalid] * {
+    cursor: not-allowed !important;
+  }
+
+  [data-tbw-row-lifting] .data-grid-row {
+    transition: transform var(--tbw-transition-duration, 200ms) var(--tbw-transition-ease, ease);
+  }
+
+  [data-tbw-row-lifting] .data-grid-row.tbw-row-lifted {
+    position: relative;
+    z-index: 4;
+    background: var(--tbw-color-bg);
+    box-shadow: var(
+      --tbw-row-lift-shadow,
+      0 6px 16px light-dark(rgb(0 0 0 / 22%), rgb(0 0 0 / 55%)),
+      0 1px 3px light-dark(rgb(0 0 0 / 18%), rgb(0 0 0 / 45%))
+    );
+    transition: none;
+    will-change: transform;
+  }
+
+  /* ::before — Selection owns the row's ::after (focus border, inset: 0). */
+  .data-grid-row.tbw-row-lifted[data-tbw-drag-count]::before {
+    content: attr(data-tbw-drag-count);
+    position: absolute;
+    inset: 2px 6px auto auto;
+    z-index: 27;
+    min-inline-size: 1.5em;
+    padding: 0 0.4em;
+    border-radius: 999px;
+    background: var(--tbw-color-accent);
+    color: var(--tbw-color-accent-fg, white);
+    font-size: 0.75em;
+    line-height: 1.5;
+    text-align: center;
+    pointer-events: none;
+  }
+
+  .tbw-row-drop-reason {
+    position: fixed;
+    z-index: 10001;
+    max-inline-size: 280px;
+    padding: 2px 8px;
+    border-radius: var(--tbw-border-radius, 4px);
+    background: var(--tbw-color-panel-bg, var(--tbw-color-bg));
+    color: var(--tbw-color-fg);
+    border: 1px solid var(--tbw-color-border);
+    box-shadow: 0 2px 8px light-dark(rgb(0 0 0 / 18%), rgb(0 0 0 / 50%));
+    font-size: 0.85em;
+    pointer-events: none;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
 }
