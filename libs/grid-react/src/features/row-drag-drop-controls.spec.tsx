@@ -371,6 +371,9 @@ describe('React row drag controls', () => {
     await grid.ready();
     const plugin = grid.getPluginByName('rowDragDrop');
     if (!plugin) throw new Error('Missing plugin');
+    // Let any column pass still queued from mount run before spying (slow CI).
+    await new Promise(requestAnimationFrame);
+    await new Promise(requestAnimationFrame);
     const process = vi.spyOn(plugin, 'processColumns');
     const old = contexts[0];
     const rootsBefore = vi.mocked(createRoot).mock.calls.length;
