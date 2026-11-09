@@ -293,7 +293,10 @@ export class LiveRowDragController<T = unknown> {
     );
   }
 
-  /** Row heights: measured where rendered, the virtualization estimate elsewhere. */
+  /**
+   * Row tops: measured height where rendered (else the cache estimate), plus
+   * any non-data gap after the row (`after`, e.g. a pinned-rows scoped footer).
+   */
   #rowOffsets(count: number): Float64Array {
     const virt = this.#grid._virtualization;
     const cache = virt?.positionCache;
@@ -304,7 +307,8 @@ export class LiveRowDragController<T = unknown> {
       if (i >= 0) measured.set(i, el.offsetHeight);
     }
     const offsets = new Float64Array(count + 1);
-    for (let i = 0; i < count; i++) offsets[i + 1] = offsets[i] + (measured.get(i) || cache?.[i]?.height || fallback);
+    for (let i = 0; i < count; i++)
+      offsets[i + 1] = offsets[i] + (measured.get(i) || cache?.[i]?.height || fallback) + (cache?.[i]?.after ?? 0);
     return offsets;
   }
 
