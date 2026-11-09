@@ -71,6 +71,41 @@ export function moveColumnBlock(order: string[], dragged: string[], anchor: stri
 }
 
 /**
+ * Pick the slot a dragged block settles into, from its on-screen left edge.
+ *
+ * `slots[k]` is the left edge the block would have if inserted at position `k`
+ * among the other columns. The nearest allowed slot wins, so a neighbour swaps
+ * once the block covers half of it, whatever the two widths are. The current
+ * slot is kept until another one is closer by more than `hysteresis` px, so a
+ * pointer resting on a threshold cannot make the columns flicker.
+ *
+ * @param slots - Left edge per insertion position
+ * @param allowed - Whether each insertion position is a valid drop
+ * @param left - Current left edge of the dragged block
+ * @param current - Insertion position currently shown
+ * @param hysteresis - Extra distance another slot must win by
+ * @returns The insertion position to show
+ */
+export function nearestSlot(
+  slots: readonly number[],
+  allowed: readonly boolean[],
+  left: number,
+  current: number,
+  hysteresis: number,
+): number {
+  let best = current;
+  let bestDist = Math.abs(left - (slots[current] ?? left)) - hysteresis;
+  slots.forEach((slot, k) => {
+    const dist = Math.abs(left - slot);
+    if (allowed[k] && dist < bestDist) {
+      best = k;
+      bestDist = dist;
+    }
+  });
+  return best;
+}
+
+/**
  * Horizontal offset each visible column needs to travel from its slot in
  * `from` to its slot in `to`, given every visible column's width.
  * Fields missing from `widths` (hidden columns) take no space.
@@ -97,4 +132,81 @@ export function columnOffsets(from: string[], to: string[], widths: Map<string, 
     if (Math.abs(d) > 0.5) deltas.set(f, d);
   });
   return deltas;
+}
+
+/**
+ * Insertion positions for a dragged block among the other columns: the block's
+ * left edge at each position, and whether a drop there is allowed. A position
+ * is allowed next to a movable column (`isTarget`), and a multi-column block
+ * never lands inside another explicit group (`groupOf`). `home` is always allowed.
+ */
+export function insertionSlots(
+  rest: readonly string[],
+  widths: ReadonlyMap<string, number>,
+  home: number,
+  isTarget: (field: string) => boolean,
+  groupOf: ReadonlyMap<string, number>,
+  isBlock: boolean,
+): { slots: number[]; allowed: boolean[] } {
+  const slots: number[] = [];
+  let left = 0;
+  for (let k = 0; k <= rest.length; k++) {
+    slots.push(left);
+    left += widths.get(rest[k]) ?? 0;
+  }
+  const target = (f: string | undefined) => f !== undefined && isTarget(f);
+  const allowed = slots.map((_, k) => {
+    if (k === home) return true;
+    const prev = rest[k - 1];
+    const next = rest[k];
+    if (!target(prev) && !target(next)) return false;
+    return !(isBlock && groupOf.has(prev) && groupOf.get(prev) === groupOf.get(next));
+  });
+  return { slots, allowed };
+}
+
+/** Swallow the next click on `el` within this task (the release that ended a drag). */
+export function suppressNextClick(el: HTMLElement): void {
+  const swallow = (e: Event) => {
+    e.stopImmediatePropagation();
+    e.preventDefault();
+  };
+  el.addEventListener('click', swallow, { capture: true, once: true });
+  setTimeout(() => el.removeEventListener('click', swallow, true), 0);
+}
+
+/**
+ * Measure the header row once at drag start: each visible column's width and
+ * untransformed left offset, and where the first column starts relative to
+ * the row (`origin`). Returns `null` when a column has no rendered header.
+ */
+export function measureHeader(
+  row: HTMLElement,
+  fields: readonly string[],
+  primary: string,
+): { widths: Map<string, number>; lefts: Map<string, number>; origin: number; rowLeft: number } | null {
+  const widths = new Map<string, number>();
+  const lefts = new Map<string, number>();
+  let x = 0;
+  let primaryCell: Element | null = null;
+  for (const field of fields) {
+    const cell = row.querySelector(`:scope > .cell[data-field="${CSS.escape(field)}"]`);
+    if (!cell) return null;
+    if (field === primary) primaryCell = cell;
+    const width = cell.getBoundingClientRect().width;
+    widths.set(field, width);
+    lefts.set(field, x);
+    x += width;
+  }
+  if (!primaryCell) return null;
+
+  // Header cells are never transformed here outside a FLIP, which `translateX` keeps exact.
+  const transform = getComputedStyle(primaryCell).transform;
+  const shift =
+    transform && transform !== 'none' && typeof DOMMatrixReadOnly === 'function'
+      ? new DOMMatrixReadOnly(transform).m41
+      : 0;
+  const rowLeft = row.getBoundingClientRect().left;
+  const origin = primaryCell.getBoundingClientRect().left - shift - rowLeft - (lefts.get(primary) ?? 0);
+  return { widths, lefts, origin, rowLeft };
 }

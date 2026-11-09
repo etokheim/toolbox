@@ -17,6 +17,8 @@ type Options = {
   groups?: boolean;
   lockGroupOrder?: boolean;
   animation?: false | 'flip';
+  /** Grid width in px; narrower than the columns makes it scroll horizontally. */
+  width?: number;
 };
 
 const PLUGINS = {
@@ -60,7 +62,7 @@ async function mount(page: Page, options: Options) {
 
     const grid = document.createElement('tbw-grid') as HTMLElement & Record<string, any>;
     grid.id = 'subject';
-    grid.style.cssText = 'display:block;width:900px;height:400px';
+    grid.style.cssText = `display:block;width:${o.width ?? 900}px;height:400px`;
     document.body.append(grid);
 
     const log: string[] = [];
@@ -78,7 +80,7 @@ async function mount(page: Page, options: Options) {
     );
 
     grid.gridConfig = {
-      fitMode: 'stretch',
+      fitMode: o.width ? 'fixed' : 'stretch',
       plugins,
       columnGroups: o.groups
         ? [
@@ -91,7 +93,7 @@ async function mount(page: Page, options: Options) {
         { field: 'a', width: 100 },
         { field: 'b', width: 200 },
         { field: 'c', width: 120, lockPosition: o.locked || undefined },
-        { field: 'd' },
+        { field: 'd', width: o.width ? 300 : undefined },
       ],
     };
     grid.rows = Array.from({ length: 30 }, (_, i) => ({ id: i, a: 'a' + i, b: 'b' + i, c: 'c' + i, d: 'd' + i }));
@@ -149,7 +151,7 @@ test.describe('live column movement', () => {
     await mount(page, { livePreview: true });
     await dragOver(page, header('a'), header('d'), 0.75);
 
-    expect(await visualOrder(page)).toEqual(['id', 'b', 'c', 'd', 'a']);
+    await expect.poll(() => visualOrder(page)).toEqual(['id', 'b', 'c', 'd', 'a']);
     expect(await bodyVisualOrder(page)).toEqual(['id', 'b', 'c', 'd', 'a']);
     expect(await order(page)).toEqual(['id', 'a', 'b', 'c', 'd']);
     await page.waitForTimeout(400); // longer than the state-change debounce
@@ -158,7 +160,7 @@ test.describe('live column movement', () => {
     await page.mouse.up();
     await page.waitForTimeout(400);
     expect(await order(page)).toEqual(['id', 'b', 'c', 'd', 'a']);
-    expect(await visualOrder(page)).toEqual(['id', 'b', 'c', 'd', 'a']);
+    await expect.poll(() => visualOrder(page)).toEqual(['id', 'b', 'c', 'd', 'a']);
     expect(await bodyVisualOrder(page)).toEqual(['id', 'b', 'c', 'd', 'a']);
     expect(await log(page)).toEqual(['column-move:id,b,c,d,a', 'column-state-change']);
     // No transform left behind.
@@ -173,7 +175,7 @@ test.describe('live column movement', () => {
       ),
     );
     await dragOver(page, header('b'), header('d'), 0.75);
-    expect(await visualOrder(page)).toEqual(['id', 'a', 'c', 'd', 'b']);
+    await expect.poll(() => visualOrder(page)).toEqual(['id', 'a', 'c', 'd', 'b']);
 
     await page.keyboard.press('Escape');
     await page.mouse.up();
@@ -200,42 +202,110 @@ test.describe('live column movement', () => {
     // b's original slot is now drawn by c/d, but targeting uses the original layout.
     await page.mouse.move(start.x, start.y, { steps: 6 });
     await page.waitForTimeout(250);
-    expect(await visualOrder(page)).toEqual(['id', 'a', 'b', 'c', 'd']);
+    await expect.poll(() => visualOrder(page)).toEqual(['id', 'a', 'b', 'c', 'd']);
     await page.mouse.up();
     await page.waitForTimeout(300);
     expect(await order(page)).toEqual(['id', 'a', 'b', 'c', 'd']);
     expect(await log(page)).toEqual([]);
   });
 
-  test('pinned and locked columns stay drop-refusing targets', async ({ page }) => {
+  test('pinned and locked columns never move', async ({ page }) => {
     await mount(page, { livePreview: true, pinned: true, locked: true });
     expect(await page.locator(header('c')).getAttribute('draggable')).toBe('false');
 
+    // Over the pinned column the block stops at the first slot it may take.
     await dragOver(page, header('b'), header('id'), 0.25);
-    expect(await visualOrder(page)).toEqual(['id', 'a', 'b', 'c', 'd']);
-    await page.mouse.up();
-    await page.waitForTimeout(300);
-    expect(await order(page)).toEqual(['id', 'a', 'b', 'c', 'd']);
-
-    await dragOver(page, header('b'), header('c'), 0.75);
-    expect(await visualOrder(page)).toEqual(['id', 'a', 'b', 'c', 'd']);
+    await expect.poll(() => visualOrder(page)).toEqual(['id', 'b', 'a', 'c', 'd']);
+    await page.keyboard.press('Escape');
     await page.mouse.up();
     await page.waitForTimeout(300);
     expect(await order(page)).toEqual(['id', 'a', 'b', 'c', 'd']);
 
     // Moving past the locked column (onto a movable neighbour) stays allowed, as without the preview.
     await dragOver(page, header('b'), header('d'), 0.75);
-    expect(await visualOrder(page)).toEqual(['id', 'a', 'c', 'd', 'b']);
+    await expect.poll(() => visualOrder(page)).toEqual(['id', 'a', 'c', 'd', 'b']);
     await page.mouse.up();
     await page.waitForTimeout(300);
     expect(await order(page)).toEqual(['id', 'a', 'c', 'd', 'b']);
     expect(await log(page)).toEqual(['column-move:id,a,c,d,b', 'column-state-change']);
   });
 
+  test('a wide column passing narrow ones never swaps back and forth', async ({ page }) => {
+    await mount(page, { livePreview: true });
+    const start = await point(page, header('d'), 0.5);
+    const end = await point(page, header('a'), 0.1);
+    await page.mouse.move(start.x, start.y);
+    await page.mouse.down();
+    const seen: string[] = [];
+    for (let x = start.x; x >= end.x; x -= 4) {
+      await page.mouse.move(x, start.y);
+      await page.waitForTimeout(16);
+      const o =
+        (await visualOrder(page, '.header-row')).filter((f) => f !== 'd').join(',') +
+        '|' +
+        (await bodyVisualOrder(page)).indexOf('d');
+      if (seen.at(-1) !== o) seen.push(o);
+    }
+    await page.mouse.up();
+    await page.waitForTimeout(300);
+    const slots = seen.map((s) => Number(s.split('|')[1]));
+    // Monotonic: d only ever moves left, one slot at a time.
+    expect(slots).toEqual([...slots].sort((p, q) => q - p));
+    expect(new Set(slots).size).toBe(slots.length);
+    expect(await order(page)).toEqual(['d', 'id', 'a', 'b', 'c']);
+  });
+
+  test('the lifted header follows the pointer horizontally only, without a drag image', async ({ page }) => {
+    await mount(page, { livePreview: true });
+    const top = (await page.locator(header('a')).boundingBox())!.y;
+    const dragStarts = page.evaluate(
+      () =>
+        new Promise<number>((resolve) => {
+          let n = 0;
+          // Counted after the grid's own handler: a cancelled dragstart shows no drag image.
+          window.addEventListener('dragstart', (e) => void (e.defaultPrevented || n++));
+          setTimeout(() => resolve(n), 1500);
+        }),
+    );
+    const start = await point(page, header('a'), 0.5);
+    await page.mouse.move(start.x, start.y);
+    await page.mouse.down();
+    await page.mouse.move(start.x + 60, start.y + 250, { steps: 8 });
+    const box = (await page.locator(header('a')).boundingBox())!;
+    expect(box.y).toBe(top);
+    expect(box.x + box.width / 2).toBeCloseTo(start.x + 60, 0);
+    expect(await page.locator(`${header('a')}.tbw-reorder-lifted`).count()).toBe(1);
+    // Far below the header row the columns still follow the horizontal position.
+    await page.mouse.move(start.x + 300, start.y + 250, { steps: 8 });
+    await expect.poll(() => visualOrder(page)).toEqual(['id', 'b', 'c', 'a', 'd']);
+    await page.mouse.up();
+    await page.waitForTimeout(300);
+    expect(await dragStarts).toBe(0);
+    expect(await order(page)).toEqual(['id', 'b', 'c', 'a', 'd']);
+    // The release did not sort the column.
+    expect(await log(page)).toEqual(['column-move:id,b,c,a,d', 'column-state-change']);
+    expect(await page.locator('#subject .tbw-reorder-lifted').count()).toBe(0);
+  });
+
+  test('holding the lifted header at an edge scrolls a wide grid', async ({ page }) => {
+    await mount(page, { livePreview: true, width: 400 });
+    const area = '#subject .tbw-scroll-area';
+    const start = await point(page, header('a'), 0.5);
+    const edge = (await page.locator(area).boundingBox())!;
+    await page.mouse.move(start.x, start.y);
+    await page.mouse.down();
+    await page.mouse.move(edge.x + edge.width - 5, start.y, { steps: 8 });
+    await page.waitForTimeout(800);
+    expect(await page.$eval(area, (el) => el.scrollLeft)).toBeGreaterThan(0);
+    await page.mouse.up();
+    await page.waitForTimeout(300);
+    expect((await order(page)).indexOf('a')).toBeGreaterThan(2);
+  });
+
   test('a group header drags its fragment as a block', async ({ page }) => {
     await mount(page, { livePreview: true, groups: true });
     await dragOver(page, group('left'), group('right'), 0.75);
-    expect(await visualOrder(page)).toEqual(['id', 'c', 'd', 'a', 'b']);
+    await expect.poll(() => visualOrder(page)).toEqual(['id', 'c', 'd', 'a', 'b']);
     const groupLeft = () => page.$eval(group('left'), (el) => el.getBoundingClientRect().left);
     const rightGroupLeft = await page.$eval(group('right'), (el) => el.getBoundingClientRect().left);
     expect(await groupLeft()).toBeGreaterThan(rightGroupLeft);
@@ -247,11 +317,11 @@ test.describe('live column movement', () => {
   test('a lockGroupOrder veto slides the preview back', async ({ page }) => {
     await mount(page, { livePreview: true, groups: true, lockGroupOrder: true });
     await dragOver(page, header('a'), header('d'), 0.75);
-    expect(await visualOrder(page)).toEqual(['id', 'b', 'c', 'd', 'a']);
+    await expect.poll(() => visualOrder(page)).toEqual(['id', 'b', 'c', 'd', 'a']);
     await page.mouse.up();
     await page.waitForTimeout(400);
     expect(await order(page)).toEqual(['id', 'a', 'b', 'c', 'd']);
-    expect(await visualOrder(page)).toEqual(['id', 'a', 'b', 'c', 'd']);
+    await expect.poll(() => visualOrder(page)).toEqual(['id', 'a', 'b', 'c', 'd']);
     // Within its own group the move is still allowed.
     await dragOver(page, header('a'), header('b'), 0.75);
     await page.mouse.up();

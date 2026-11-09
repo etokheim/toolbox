@@ -45,6 +45,14 @@ export interface ReorderConfig {
    * Rearrange columns live while a header is dragged, instead of only marking
    * the drop position with an indicator.
    *
+   * With a mouse or pen there is no drag image: the header itself lifts
+   * (`.tbw-reorder-lifted`, shadow via `--tbw-reorder-lift-shadow`) and follows
+   * the pointer horizontally, locked to the header row. The other columns slide
+   * aside once the header passes half of a neighbour, with a small hysteresis so
+   * they never flip back and forth; on release the header settles into its
+   * slot and the click that ends the drag does not sort. Touch keeps the native
+   * drag. Near the edges of a horizontally scrolling grid, the content scrolls.
+   *
    * The preview is visual only: cells slide with CSS transforms and neither the
    * column order, `column-move`, nor `column-state-change` change until the
    * drop. Escape, releasing outside a valid target, or a `column-move` listener
