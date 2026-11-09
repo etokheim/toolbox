@@ -134,6 +134,24 @@ describe('RowDragDropPlugin livePreview', () => {
     expect(events(grid, 'row-move')).toHaveLength(0);
   });
 
+  it('counts non-data gaps after rows (pinned-rows scoped footers) in slot geometry', () => {
+    const { body, grid } = setup(flat());
+    // A scoped footer (H tall) follows row b: tops are a 0, b H, c 3H, d 4H.
+    const gaps = [0, H, 0, 0];
+    let offset = 0;
+    (grid._virtualization as Record<string, unknown>).positionCache = gaps.map((after) => {
+      const entry = { offset, height: H, measured: true, after };
+      offset += H + after;
+      return entry;
+    });
+    const { target, y } = dragRow(body, 0, 3 * H);
+    expect(rowEl(body, 2).style.transform).toBe(`translateY(-${H}px)`);
+    expect(rowEl(body, 3).style.transform).toBe('');
+    pointer('pointerup', target, y);
+    vi.runAllTimers();
+    expect(grid.rows.map((r) => r.id)).toEqual(['b', 'c', 'a', 'd']);
+  });
+
   it('clamps the lifted row to the body', () => {
     const { body } = setup(flat());
     const { target } = dragRow(body, 1, 10);
