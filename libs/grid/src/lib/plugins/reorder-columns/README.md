@@ -60,10 +60,12 @@ Set `livePreview: true` to make the columns slide into place while a header is d
 new ReorderPlugin({ livePreview: true });
 ```
 
+- With a mouse or pen there is no drag image: the header itself lifts (a shadow, `.tbw-reorder-lifted`) and follows the pointer horizontally, locked to the header row even if the pointer drifts up or down. The other columns slide aside once it passes half of a neighbour, with a small hysteresis so they never swap back and forth. On release it settles into its slot, and the release does not sort the column. Holding it near the edge of a horizontally scrolling grid scrolls the grid. Touch keeps the native drag.
+- Customize the lift with `--tbw-reorder-lift-shadow` (a `box-shadow` value).
 - The preview is visual only (CSS transforms). `column-move` and `column-state-change` fire once, on drop, so persisted state only changes when the user commits.
-- Escape, releasing outside a valid target, or vetoing `column-move` with `preventDefault()` slides the columns back to their exact original order.
-- Valid targets are unchanged: pinned and locked columns still refuse drops, and group rules such as `lockGroupOrder` still apply.
-- Releasing over the dragged column's own slot is a no-op and emits no event.
+- Escape, releasing outside the header row (touch), or vetoing `column-move` with `preventDefault()` slides the columns back to their exact original order.
+- Valid targets are unchanged: pinned and locked columns never move (the dragged header stops at the nearest slot it may take), and group rules such as `lockGroupOrder` still apply.
+- Releasing back in the dragged column's own slot is a no-op and emits no event.
 - It is opt-in, so the default drop-indicator drag is unchanged. It is ignored while `ColumnVirtualizationPlugin` is active, because off-screen columns cannot be previewed.
 
 ## Limitations

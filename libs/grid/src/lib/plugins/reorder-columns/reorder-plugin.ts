@@ -19,7 +19,17 @@ import {
   createDragAlternativeMenu,
   prefersInlineDragAlternative,
 } from '../shared/drag-alternative-menu';
-import { canMoveColumn, columnOffsets, moveColumn, moveColumnBlock } from './column-drag';
+import { startPointerDrag } from '../../core/internal/pointer-drag';
+import {
+  canMoveColumn,
+  columnOffsets,
+  insertionSlots,
+  moveColumn,
+  measureHeader,
+  nearestSlot,
+  suppressNextClick,
+} from './column-drag';
+import { LIFTED, LivePreviewStyle } from './live-preview-style';
 import styles from './reorder.css?inline';
 import type { ColumnMoveDetail, ReorderConfig } from './types';
 
@@ -29,12 +39,8 @@ const QUERY_GET_CONTEXT_MENU_ITEMS = 'getContextMenuItems';
 /** Menu order band for column moving — after pinning (40-49). */
 const MOVE_ITEM_ORDER = 50;
 
-/** Grid attribute scoping the live-preview stylesheet to one grid. */
-const PREVIEW_ATTR = 'data-tbw-reorder-preview';
 /** Grid attribute present while FLIP transforms are in flight. */
 const FLIP_ATTR = 'data-tbw-reorder-flip';
-
-let previewScopeSeq = 0;
 
 /** An in-flight drag with `livePreview` enabled. */
 interface LiveDrag {
@@ -50,13 +56,38 @@ interface LiveDrag {
   lefts: Map<string, number>;
   /** Distance from the header row's left edge to the first column's slot. */
   origin: number;
-  /** Group-row fragments and whether each one accepts drops. */
-  fragments: { fields: string[]; target: boolean }[];
+  /** Pointer distance from the dragged block's left edge when the drag began. */
+  grab: number;
+  /** The other columns, in original order; the block is inserted among them. */
+  rest: string[];
+  /** Left edge of the block for each insertion position into `rest`. */
+  slots: number[];
+  /** Whether each insertion position is a valid drop. */
+  allowed: boolean[];
+  /** Insertion position of the original order. */
+  home: number;
+  /** Insertion position currently previewed. */
+  slot: number;
   /** Order currently previewed. */
   order: string[];
   /** Per-field offsets of the current preview; stationary fields are omitted. */
   deltas: Map<string, number>;
+  /** Lifted header cells following the pointer (pointer drags only). */
+  lifted: HTMLElement[] | null;
+  /** Last pointer x, replayed while edge auto-scroll moves the content. */
+  lastX: number;
+  /** Pending auto-scroll frame. */
+  frame: number;
 }
+
+/** Grid attribute present while a header is lifted by a pointer drag. */
+const LIFT_ATTR = 'data-tbw-reorder-lifting';
+/** Pointer travel before a press on a header becomes a drag. */
+const LIFT_THRESHOLD = 4;
+/** Distance another slot must win by before the preview changes. */
+const SLOT_HYSTERESIS = 8;
+/** Width of the edge zones that auto-scroll a wide grid during a pointer drag. */
+const EDGE = 32;
 
 const sameOrder = (a: string[], b: string[]): boolean => a.length === b.length && a.every((f, i) => f === b[i]);
 
@@ -215,9 +246,16 @@ export class ReorderPlugin extends BaseGridPlugin<ReorderConfig> {
   /** Active live-preview drag, or `null` (also `null` for classic drags). */
   #live: LiveDrag | null = null;
   /** Stylesheet holding the preview transforms, so recycled body rows pick them up too. */
-  #previewStyle: HTMLStyleElement | null = null;
-  #previewScope = '';
-  #previewTimer: ReturnType<typeof setTimeout> | undefined;
+  #previewStyle = new LivePreviewStyle(
+    () => this.gridElement,
+    (cell) => this.getGroupFragmentFields(cell, ''),
+    () => (this.animationType ? this.animationDuration : 0),
+  );
+  /** Pending commit while a released header settles into its slot. */
+  #settleTimer: ReturnType<typeof setTimeout> | undefined;
+  /** A mouse/pen press on a header that may become a lifted drag; blocks the native drag. */
+  #pointerArmed = false;
+  #cancelPointer: (() => void) | null = null;
   #flipToken = 0;
 
   /** Typed internal grid accessor. */
@@ -489,7 +527,7 @@ export class ReorderPlugin extends BaseGridPlugin<ReorderConfig> {
       (e) => {
         const live = this.#live;
         const to = e.relatedTarget;
-        if (live && !(to instanceof Node && this.gridElement.contains(to))) this.#preview(live, live.original);
+        if (live && !(to instanceof Node && this.gridElement.contains(to))) this.#rest(live);
       },
       opts,
     );
@@ -497,10 +535,14 @@ export class ReorderPlugin extends BaseGridPlugin<ReorderConfig> {
 
   /** @internal */
   override detach(): void {
+    if (this.#live) cancelAnimationFrame(this.#live.frame);
     this.#live = null;
-    clearTimeout(this.#previewTimer);
-    this.#previewStyle?.remove();
-    this.#previewStyle = null;
+    this.#cancelPointer?.();
+    this.#cancelPointer = null;
+    this.#pointerArmed = false;
+    clearTimeout(this.#settleTimer);
+    this.#settleTimer = undefined;
+    this.#previewStyle.dispose();
     this.isDragging = false;
     this.draggedField = null;
     this.draggedIndex = null;
@@ -554,7 +596,17 @@ export class ReorderPlugin extends BaseGridPlugin<ReorderConfig> {
         this.#openMoveMenu(headerEl, field);
       });
 
+      // With livePreview, a mouse or pen lifts the header itself (no drag image)
+      // instead of starting a native drag. Touch keeps the native drag.
+      headerEl.addEventListener('pointerdown', (e: PointerEvent) =>
+        this.#onLiftPointerDown(e, headerEl, () => [field], field),
+      );
+
       headerEl.addEventListener('dragstart', (e: DragEvent) => {
+        if (this.#pointerArmed) {
+          e.preventDefault();
+          return;
+        }
         const currentOrder = this.getColumnOrder();
         const orderIndex = currentOrder.indexOf(field);
         this.isDragging = true;
@@ -568,7 +620,7 @@ export class ReorderPlugin extends BaseGridPlugin<ReorderConfig> {
         }
 
         headerEl.classList.add(GridClasses.DRAGGING);
-        this.#startLive([field], field);
+        this.#startLive([field], field, e.clientX, false);
       });
 
       headerEl.addEventListener('dragend', () => {
@@ -719,7 +771,15 @@ export class ReorderPlugin extends BaseGridPlugin<ReorderConfig> {
         this.#openGroupMoveMenu(groupHeaderEl, groupHeaderEl, fragmentFields);
       });
 
+      groupHeaderEl.addEventListener('pointerdown', (e: PointerEvent) =>
+        this.#onLiftPointerDown(e, groupHeaderEl, () => fragmentFields, fragmentFields[0]),
+      );
+
       groupHeaderEl.addEventListener('dragstart', (e: DragEvent) => {
+        if (this.#pointerArmed) {
+          e.preventDefault();
+          return;
+        }
         this.isDragging = true;
         this.draggedField = null;
         this.draggedIndex = null;
@@ -735,7 +795,7 @@ export class ReorderPlugin extends BaseGridPlugin<ReorderConfig> {
         for (const f of fragmentFields) {
           gridEl.querySelector(`.header-row > .cell[data-field="${f}"]`)?.classList.add(GridClasses.DRAGGING);
         }
-        this.#startLive(fragmentFields, fragmentFields[0]);
+        this.#startLive(fragmentFields, fragmentFields[0], e.clientX, false);
       });
 
       groupHeaderEl.addEventListener('dragend', () => {
@@ -962,121 +1022,256 @@ export class ReorderPlugin extends BaseGridPlugin<ReorderConfig> {
 
   // #region Live Preview
 
+  /** Whether live movement can run: opted in, and every column has a measurable header. */
+  #canLive(): boolean {
+    return !!this.config.livePreview && !!this.gridElement && !this.grid.getPluginByName('columnVirtualization');
+  }
+
+  /**
+   * A mouse or pen press on a movable header: once it travels past the
+   * threshold, the header lifts and follows the pointer along the header row.
+   * Arming also refuses the native `dragstart`, so no drag image appears.
+   */
+  #onLiftPointerDown(e: PointerEvent, el: HTMLElement, fields: () => string[], primary: string): void {
+    if (!this.#canLive() || e.button !== 0 || e.pointerType === 'touch') return;
+    if (this.#live || this.#settleTimer !== undefined || this.#pointerArmed) return;
+    if (e.target instanceof Element && e.target.closest('.resize-handle, .tbw-col-move-btn, input, select, textarea'))
+      return;
+    const startX = e.clientX;
+    const id = e.pointerId;
+    this.#pointerArmed = true;
+    // Before promotion nothing is captured, so a quick move off the header (or a
+    // release elsewhere) would never reach the drag: capture once it travels.
+    const early = (m: PointerEvent) => {
+      if (m.pointerId !== id) return;
+      if (m.type === 'pointerup') {
+        if (!this.#live) this.#cancelPointer?.();
+      } else if (Math.hypot(m.clientX - startX, m.clientY - e.clientY) >= LIFT_THRESHOLD && !el.hasPointerCapture(id))
+        el.setPointerCapture(id);
+    };
+    document.addEventListener('pointermove', early, true);
+    document.addEventListener('pointerup', early, true);
+    const disarm = () => {
+      document.removeEventListener('pointermove', early, true);
+      document.removeEventListener('pointerup', early, true);
+      this.#pointerArmed = false;
+      this.#cancelPointer = null;
+    };
+    this.#cancelPointer = startPointerDrag(
+      e,
+      el,
+      {
+        onPromote: () => this.#startLive(fields(), primary, startX, true),
+        onMove: (pe) => {
+          const live = this.#live;
+          if (!live) return;
+          live.lastX = pe.clientX;
+          this.#follow(live);
+          this.#autoScroll(live);
+        },
+        onEnd: () => {
+          disarm();
+          this.#liftDrop();
+        },
+        onCancel: () => {
+          const lifted = !!this.#live;
+          disarm();
+          this.#cancelLive();
+          // Escape mid-drag: the later release still clicks the header; it must not sort.
+          const gridEl = this.gridElement;
+          if (lifted && gridEl)
+            document.addEventListener('pointerup', () => suppressNextClick(gridEl), { capture: true, once: true });
+        },
+      },
+      { threshold: LIFT_THRESHOLD },
+    );
+  }
+
   /**
    * Begin a live-preview drag when `livePreview` is on. Measures every visible
-   * column once, so hit-testing runs against the original layout and does not
-   * oscillate as the hovered cell slides away under the pointer.
+   * column once, so slot geometry comes from the original layout and never
+   * from whatever transformed cell happens to be under the pointer.
    */
-  #startLive(dragged: string[], primary: string): void {
+  #startLive(dragged: string[], primary: string, clientX: number, lift: boolean): void {
     this.#live = null;
     const gridEl = this.gridElement;
-    if (!this.config.livePreview || !gridEl || this.grid.getPluginByName('columnVirtualization')) return;
+    if (!this.#canLive()) return;
     const row = gridEl.querySelector<HTMLElement>('.header-row');
     if (!row) return;
 
     // Settle any rollback still sliding back, so the measurement is untransformed.
-    this.#endPreview(false);
+    this.#previewStyle.end(false);
 
-    const widths = new Map<string, number>();
-    const lefts = new Map<string, number>();
-    let x = 0;
-    let primaryCell: Element | null = null;
-    for (const { field } of this.visibleColumns) {
-      const cell = row.querySelector(`:scope > .cell[data-field="${CSS.escape(field)}"]`);
-      if (!cell) return;
-      if (field === primary) primaryCell = cell;
-      const width = cell.getBoundingClientRect().width;
-      widths.set(field, width);
-      lefts.set(field, x);
-      x += width;
-    }
-    if (!primaryCell) return;
-
-    // Header cells are never transformed here outside a FLIP, which `translateX` keeps exact.
-    const transform = getComputedStyle(primaryCell).transform;
-    const shift =
-      transform && transform !== 'none' && typeof DOMMatrixReadOnly === 'function'
-        ? new DOMMatrixReadOnly(transform).m41
-        : 0;
-    const origin =
-      primaryCell.getBoundingClientRect().left - shift - row.getBoundingClientRect().left - (lefts.get(primary) ?? 0);
+    const measured = measureHeader(
+      row,
+      this.visibleColumns.map((c) => c.field),
+      primary,
+    );
+    if (!measured) return;
+    const { widths, lefts, origin, rowLeft } = measured;
 
     const original = this.getColumnOrder();
+    const block = original.filter((f) => dragged.includes(f));
+    const rest = original.filter((f) => !dragged.includes(f));
+    const home = original.slice(0, original.indexOf(block[0])).filter((f) => !dragged.includes(f)).length;
+    // A multi-column block never lands inside another explicit group.
+    const groupOf = new Map<string, number>();
+    this.#groupFragments(gridEl).forEach(({ id, fields }, i) => {
+      if (!id.startsWith('__implicit__')) fields.forEach((f) => groupOf.set(f, i));
+    });
+    const { slots, allowed } = insertionSlots(
+      rest,
+      widths,
+      home,
+      (f) => this.#isMoveTarget(f),
+      groupOf,
+      block.length > 1,
+    );
+
+    let lifted: HTMLElement[] | null = null;
+    if (lift) {
+      lifted = [...gridEl.querySelectorAll<HTMLElement>('.header-row > .cell[data-field]')].filter(
+        (c) => c.closest('tbw-grid') === gridEl && block.includes(c.getAttribute('data-field') ?? ''),
+      );
+      gridEl.querySelectorAll<HTMLElement>('.header-group-row > .cell[data-group]').forEach((c) => {
+        const fields = this.getGroupFragmentFields(c, '');
+        if (fields.length && fields.every((f) => block.includes(f))) lifted?.push(c);
+      });
+      for (const c of lifted) {
+        c.classList.add(LIFTED);
+        c.style.transition = 'none';
+      }
+      gridEl.setAttribute(LIFT_ATTR, '');
+    }
+
     this.#live = {
       original,
-      dragged: original.filter((f) => dragged.includes(f)),
+      dragged: block,
       primary,
       widths,
       lefts,
       origin,
-      fragments: this.#groupFragments(gridEl).map(({ id, fields }) => ({
-        fields,
-        target: !id.startsWith('__implicit__') && fields.every((f) => this.#isMoveTarget(f)),
-      })),
+      grab: clientX - rowLeft - origin - (lefts.get(block[0]) ?? 0),
+      rest,
+      slots,
+      allowed,
+      home,
+      slot: home,
       order: original,
       deltas: new Map(),
+      lifted,
+      lastX: clientX,
+      frame: 0,
     };
+    // Hides the resize handles for the whole drag, not only once a column moves.
+    if (lift) this.#previewStyle.write(new Map());
   }
 
   /**
-   * The order a drop at this pointer position would produce, or `null` when it
-   * is not a drop target. Targets match the classic drag exactly: a movable
-   * column header, or a draggable (explicit, fully movable) group fragment.
+   * Move the block to where the pointer puts it: the lifted header follows the
+   * pointer (clamped to the header lane), the other columns slide once the
+   * block passes half of a neighbour. Pure geometry, so the preview cannot
+   * oscillate while cells are mid-transition.
    */
-  #liveOrderAt(e: DragEvent, live: LiveDrag): string[] | null {
-    const gridEl = this.gridElement;
-    const cell =
-      e.target instanceof Element ? e.target.closest('.header-row > .cell, .header-group-row > .cell') : null;
-    const row = gridEl?.querySelector('.header-row');
-    if (!cell || !row || cell.closest('tbw-grid') !== gridEl) return null;
-
-    // An immovable column that is still in place (a sticky pinned column over
-    // scrolled content, or a locked one) refuses the drop, as it always has.
-    const hovered = cell.getAttribute('data-field');
-    if (hovered && !live.deltas.has(hovered) && !live.dragged.includes(hovered) && !this.#isMoveTarget(hovered))
-      return null;
-
-    const x = e.clientX - row.getBoundingClientRect().left - live.origin;
-    const end = (f: string) => (live.lefts.get(f) ?? 0) + (live.widths.get(f) ?? 0);
-    let fields: string[] | undefined;
-    if (cell.parentElement?.classList.contains('header-group-row')) {
-      const fragment = live.fragments.find(
-        (g) => x >= (live.lefts.get(g.fields[0]) ?? 0) && x < end(g.fields[g.fields.length - 1]),
-      );
-      if (!fragment?.target) return null;
-      fields = fragment.fields;
-    } else {
-      const field = [...live.lefts.keys()].find((f) => x >= (live.lefts.get(f) ?? 0) && x < end(f));
-      if (!field || (!live.dragged.includes(field) && !this.#isMoveTarget(field))) return null;
-      fields = [field];
-    }
-
-    const anchors = fields.filter((f) => !live.dragged.includes(f));
-    if (anchors.length === 0) return live.original;
-    const before = x < ((live.lefts.get(fields[0]) ?? 0) + end(fields[fields.length - 1])) / 2;
-    return moveColumnBlock(live.original, live.dragged, anchors[before ? 0 : anchors.length - 1], before);
+  #follow(live: LiveDrag): void {
+    const row = this.gridElement?.querySelector<HTMLElement>('.header-row');
+    if (!row) return;
+    const open = live.slots.filter((_, k) => live.allowed[k]);
+    const raw = live.lastX - row.getBoundingClientRect().left - live.origin - live.grab;
+    const left = Math.min(Math.max(raw, Math.min(...open)), Math.max(...open));
+    live.slot = nearestSlot(live.slots, live.allowed, left, live.slot, SLOT_HYSTERESIS);
+    this.#preview(live, [...live.rest.slice(0, live.slot), ...live.dragged, ...live.rest.slice(live.slot)]);
+    if (!live.lifted) return;
+    const dx = left - (live.lefts.get(live.dragged[0]) ?? 0);
+    for (const c of live.lifted) c.style.transform = `translateX(${dx}px)`;
   }
 
+  /** Back to the original order, e.g. once a native drag leaves the header lane. */
+  #rest(live: LiveDrag): void {
+    live.slot = live.home;
+    this.#preview(live, live.original);
+  }
+
+  /** Scroll a wide grid while the pointer sits in an edge zone, keeping the lift under it. */
+  #autoScroll(live: LiveDrag): void {
+    if (live.frame || this.#live !== live) return;
+    const area = this.gridElement?.querySelector<HTMLElement>('.tbw-scroll-area');
+    if (!area || area.scrollWidth <= area.clientWidth) return;
+    const r = area.getBoundingClientRect();
+    const pinned = this.#internalGrid._getHorizontalScrollOffsets?.() ?? { left: 0, right: 0 };
+    const lo = r.left + pinned.left + EDGE;
+    const hi = r.right - pinned.right - EDGE;
+    const over = live.lastX < lo ? live.lastX - lo : live.lastX > hi ? live.lastX - hi : 0;
+    if (!over) return;
+    const before = area.scrollLeft;
+    area.scrollLeft += Math.sign(over) * Math.min(EDGE, 2 + Math.abs(over) / 2);
+    if (area.scrollLeft === before) return;
+    this.#follow(live);
+    live.frame = requestAnimationFrame(() => {
+      live.frame = 0;
+      this.#autoScroll(live);
+    });
+  }
+
+  /** A native drag (touch) over the grid: inside the header lane it previews, elsewhere it rests. */
   #onLiveDragOver(e: DragEvent): void {
     const live = this.#live;
-    if (!live) return;
-    const order = this.#liveOrderAt(e, live);
-    this.#preview(live, order ?? live.original);
-    if (!order) return;
+    const gridEl = this.gridElement;
+    if (!live || live.lifted || !gridEl) return;
+    const rows = [...gridEl.querySelectorAll<HTMLElement>('.header-group-row, .header-row')].filter(
+      (r) => r.closest('tbw-grid') === gridEl,
+    );
+    const top = Math.min(...rows.map((r) => r.getBoundingClientRect().top));
+    const bottom = Math.max(...rows.map((r) => r.getBoundingClientRect().bottom));
+    if (!rows.length || e.clientY < top || e.clientY > bottom) {
+      this.#rest(live);
+      return;
+    }
+    live.lastX = e.clientX;
+    this.#follow(live);
     e.preventDefault();
     if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
   }
 
-  /** Commit the previewed order — the only point a live drag persists anything. */
+  /** Native drop: commit the previewed order. */
   #onLiveDrop(e: DragEvent): void {
     const live = this.#live;
-    if (!live) return;
+    if (!live || live.lifted) return;
     e.preventDefault();
     this.#live = null;
+    this.#commit(live);
+  }
 
+  /** Pointer release: the lifted header settles into its slot, then the order commits. */
+  #liftDrop(): void {
+    const live = this.#live;
+    if (!live) return;
+    this.#live = null;
+    cancelAnimationFrame(live.frame);
+    // The release also clicks the header; that click must not sort.
+    if (this.gridElement) suppressNextClick(this.gridElement);
+    const settle = this.animationType ? this.animationDuration : 0;
+    if (!settle) {
+      this.#commit(live);
+      return;
+    }
+    const dx = live.deltas.get(live.dragged[0]) ?? 0;
+    for (const c of live.lifted ?? []) {
+      c.style.transition = `transform ${settle}ms ease-out`;
+      c.style.transform = dx ? `translateX(${dx}px)` : 'translateX(0px)';
+    }
+    this.#settleTimer = setTimeout(() => {
+      this.#settleTimer = undefined;
+      this.#commit(live);
+    }, settle);
+  }
+
+  /** Commit the previewed order — the only point a live drag persists anything. */
+  #commit(live: LiveDrag): void {
+    this.#unlift(live);
     const order = live.order;
     if (sameOrder(order, live.original)) {
-      this.#endPreview(false);
+      this.#previewStyle.end(false);
       return;
     }
     const cancelled = this.emitCancelable<ColumnMoveDetail>('column-move', {
@@ -1086,90 +1281,44 @@ export class ReorderPlugin extends BaseGridPlugin<ReorderConfig> {
       columnOrder: order,
     });
     if (cancelled) {
-      this.#endPreview(true);
+      this.#previewStyle.end(true);
       return;
     }
     // Same task as setColumnOrder, and its body rebuild runs in the next frame
     // before paint, so the cells never show in the old order without transforms.
-    this.#endPreview(false);
+    this.#previewStyle.end(false);
     this.grid.setColumnOrder(order);
     this.grid.requestStateChange?.();
   }
 
-  /** Escape, a release outside a target, or a re-render ending the drag: slide back. */
-  #cancelLive(): void {
-    if (!this.#live) return;
-    this.#live = null;
-    this.#endPreview(true);
+  /** Put lifted headers down; the preview stylesheet takes over their position. */
+  #unlift(live: LiveDrag): void {
+    if (!live.lifted) return;
+    for (const c of live.lifted) {
+      c.classList.remove(LIFTED);
+      c.style.transition = '';
+      c.style.transform = '';
+    }
+    this.gridElement?.removeAttribute(LIFT_ATTR);
   }
 
+  /** Escape, a release outside a target, or a re-render ending the drag: slide back. */
+  #cancelLive(): void {
+    const live = this.#live;
+    if (!live) return;
+    this.#live = null;
+    cancelAnimationFrame(live.frame);
+    this.#unlift(live);
+    this.#previewStyle.end(true);
+  }
   /** Show `order` by translating every cell from its original slot. */
   #preview(live: LiveDrag, order: string[]): void {
     if (sameOrder(order, live.order)) return;
     live.order = order;
     live.deltas = columnOffsets(live.original, order, live.widths);
-    this.#writePreview(live.deltas);
+    this.#previewStyle.write(live.deltas);
   }
 
-  /**
-   * Write the preview transforms. A scoped stylesheet rather than inline styles,
-   * so body rows recycled by vertical scrolling during the drag are shifted too.
-   */
-  #writePreview(deltas: Map<string, number>): void {
-    const gridEl = this.gridElement;
-    if (!gridEl) return;
-    clearTimeout(this.#previewTimer);
-    if (!this.#previewStyle) {
-      this.#previewScope ||= String(++previewScopeSeq);
-      const style = document.createElement('style');
-      const root = gridEl.getRootNode();
-      (root instanceof ShadowRoot ? root : document.head).appendChild(style);
-      this.#previewStyle = style;
-    }
-    gridEl.setAttribute(PREVIEW_ATTR, this.#previewScope);
-
-    const scope = `[${PREVIEW_ATTR}="${this.#previewScope}"]`;
-    // Skip cells of a nested grid (e.g. a master-detail row) that share field names.
-    const own = `:not(${scope} tbw-grid *)`;
-    const rules: string[] = [];
-    if (this.animationType) {
-      rules.push(`${scope} .cell[data-field]${own}{transition:transform ${this.animationDuration}ms ease-out}`);
-    }
-    deltas.forEach((dx, f) =>
-      rules.push(`${scope} .cell[data-field="${CSS.escape(f)}"]${own}{transform:translateX(${dx}px)}`),
-    );
-    this.#previewStyle.textContent = rules.join('\n');
-
-    // A group header slides with its columns only when they all move together.
-    gridEl.querySelectorAll<HTMLElement>('.header-group-row > .cell[data-group]').forEach((cell) => {
-      const fields = this.getGroupFragmentFields(cell, '');
-      const dx = deltas.get(fields[0]) ?? 0;
-      const together = fields.every((f) => (deltas.get(f) ?? 0) === dx);
-      cell.style.transition = this.animationType ? `transform ${this.animationDuration}ms ease-out` : '';
-      cell.style.transform = together && dx ? `translateX(${dx}px)` : '';
-    });
-  }
-
-  /** Drop the preview; `animate` slides cells back to their slots first. */
-  #endPreview(animate: boolean): void {
-    const gridEl = this.gridElement;
-    if (!gridEl || !this.#previewStyle) return;
-    const clear = () => {
-      if (this.#previewStyle) this.#previewStyle.textContent = '';
-      gridEl.removeAttribute(PREVIEW_ATTR);
-      gridEl.querySelectorAll<HTMLElement>('.header-group-row > .cell[data-group]').forEach((cell) => {
-        cell.style.transition = '';
-        cell.style.transform = '';
-      });
-    };
-    if (animate && this.animationType) {
-      this.#writePreview(new Map());
-      this.#previewTimer = setTimeout(clear, this.animationDuration + 50);
-    } else {
-      clearTimeout(this.#previewTimer);
-      clear();
-    }
-  }
   // #endregion
 
   // #region View Transition
