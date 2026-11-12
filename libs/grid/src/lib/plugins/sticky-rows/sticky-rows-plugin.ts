@@ -198,7 +198,8 @@ export class StickyRowsPlugin extends BaseGridPlugin<StickyRowsConfig> {
   /** @internal Update which clones show / how they're positioned. */
   override onScroll(event: ScrollEvent): void {
     if (this.liveAncestors) {
-      this.liveAncestors.layout();
+      // No frame: a horizontal-only dispatch, which cannot move rows vertically.
+      if (this.grid._virtualization.scrollFrame) this.liveAncestors.layout();
       return;
     }
     this.refreshDisplay(event.scrollTop);

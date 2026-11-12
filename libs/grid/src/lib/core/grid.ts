@@ -2527,41 +2527,46 @@ export class DataGridElement<T = any> extends HTMLElement implements InternalGri
     const scrollWidth = scrollArea?.scrollWidth ?? 0;
     const clientHeight = fauxScrollbar?.clientHeight ?? 0;
     const clientWidth = scrollArea?.clientWidth ?? 0;
+    const virt = this._virtualization;
+    virt.scrollFrame = { scrollTop: virt.container?.scrollTop ?? scrollTop };
+    try {
+      // Faux scrollbar pattern: content never scrolls, just update transforms
+      // Old content stays visible until new transforms are applied
+      const windowChanged = this.refreshVirtualWindow(false);
 
-    // Faux scrollbar pattern: content never scrolls, just update transforms
-    // Old content stays visible until new transforms are applied
-    const windowChanged = this.refreshVirtualWindow(false);
-
-    // Let plugins reapply visual state to recycled DOM elements
-    // Only run when the visible window actually changed to avoid expensive DOM queries
-    if (windowChanged) {
-      this.#pluginManager?.onScrollRender();
-    }
-
-    // Schedule debounced measurement for variable heights mode
-    // This progressively builds up the height cache as user scrolls
-    if (this._virtualization.variableHeights) {
-      if (this.#scrollMeasureTimeout) {
-        clearTimeout(this.#scrollMeasureTimeout);
+      // Let plugins reapply visual state to recycled DOM elements
+      // Only run when the visible window actually changed to avoid expensive DOM queries
+      if (windowChanged) {
+        this.#pluginManager?.onScrollRender();
       }
-      // Measure after scroll settles (100ms debounce)
-      this.#scrollMeasureTimeout = window.setTimeout(() => {
-        this.#scrollMeasureTimeout = 0;
-        this.#virtManager.measureRenderedRowHeights(this._virtualization.start, this._virtualization.end);
-      }, 100);
-    }
 
-    // Dispatch to plugins (using cached flag and pooled event object to avoid GC)
-    // Geometry values were read before DOM writes above - use pre-read values.
-    if (this.#hasScrollPlugins) {
-      const scrollEvent = this.#pooledScrollEvent;
-      scrollEvent.scrollTop = scrollTop;
-      scrollEvent.scrollLeft = scrollLeft;
-      scrollEvent.scrollHeight = scrollHeight;
-      scrollEvent.scrollWidth = scrollWidth;
-      scrollEvent.clientHeight = clientHeight;
-      scrollEvent.clientWidth = clientWidth;
-      this.#pluginManager?.onScroll(scrollEvent);
+      // Schedule debounced measurement for variable heights mode
+      // This progressively builds up the height cache as user scrolls
+      if (this._virtualization.variableHeights) {
+        if (this.#scrollMeasureTimeout) {
+          clearTimeout(this.#scrollMeasureTimeout);
+        }
+        // Measure after scroll settles (100ms debounce)
+        this.#scrollMeasureTimeout = window.setTimeout(() => {
+          this.#scrollMeasureTimeout = 0;
+          this.#virtManager.measureRenderedRowHeights(this._virtualization.start, this._virtualization.end);
+        }, 100);
+      }
+
+      // Dispatch to plugins (using cached flag and pooled event object to avoid GC)
+      // Geometry values were read before DOM writes above - use pre-read values.
+      if (this.#hasScrollPlugins) {
+        const scrollEvent = this.#pooledScrollEvent;
+        scrollEvent.scrollTop = scrollTop;
+        scrollEvent.scrollLeft = scrollLeft;
+        scrollEvent.scrollHeight = scrollHeight;
+        scrollEvent.scrollWidth = scrollWidth;
+        scrollEvent.clientHeight = clientHeight;
+        scrollEvent.clientWidth = clientWidth;
+        this.#pluginManager?.onScroll(scrollEvent);
+      }
+    } finally {
+      virt.scrollFrame = null;
     }
 
     // Public `tbw-scroll` CustomEvent — always dispatched (vertical only).

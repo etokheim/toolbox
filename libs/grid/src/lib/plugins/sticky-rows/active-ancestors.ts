@@ -4,11 +4,12 @@ import { getRowFlow } from '../../core/internal/row-flow';
 import {
   getRowCacheKey,
   getRowIndexAtOffset,
+  readViewportHeight,
+  readVirtualScrollTop,
   resolveConfiguredRowHeight,
-  toVirtualScrollTop,
 } from '../../core/internal/virtualization';
 import type { GridElement } from '../../core/plugin/base-plugin';
-import type { GridConfig, RowElementInternal, ScrollToRowOptions } from '../../core/types';
+import type { GridConfig, RowElementInternal, ScrollFrame, ScrollToRowOptions } from '../../core/types';
 import type { HierarchyModel } from '../hierarchy/hierarchy';
 import { buildAncestorIndex, indexEligibleAncestors, type AncestorIndex } from './ancestor-index';
 import { layoutAncestors, type AncestorFrame } from './ancestor-layout';
@@ -31,6 +32,7 @@ export class ActiveAncestors implements RowWindow {
   #entering = new Set<RowElementInternal>();
   #sticky: boolean[] = [];
   #frames: AncestorFrame[] = [];
+  #laidOut: ScrollFrame | null = null;
   #header: HTMLElement | null = null;
   #headerShift = 0;
   #pending = 0;
@@ -169,7 +171,16 @@ export class ActiveAncestors implements RowWindow {
     return result;
   }
 
+  /**
+   * Lay out live ancestors. Within one scroll dispatch this runs once: the
+   * `onScrollRender` + `onScroll` pair share the same pre-write snapshot.
+   */
   layout(): void {
+    const frame = this.#grid._virtualization.scrollFrame;
+    if (frame) {
+      if (frame === this.#laidOut) return;
+      this.#laidOut = frame;
+    }
     this.#rebuild();
     const grid = this.#grid;
     this.#orderRows();
@@ -189,8 +200,8 @@ export class ActiveAncestors implements RowWindow {
       const natural = retained ? startOffset : this.#offsetAt(index);
       row.classList.add('tbw-ancestor-live');
       row.classList.toggle('tbw-ancestor-retained', retained);
-      row.style.setProperty('--tbw-ancestor-shift', `${frame.top + scrollTop - natural}px`);
-      row.style.setProperty('--tbw-ancestor-order', String(this.#frames.length - this.#frames.indexOf(frame)));
+      setStyleProperty(row, '--tbw-ancestor-shift', `${frame.top + scrollTop - natural}px`);
+      setStyleProperty(row, '--tbw-ancestor-order', String(this.#frames.length - this.#frames.indexOf(frame)));
     }
     if (external) {
       if (this.#header !== external.header) {
@@ -253,7 +264,7 @@ export class ActiveAncestors implements RowWindow {
     if (!focused && focusedRowIndex !== undefined && this.#index.rows[focusedRowIndex]) {
       top = this.#contextHeight(
         focusedRowIndex,
-        (this.viewport()?.height ?? this.#grid._virtualization.viewportEl?.clientHeight ?? 0) -
+        (this.viewport()?.height ?? readViewportHeight(this.#grid._virtualization)) -
           (getRowFlow(this.#grid)?.bottom() ?? 0),
       );
     }
@@ -362,7 +373,7 @@ export class ActiveAncestors implements RowWindow {
       (index) => this.#heightAt(index),
       (offset) => this.#rowAt(offset),
       external?.scrollTop ?? this.#scrollTop(),
-      (external?.height ?? grid._virtualization.viewportEl?.clientHeight ?? 0) - (getRowFlow(grid)?.bottom() ?? 0),
+      (external?.height ?? readViewportHeight(grid._virtualization)) - (getRowFlow(grid)?.bottom() ?? 0),
       (offset) => getRowFlow(grid)?.scopeAt?.(offset),
       (index) =>
         getRowFlow(grid)?.scopeEnd?.(index, this.#index.subtreeEnds[index]) ??
@@ -383,10 +394,13 @@ export class ActiveAncestors implements RowWindow {
 
   #heightAt(index: number): number {
     const grid = this.#grid;
-    return (
-      resolveConfiguredRowHeight(grid.effectiveConfig.rowHeight, grid._rows[index], index) ??
-      (this.elements.get(index)?.offsetHeight || grid._virtualization.rowHeight)
-    );
+    const state = grid._virtualization;
+    const configured = resolveConfiguredRowHeight(grid.effectiveConfig.rowHeight, grid._rows[index], index);
+    if (configured !== undefined) return configured;
+    // Scroll ticks use the virtualization model: offsetHeight after the window
+    // writes would force a synchronous layout on every frame.
+    const cached = state.scrollFrame ? state.positionCache?.[index]?.height : undefined;
+    return cached || this.elements.get(index)?.offsetHeight || state.rowHeight;
   }
 
   #contextHeight(index: number, available: number): number {
@@ -412,8 +426,7 @@ export class ActiveAncestors implements RowWindow {
   }
 
   #scrollTop(): number {
-    const state = this.#grid._virtualization;
-    return toVirtualScrollTop(state.container?.scrollTop ?? 0, state.scrollMapping);
+    return readVirtualScrollTop(this.#grid._virtualization);
   }
 
   #clearRow(row: HTMLElement): void {
@@ -557,4 +570,9 @@ export class ActiveAncestors implements RowWindow {
     owner.scrollTo({ top: owner.scrollTop + top - desiredTop, behavior: smooth ? 'smooth' : 'instant' });
   }
   // #endregion
+}
+
+/** Skip unchanged custom-property writes so steady scroll ticks do not dirty row styles. */
+function setStyleProperty(row: HTMLElement, name: string, value: string): void {
+  if (row.style.getPropertyValue(name) !== value) row.style.setProperty(name, value);
 }

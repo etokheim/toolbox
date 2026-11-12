@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { getHoveredRow, observeRowHover, setupRowHover } from './row-hover';
+import { getHoveredRow, observeRowHover, ROW_HOVER_SCROLL_IDLE_MS, setupRowHover } from './row-hover';
 
 describe('row hover presentation', () => {
   let host: HTMLElement;
@@ -104,13 +104,71 @@ describe('row hover presentation', () => {
     expect(frames.size).toBe(0);
   });
 
-  it('retargets after scrolling without relying on a new pointer event or row identity', () => {
+  it('retargets once after scrolling idles, ignoring per-tick scrollend, without a new pointer event', () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      move(first);
+      frame();
+      hit = second;
+      host.dispatchEvent(new Event('scroll'));
+      host.dispatchEvent(new Event('scrollend'));
+      frame();
+      expect(document.elementFromPoint).toHaveBeenCalledTimes(1);
+      expect(first.hasAttribute('data-tbw-hovered')).toBe(true);
+      vi.advanceTimersByTime(ROW_HOVER_SCROLL_IDLE_MS);
+      frame();
+      expect(document.elementFromPoint).toHaveBeenCalledTimes(2);
+      expect(first.hasAttribute('data-tbw-hovered')).toBe(false);
+      expect(second.hasAttribute('data-tbw-hovered')).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('never hit tests during an active scroll and settles once after the idle delay', () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      move(first);
+      frame();
+      hit = second;
+      for (let i = 0; i < 5; i++) {
+        host.dispatchEvent(new Event('scroll'));
+        sync();
+        move(first);
+        frame();
+        vi.advanceTimersByTime(ROW_HOVER_SCROLL_IDLE_MS - 1);
+      }
+      expect(document.elementFromPoint).toHaveBeenCalledTimes(1);
+      vi.advanceTimersByTime(1);
+      frame();
+      expect(document.elementFromPoint).toHaveBeenCalledTimes(2);
+      expect(second.hasAttribute('data-tbw-hovered')).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps the marker through mid-scroll renders without hit testing', () => {
     move(first);
     frame();
-    hit = second;
     host.dispatchEvent(new Event('scroll'));
+    hit = second;
+    sync();
+    move(second);
+    expect(frames.size).toBe(0);
+    expect(first.hasAttribute('data-tbw-hovered')).toBe(true);
+    expect(document.elementFromPoint).toHaveBeenCalledTimes(1);
+  });
+
+  it('settles immediately when the pointer is pressed mid-scroll', () => {
+    move(first);
     frame();
-    expect(first.hasAttribute('data-tbw-hovered')).toBe(false);
+    host.dispatchEvent(new Event('scroll'));
+    hit = second;
+    second.dispatchEvent(
+      new PointerEvent('pointerdown', { bubbles: true, clientX: 20, clientY: 30, pointerType: 'mouse' }),
+    );
+    frame();
     expect(second.hasAttribute('data-tbw-hovered')).toBe(true);
   });
 

@@ -124,6 +124,43 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+describe('live ancestor scroll dispatch', () => {
+  it('lays out once per tick from the pre-write snapshot and skips horizontal dispatches', async () => {
+    const { grid, sticky, scroll } = await fixture(80);
+    scroll(400);
+    const shifts = () =>
+      grid._rowPool
+        .filter((row) => row.classList.contains('tbw-ancestor-live'))
+        .map((row) => row.style.getPropertyValue('--tbw-ancestor-shift'));
+    const settled = shifts();
+    expect(settled.length).toBeGreaterThan(0);
+    const container = grid._virtualization.container!;
+    container.scrollTop = 800;
+    const scrollReads = vi.spyOn(container, 'scrollTop', 'get');
+    const heightReads = vi.mocked(Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'clientHeight')!.get!);
+    const offsetReads = vi.mocked(Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'offsetHeight')!.get!);
+    heightReads.mockClear();
+    offsetReads.mockClear();
+    const layout = vi.spyOn(sticky.liveAncestors!, 'layout');
+    grid._onScrollBatched(800);
+    // Core snapshot + window computation only; plugin layout reads nothing live.
+    expect(scrollReads.mock.calls.length).toBeLessThanOrEqual(2);
+    expect(offsetReads).not.toHaveBeenCalled();
+    expect(heightReads.mock.contexts.some((el) => (el as HTMLElement).classList.contains('rows-viewport'))).toBe(false);
+    expect(layout.mock.calls.length).toBeGreaterThanOrEqual(2);
+    expect(grid._virtualization.scrollFrame).toBeNull();
+    const dispatched = shifts();
+    grid._afterPluginRender();
+    expect(shifts()).toEqual(dispatched);
+
+    const live = grid._rowPool.find((row) => row.classList.contains('tbw-ancestor-live'))!;
+    live.style.setProperty('--tbw-ancestor-shift', '999px');
+    // Horizontal-only dispatches carry no frame and never re-run ancestor layout.
+    sticky.onScroll({} as never);
+    expect(live.style.getPropertyValue('--tbw-ancestor-shift')).toBe('999px');
+  });
+});
+
 describe('live ancestor viewport updates', () => {
   it('stores viewport updates before attachment without changing legacy mode', () => {
     const owner = document.createElement('div');

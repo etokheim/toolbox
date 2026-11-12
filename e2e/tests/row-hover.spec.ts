@@ -116,6 +116,12 @@ async function replay(page: Page, position = pointer): Promise<void> {
     await new Promise((resolve) => setTimeout(resolve, 55));
   }
 
+  await scrollSettled(page);
+}
+
+/** Row hover hit-tests once after scrolling has been idle for `ROW_HOVER_SCROLL_IDLE_MS`. */
+async function scrollSettled(page: Page): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, 200));
   await settle(page);
 }
 
@@ -294,7 +300,7 @@ for (const expandedWidth of [240, 'content'] as const) {
       await page.mouse.wheel(0, 220);
       await new Promise((resolve) => setTimeout(resolve, 55));
     }
-    await settle(page);
+    await scrollSettled(page);
     expect((await sample(page)).scrollTop).toBe(1980);
     const oldAction = page.getByRole('button', { name: 'Action row-44', exact: true });
     const newAction = page.getByRole('button', { name: 'Action row-45', exact: true });
@@ -303,7 +309,7 @@ for (const expandedWidth of [240, 'content'] as const) {
     await expect(oldCell).toHaveAttribute('data-tbw-cell-expanded', '');
     await page.mouse.wheel(0, 220);
     await expect.poll(async () => (await sample(page)).scrollTop).toBe(1988);
-    await settle(page);
+    await scrollSettled(page);
     expect((await sample(page)).marked).toEqual(['Row 45Action row-45']);
     await expect(oldCell).not.toHaveAttribute('data-tbw-cell-expanded');
     await expect(newCell).toHaveAttribute('data-tbw-cell-expanded', '');
@@ -352,10 +358,11 @@ test('transform-only control records browser hover independently of grid and rec
   await expect.poll(async () => (await sample(page)).hover).toEqual(['Row 45']);
 });
 
-test('hover work is bounded to one hit test per frame and stops when idle', async ({ page }, info) => {
+test('hover hit testing is deferred until scrolling settles and stops when idle', async ({ page }, info) => {
   await page.addInitScript(() => {
     const metrics: HoverMetrics = { hits: 0, frames: [] };
     Object.assign(window, { hoverMetrics: metrics });
+
     const hitTest = document.elementFromPoint.bind(document);
     document.elementFromPoint = (x, y) => {
       metrics.hits++;
@@ -385,7 +392,8 @@ test('hover work is bounded to one hit test per frame and stops when idle', asyn
   for (const frame of metrics.frames)
     hitsByFrame.set(frame.timestamp, (hitsByFrame.get(frame.timestamp) ?? 0) + frame.hits);
   expect(Math.max(...hitsByFrame.values())).toBe(1);
-  expect(metrics.frames.length).toBeLessThanOrEqual(25);
+  // Initial pointer entry plus one reconcile after the gesture idles — never per scroll frame or wheel tick.
+  expect(metrics.frames.length).toBeLessThanOrEqual(2);
   await settle(page);
   await settle(page);
   expect((await readMetrics()).hits).toBe(metrics.hits);

@@ -2298,7 +2298,21 @@ export interface VirtualState {
    * @since 2.13.0
    */
   scrollMapping: ScrollMapping;
+
+  /**
+   * Geometry snapshot for the scroll dispatch currently in progress, read before any
+   * DOM write of that tick. Scroll-time plugin layout reads it instead of live
+   * `scrollTop`/`clientHeight` (which would force layout after the window writes),
+   * and uses its identity to lay out once per tick. `scrollTop` is the raw native
+   * value. Only vertical dispatches set it, so a plugin `onScroll` without a frame is
+   * horizontal-only. `null` outside a dispatch.
+   * @internal
+   */
+  scrollFrame?: { scrollTop: number } | null;
 }
+
+/** @internal Pre-write geometry for one coalesced scroll dispatch. */
+export type ScrollFrame = NonNullable<VirtualState['scrollFrame']>;
 
 // RowElementInternal is now defined earlier in the file with all internal properties
 

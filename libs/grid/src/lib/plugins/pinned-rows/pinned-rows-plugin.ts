@@ -136,7 +136,8 @@ export class PinnedRowsPlugin<TRow = unknown> extends BaseGridPlugin<PinnedRowsC
 
   /** @internal */
   override onScroll(): void {
-    this.#scoped?.layout();
+    // No frame: a horizontal-only dispatch, which cannot move scoped footers.
+    if (this.grid._virtualization.scrollFrame) this.#scoped?.layout();
   }
 
   /** @internal */

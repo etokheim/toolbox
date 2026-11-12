@@ -302,9 +302,12 @@ Each icon also has a `-mask` variant (e.g., `--tbw-icon-sort-asc-mask`) for SVG 
 
 Use `.data-grid-row[data-tbw-hovered]` for row highlights and hover-revealed row
 actions. The grid maintains this read-only marker on the row under the last
-observed mouse position, reconciling pointer, scroll and render changes once per
-pending animation frame. Browser `:hover` can remain on a previous row when rows
-move by transform, even without DOM recycling.
+observed mouse position, reconciling pointer and render changes once per pending
+animation frame. While scrolling, the marker stays on its row element (like
+native `:hover`) and the grid re-targets it once scrolling has been idle for about
+120 ms, or immediately on pointer press, so hit testing never runs per scroll frame.
+Browser `:hover` can remain on a previous row when rows move by transform, even
+without DOM recycling.
 
 ```css
 @media (hover: hover) {

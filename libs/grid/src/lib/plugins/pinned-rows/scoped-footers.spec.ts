@@ -111,6 +111,42 @@ describe('scoped non-data footers', () => {
     expect(grid.rows).toEqual(rows);
   });
 
+  it('lays out once per vertical scroll dispatch from the snapshot and skips horizontal ones', async () => {
+    const pinned = new PinnedRowsPlugin({
+      slots: [],
+      scopedFooters: (scope) =>
+        scope.kind === 'grid' ? { height: 40, render: () => document.createElement('button') } : null,
+    });
+    const grid = document.createElement(DataGridElement.activeTag) as DataGridElement;
+    grid.gridConfig = { columns: [{ field: 'id' }], rowHeight: 24, plugins: [pinned] };
+    grid.rows = Array.from({ length: 20 }, (_, i) => ({ id: i }));
+    document.body.append(grid);
+    await grid.ready();
+    viewport(grid, 100);
+    getRowFlow(grid)!.layout();
+    const host = grid.querySelector<HTMLElement>('.tbw-scoped-footer')!;
+    const viewportEl = grid._virtualization.viewportEl!;
+    const heightReads = vi.spyOn(viewportEl, 'clientHeight', 'get');
+    const scrollReads = vi.spyOn(grid._virtualization.container!, 'scrollTop', 'get');
+    grid._virtualization.cachedViewportHeight = 200;
+    grid._virtualization.scrollFrame = { scrollTop: 0 };
+    pinned.onScrollRender();
+    expect(host.style.top).toBe(`${200 - 40}px`);
+    host.style.top = '1px';
+    pinned.onScroll();
+    expect(host.style.top).toBe('1px');
+    grid._virtualization.scrollFrame = null;
+    expect(heightReads).not.toHaveBeenCalled();
+    expect(scrollReads).not.toHaveBeenCalled();
+    // Horizontal-only dispatch (no frame) leaves footers alone.
+    pinned.onScroll();
+    expect(host.style.top).toBe('1px');
+    heightReads.mockRestore();
+    viewport(grid, 100);
+    pinned.onScrollRender();
+    expect(host.style.top).toBe(`${100 - 40}px`);
+  });
+
   it('invokes the whole-grid callback for empty input and replaces live eligibility/height', async () => {
     const callback = vi.fn((_scope: FooterScope) => ({ height: 40, render: () => document.createElement('button') }));
     const pinned = new PinnedRowsPlugin({ slots: [], scopedFooters: callback });

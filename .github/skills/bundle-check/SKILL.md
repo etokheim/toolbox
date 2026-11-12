@@ -1,6 +1,6 @@
 ---
 name: bundle-check
-description: Check the grid bundle budget using authoritative Bun gzip (index.js ≤175 KiB raw, ≤52.25 KiB gzip hard limit, 45 KiB gzip soft warning). Run after code changes that could affect bundle size.
+description: Check the grid bundle budget using authoritative Bun gzip (index.js ≤176 KiB raw, ≤52.5 KiB gzip hard limit, 45 KiB gzip soft warning). Run after code changes that could affect bundle size.
 argument-hint: library-name (optional)
 ---
 
@@ -10,12 +10,12 @@ Verify that the grid library build stays within its budget constraints.
 
 ## Budget Limits
 
-| Metric              | Threshold             | Action                                                                         |
-| ------------------- | --------------------- | ------------------------------------------------------------------------------ |
-| `index.js` raw size | > 179200 B (175 KiB)  | **Hard fail** — reduce size or document a justified budget increase.           |
-| `index.js` gzipped  | > 53504 B (52.25 KiB) | **Hard fail** — reduce size or document a justified budget increase.           |
-| `index.js` gzipped  | > 46080 B, ≤ 53504 B  | **Soft warning** — investigate; do not trade readability for marginal savings. |
-| `index.js` gzipped  | ≤ 46080 B (45 KiB)    | **Pass**, provided raw size also passes.                                       |
+| Metric              | Threshold            | Action                                                                         |
+| ------------------- | -------------------- | ------------------------------------------------------------------------------ |
+| `index.js` raw size | > 180224 B (176 KiB) | **Hard fail** — reduce size or document a justified budget increase.           |
+| `index.js` gzipped  | > 53760 B (52.5 KiB) | **Hard fail** — reduce size or document a justified budget increase.           |
+| `index.js` gzipped  | > 46080 B, ≤ 53760 B | **Soft warning** — investigate; do not trade readability for marginal savings. |
+| `index.js` gzipped  | ≤ 46080 B (45 KiB)   | **Pass**, provided raw size also passes.                                       |
 
 ## Steps
 
@@ -27,7 +27,7 @@ Verify that the grid library build stays within its budget constraints.
 bun nx build grid
 ```
 
-The Vite `bundleBudget` plugin enforces `tools/core-bundle-budget.ts` (175 KiB raw / 52.25 KiB gzip) and existing plugin rules. Both it and the report use `tools/bundle-size.ts`: Bun's default `node:zlib.gzipSync`, with one batched Bun subprocess for a Node-hosted caller. Missing Bun, failed measurement and malformed child output are errors, never grounds to substitute Node gzip. Record the printed Bun version with exact bytes and bundle hash.
+The Vite `bundleBudget` plugin enforces `tools/core-bundle-budget.ts` (176 KiB raw / 52.5 KiB gzip) and existing plugin rules. Both it and the report use `tools/bundle-size.ts`: Bun's default `node:zlib.gzipSync`, with one batched Bun subprocess for a Node-hosted caller. Missing Bun, failed measurement and malformed child output are errors, never grounds to substitute Node gzip. Record the printed Bun version with exact bytes and bundle hash.
 
 Vite's inherited progress/sub-build size banners still use the hosting runtime and are informational. The explicitly labeled **Bundle budget authority** output and the report determine acceptance, not those rounded banners.
 
@@ -47,18 +47,18 @@ Upstream is Bun-first, not Bun-only: inherited Nx/Vite uses a Node shebang and C
 
 Use this checklist in order. Stop at the first matching outcome.
 
-#### 3a. Under budget (gzipped ≤ 45 KiB and raw ≤ 175 KiB)
+#### 3a. Under budget (gzipped ≤ 45 KiB and raw ≤ 176 KiB)
 
 - [ ] Report the raw and gzipped sizes.
 - [ ] Confirm the build is good. No further investigation required.
 
-#### 3b. Soft warning (gzip > 45 KiB and ≤ 52.25 KiB, raw ≤ 175 KiB)
+#### 3b. Soft warning (gzip > 45 KiB and ≤ 52.5 KiB, raw ≤ 176 KiB)
 
 - [ ] Report the sizes and flag the warning explicitly.
 - [ ] Briefly investigate using the **Over-budget investigation checklist** below.
 - [ ] Document any size increase in the commit message; merging is allowed.
 
-#### 3c. Over budget (gzip > 52.25 KiB **or** raw > 175 KiB)
+#### 3c. Over budget (gzip > 52.5 KiB **or** raw > 176 KiB)
 
 The build/report must fail. Evaluate the checklist, then either reduce size without harming code quality or use the user's standing permission for a justified increase. Record feature need, plugin-placement decision, readability/performance trade-offs, old/new limits and before/after authoritative bytes. Update the shared rule, active docs and threshold tests together. No per-increase approval is needed; this grants no commit or remote permission.
 
