@@ -48,9 +48,22 @@ describe('reveal animation ownership', () => {
     expect(row.classList.contains('tbw-tree-fade-in')).toBe(false);
   });
 
-  it('resolves the enabled flag only while a reveal is in flight', () => {
-    const { body, animation } = fixture();
+  it('prunes class-stripped reveals without resolving the flag', () => {
+    const { body, row, animation } = fixture();
     const enabled = vi.fn(() => true);
+    // Core row rendering resets className; Chrome fires no animationcancel.
+    row.className = 'data-grid-row';
+    animation.reconcile(body, () => 'a/item', enabled);
+    expect(enabled).not.toHaveBeenCalled();
+    animation.apply(row, 'a/item', 'tbw-tree-slide-in');
+    expect(row.classList.contains('tbw-tree-slide-in')).toBe(true);
+  });
+
+  it('resolves the flag only when given and a live reveal remains', () => {
+    const { body, row, animation } = fixture();
+    const enabled = vi.fn(() => true);
+    animation.reconcile(body, () => 'a/item');
+    expect(row.classList.contains('tbw-tree-slide-in')).toBe(true);
     animation.reconcile(body, () => 'a/item', enabled);
     expect(enabled).toHaveBeenCalledTimes(1);
     animation.clear();

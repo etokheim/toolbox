@@ -1415,6 +1415,24 @@ describe('tree plugin integration', () => {
     });
   });
 
+  it('does not read computed style on scroll renders while reveals are tracked', async () => {
+    const grid = document.createElement('tbw-grid') as GridElement;
+    document.body.appendChild(grid);
+    const plugin = new TreePlugin({ defaultExpanded: true });
+    grid.gridConfig = { columns: [{ field: 'name' }], plugins: [plugin] };
+    grid.rows = [{ name: 'a', children: [{ name: 'b' }, { name: 'c' }] }];
+    await waitUpgrade(grid);
+    await nextFrame();
+
+    const spy = vi.spyOn(window, 'getComputedStyle');
+    try {
+      plugin.onScrollRender();
+      expect(spy).not.toHaveBeenCalled();
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
   it('does not read computed style on steady scroll renders or idle renders', async () => {
     const grid = document.createElement('tbw-grid') as GridElement;
     document.body.appendChild(grid);
