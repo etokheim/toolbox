@@ -79,7 +79,24 @@ interface LiveRowDrag<T> {
   tree: RowTreeAccess<T>;
   /** Whether a visible row is real data (not a group header or other synthetic row). */
   isData: (row: unknown) => boolean;
+  /** A hover expanded a parent: the next row change re-lays the drag out instead of ending it. */
+  relayout: boolean;
 }
+
+/** Flat indices of the moving roots and their visible descendants. */
+function draggedIndices<T>(view: readonly unknown[], rootSet: ReadonlySet<T>, tree: RowTreeAccess<T>): Set<number> {
+  const dragged = new Set<number>();
+  for (let i = 0; i < view.length; i++) {
+    if (!rootSet.has(view[i] as T)) continue;
+    const depth = tree.depth(view[i] as T);
+    dragged.add(i);
+    while (i + 1 < view.length && tree.depth(view[i + 1] as T) > depth) dragged.add(++i);
+  }
+  return dragged;
+}
+
+/** Hover time over a collapsed parent before it opens. */
+const EXPAND_DELAY = 600;
 
 /** What the controller needs from its plugin. */
 export interface LiveRowDragHost<T> {
@@ -108,6 +125,9 @@ export class LiveRowDragController<T = unknown> {
   #liveArmed = false;
   #cancelLivePointer: (() => void) | null = null;
   #settleTimer: ReturnType<typeof setTimeout> | undefined;
+  #expandTimer: ReturnType<typeof setTimeout> | undefined;
+  /** Collapsed parent the pending {@link #expandTimer} will open. */
+  #expandRow: T | null = null;
   #announceTimer: ReturnType<typeof setTimeout> | undefined;
   #reasonEl: HTMLElement | null = null;
   #reasonOrigin: { x: number; y: number } | null = null;
@@ -177,6 +197,11 @@ export class LiveRowDragController<T = unknown> {
       },
       children: (parent) =>
         parent === null ? source : (((parent as Record<string, unknown>)[field] as T[] | undefined) ?? []),
+      // A children array (even empty) or a lazy `hasChildren` marks a parent.
+      canContain: (row) => {
+        const m = meta(row);
+        return !!m && (m.hasChildren || Array.isArray((row as Record<string, unknown>)[field]));
+      },
     };
     return { tree, isData: isTree ? (row) => meta(row) !== undefined : (row) => sourceSet.has(row) };
   }
@@ -232,12 +257,15 @@ export class LiveRowDragController<T = unknown> {
     if (row === undefined || !this.#liveGrabAllowed(row, index)) return;
     const origin = onHandle ? 'handle' : 'row';
     if (this.#config.shouldStartDrag && !this.#config.shouldStartDrag({ row, index, event: e, origin })) return;
-    this.#armLive(e, gridEl, index);
+    this.#armLive(e, gridEl, index, target.closest<HTMLElement>('a[href],img'));
   }
 
-  #armLive(e: PointerEvent, gridEl: HTMLElement, index: number): void {
+  #armLive(e: PointerEvent, gridEl: HTMLElement, index: number, native: HTMLElement | null): void {
     const id = e.pointerId;
     this.#liveArmed = true;
+    // A link or image would start its own native drag first; it stays clickable.
+    const nativeDraggable = native?.getAttribute('draggable') ?? null;
+    native?.setAttribute('draggable', 'false');
     // Nothing is captured before promotion, so a quick move off the grid (or a
     // release elsewhere) would never reach the drag: capture once it travels.
     const early = (m: PointerEvent) => {
@@ -260,6 +288,8 @@ export class LiveRowDragController<T = unknown> {
     const disarm = () => {
       document.removeEventListener('pointermove', early, true);
       document.removeEventListener('pointerup', early, true);
+      if (nativeDraggable === null) native?.removeAttribute('draggable');
+      else native?.setAttribute('draggable', nativeDraggable);
       this.#liveArmed = false;
       this.#cancelLivePointer = null;
     };
@@ -267,7 +297,11 @@ export class LiveRowDragController<T = unknown> {
       e,
       gridEl,
       {
-        onPromote: () => this.#startLive(index, e.clientY),
+        onPromote: () => {
+          this.#holdFocusSync(true);
+          this.#startLive(index, e.clientY);
+          if (!this.#live) this.#holdFocusSync(false);
+        },
         onMove: (pe) => {
           const live = this.#live;
           if (!live || live.settling) return;
@@ -334,13 +368,7 @@ export class LiveRowDragController<T = unknown> {
     const { tree, isData } = this.#treeAccess();
     const roots = movingRoots(this.#liveDragRows(index, grabbed), tree);
     const rootSet = new Set(roots);
-    const dragged = new Set<number>();
-    for (let i = 0; i < view.length; i++) {
-      if (!rootSet.has(view[i] as T)) continue;
-      const depth = tree.depth(view[i] as T);
-      dragged.add(i);
-      while (i + 1 < view.length && tree.depth(view[i + 1] as T) > depth) dragged.add(++i);
-    }
+    const dragged = draggedIndices(view, rootSet, tree);
     if (!dragged.has(index)) return;
 
     const startDetail: RowDragStartDetail<T> = {
@@ -382,6 +410,7 @@ export class LiveRowDragController<T = unknown> {
       settling: false,
       tree,
       isData,
+      relayout: false,
     };
     this.#live = live;
     getSelection?.()?.removeAllRanges();
@@ -419,6 +448,68 @@ export class LiveRowDragController<T = unknown> {
     }
     this.#placeReason(live);
     this.#paint(live);
+    this.#scheduleExpand(live);
+  }
+
+  /** Open a collapsed parent the accepted target drops into, after the pointer rests on it. */
+  #scheduleExpand(live: LiveRowDrag<T>): void {
+    const treePlugin = this.#grid.getPluginByName?.('tree');
+    const configured = this.#config.expandOnHoverDelay;
+    const delay = configured === undefined ? EXPAND_DELAY : configured;
+    const parent = live.invalid === null && !live.settling ? (live.target?.parent ?? null) : null;
+    const meta = parent === null ? undefined : treePlugin?.getRowMeta(parent as Record<string, unknown>);
+    const want = delay !== false && meta?.hasChildren && !meta.isExpanded ? parent : null;
+    if (want === this.#expandRow) return;
+    this.#clearExpand();
+    if (want === null || !treePlugin || delay === false) return;
+    this.#expandRow = want;
+    this.#expandTimer = setTimeout(() => {
+      this.#expandTimer = undefined;
+      this.#expandRow = null;
+      const m = treePlugin.getRowMeta(want as Record<string, unknown>);
+      if (this.#live !== live || live.settling || !m || m.isExpanded) return;
+      live.relayout = true;
+      treePlugin.toggle(m.key);
+    }, delay);
+  }
+
+  #clearExpand(): void {
+    clearTimeout(this.#expandTimer);
+    this.#expandTimer = undefined;
+    this.#expandRow = null;
+  }
+
+  /**
+   * The visible rows changed under a drag that opened a parent: re-measure and
+   * re-lay out around the same moving rows, keeping the pointer, the capture and
+   * the gap (mapped by the row above it). `false` when the drag cannot survive.
+   */
+  #relayout(live: LiveRowDrag<T>): boolean {
+    const view = this.#rows;
+    const grabIndex = view.indexOf(live.grabbed);
+    if (grabIndex < 0) return false;
+    const dragged = draggedIndices(view, live.rootSet, live.tree);
+    let found = 0;
+    for (const i of dragged) if (live.rootSet.has(view[i] as T)) found++;
+    if (!dragged.has(grabIndex) || found !== live.roots.length) return false;
+    const { rest } = live.layout;
+    const above = live.slot > 0 ? live.view[rest[live.slot - 1]] : undefined;
+    const offsets = this.#rowOffsets(view.length);
+    const layout = liftLayout(view.length, dragged, grabIndex, (i) => offsets[i + 1] - offsets[i]);
+    const at = above === undefined ? -1 : view.indexOf(above);
+    const slot = above === undefined ? 0 : at < 0 || layout.restPos[at] < 0 ? layout.home : layout.restPos[at] + 1;
+    live.view = view;
+    live.grabIndex = grabIndex;
+    live.offsets = offsets;
+    live.layout = layout;
+    live.slot = slot;
+    live.hover = -1;
+    live.verdicts.clear();
+    live.painted = new WeakMap();
+    const verdict = this.#verdict(live, slot);
+    if ('target' in verdict) live.target = verdict.target;
+    if (live.settling) live.blockTop = layout.slotTops[slot];
+    return true;
   }
 
   /** Accepted target for slot `s`, or why it is rejected. Cached per drag. */
@@ -551,7 +642,9 @@ export class LiveRowDragController<T = unknown> {
 
   /** Re-render or scroll under a held drag: re-place rows, or end the drag if the rows changed. */
   #liveRefresh(live: LiveRowDrag<T>): void {
-    if (this.#rows.length !== live.view.length || this.#rows[live.grabIndex] !== live.grabbed) {
+    const rows = this.#rows;
+    const changed = rows.length !== live.view.length || rows[live.grabIndex] !== live.grabbed;
+    if ((changed || (live.relayout && rows !== live.view)) && !(live.relayout && this.#relayout(live))) {
       this.#cancelLivePointer?.();
       this.#endLive();
       return;
@@ -573,6 +666,7 @@ export class LiveRowDragController<T = unknown> {
   #liveDrop(): void {
     const live = this.#live;
     if (!live || live.settling) return;
+    this.#clearExpand();
     this.#host.scroller()?.stop();
     if (this.#el) suppressNextClick(this.#el);
     const noop = live.slot === live.layout.home && live.layout.contiguous;
@@ -626,6 +720,7 @@ export class LiveRowDragController<T = unknown> {
     const live = this.#live;
     if (!live) return;
     live.settling = true;
+    this.#clearExpand();
     this.#host.scroller()?.stop();
     this.#setInvalid(live, null);
     clearTimeout(this.#settleTimer);
@@ -642,8 +737,16 @@ export class LiveRowDragController<T = unknown> {
     }, this.#host.settleMs());
   }
 
+  /** The press focused its cell; row-mode selection follows focus, but a drag must not select. */
+  #holdFocusSync(hold: boolean): void {
+    (this.#grid.getPluginByName?.('selection') as { holdFocusSync?(hold: boolean): void } | undefined)?.holdFocusSync?.(
+      hold,
+    );
+  }
+
   /** Drop all live-preview state and inline styles at once. */
   #endLive(): void {
+    this.#clearExpand();
     clearTimeout(this.#settleTimer);
     this.#settleTimer = undefined;
     clearTimeout(this.#announceTimer);
@@ -651,6 +754,7 @@ export class LiveRowDragController<T = unknown> {
     this.#scrollFrame = 0;
     const live = this.#live;
     this.#live = null;
+    if (live) this.#holdFocusSync(false);
     this.#reasonEl?.remove();
     this.#reasonEl = this.#reasonOrigin = null;
     const gridEl = this.#el;

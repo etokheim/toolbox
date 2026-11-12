@@ -38,12 +38,19 @@ grid.gridConfig = {
   renderers also evaluate it during visual refresh (see below).
 - **Live preview** — `livePreview: true` lifts the dragged rows (mouse/pen)
   and slides the other rows aside to open room, vertically only. With
-  `dragFrom: 'row' | 'both'` a drag starts anywhere on a row after 6px, so a
-  plain click still works; links, buttons, inputs, open editors, selected
-  text and `[data-tbw-no-row-drag]` / `.tbw-no-row-drag` never start one, and
-  `shouldStartDrag` can refuse it. Selected rows of the grabbed row's
+  `dragFrom: 'row' | 'both'` a drag starts anywhere on a row after 6px,
+  including links and checkboxes (native link drag is suppressed), so a
+  plain click still works; buttons, text inputs, selects, open editors,
+  selected text and `[data-tbw-no-row-drag]` / `.tbw-no-row-drag` never
+  start one, and `shouldStartDrag` can refuse it. With `'both'` only the
+  handle shows the grab cursor. The lifted rows paint above sticky cells and
+  ancestor rows (`--tbw-z-layer-row-lift`) with the row hover fill
+  (`--tbw-row-lift-bg`). Selected rows of the grabbed row's
   `rowType` move together; tree parents carry their subtree and may be
-  re-parented, never into their own subtree. `canDropAt` returns `true`,
+  re-parented, never into their own subtree. The gap below an empty or
+  collapsed parent drops into it (`targetIndex` 0), and resting there opens a
+  collapsed parent after `expandOnHoverDelay` (600ms; `false` disables)
+  without ending the drag. `canDropAt` returns `true`,
   `false` or `{ reason }` — rejected slots keep the room closed, show a
   `not-allowed` cursor and the reason, and announce it. Release commits one
   `row-move` (with `movedRows`, `targetParent`, `targetIndex`); Escape, an

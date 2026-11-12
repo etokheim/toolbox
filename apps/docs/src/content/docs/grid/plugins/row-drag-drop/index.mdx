@@ -348,31 +348,46 @@ new RowDragDropPlugin({
   block passes half of a neighbour, with a small hysteresis and geometry measured at drag start,
   so they never swap back and forth. Holding near the top or bottom edge auto-scrolls.
 - **Starting a drag.** The drag starts after the pointer travels 6px, so a plain click still
-  focuses, selects or opens the row, and the click that ends a drag is swallowed. It never starts
-  from links, buttons, inputs, an open cell editor, selected text, or anything inside
+  focuses, selects or opens the row, and the click that ends a drag is swallowed, so a drop never
+  also toggles a checkbox or follows a link. Links and checkboxes can start a drag (the browser's
+  own link drag is suppressed; right-click and modified clicks work as before). It never starts
+  from buttons, text inputs, selects, an open cell editor, selected text, or anything inside
   `[data-tbw-no-row-drag]` / `.tbw-no-row-drag`. Return `false` from
   `shouldStartDrag({ row, index, event, origin })` to refuse a drag, for example while a
-  spreadsheet or selection mode is active. The handle stays a visible affordance with `'both'`.
+  spreadsheet or selection mode is active.
+- **Cursor.** Rows keep their normal cursor, because opening a row stays the primary action. With
+  `'both'` only the drag handle shows `grab`; with `'row'` the whole row does. While a drag is in
+  progress the cursor is `grabbing` everywhere.
 - **Several rows.** When the grabbed row is selected, every selected row of the same `rowType`
   moves with it, wherever it is. Rows of another type stay. The rows close up into one block and
   land together at the target, and a badge (`data-tbw-drag-count`) shows how many move.
 - **Trees.** With the Tree plugin, a dragged parent carries its whole subtree, and rows can move
   to another parent. A row can never be dropped into its own subtree. The gap between two rows can
   mean several places (for example, the end of a group or the next top-level slot);
-  candidates nearest the dragged row's depth are tried first.
+  candidates nearest the dragged row's depth are tried first. The gap right below a parent with
+  no visible child, whether empty (`children: []`) or collapsed, drops into it at index 0, so an
+  emptied group can always be refilled. Resting on a collapsed parent for `expandOnHoverDelay`
+  (default 600ms, `false` to disable) expands it through the Tree plugin (`tree-expand` fires),
+  and the drag carries on over its rows. Top-level rows reorder among themselves.
 - **Invalid targets.** `canDropAt({ rows, row, targetParent, index, prevRow, nextRow })` returns
   `true`, `false`, or `{ reason }`. While the pointer is over a rejected slot, the room stays where
   it last was valid, the cursor is `not-allowed`, the reason appears next to the pointer
   (`.tbw-row-drop-reason`), and it is announced. Releasing there reverts. The older
   `canDrop(payload, index)` still applies too.
 - **Committing.** The preview is visual only (CSS transforms). On release the rows settle into
-  place, then one cancelable `row-move` fires with `movedRows`, `targetParent` and `targetIndex`.
+  place, then one cancelable `row-move` fires with `movedRows`, `targetParent` (`null` for the top
+  level) and `targetIndex` (the index among that parent's children with the moved rows removed;
+  `0` for an empty parent).
   Children arrays of tree parents are updated in place and `grid.rows` receives the new top-level
   array. Escape, an invalid target, a no-op release or `preventDefault()` on `row-move` slides
   everything back.
 - **Screen readers.** Pick-up, position (after the pointer rests), invalid target, cancel and drop
   are announced. Override the English texts with `liveMessages`.
-- **Touch** keeps the native drag from the handle. Customize the lift with `--tbw-row-lift-shadow`.
+- **Stacking.** The lifted rows paint above sticky and pinned cells and the Sticky Rows plugin's
+  `ancestors` rows, filled with the row hover colour across the whole row. Tune it with
+  `--tbw-z-layer-row-lift` (default `200`), `--tbw-row-lift-bg` and `--tbw-row-lift-shadow`. The
+  legacy `stack`/`push` sticky-rows overlay sits outside the rows layer and can still cover them.
+- **Touch** keeps the native drag from the handle.
 
 ## Events
 

@@ -435,6 +435,8 @@ export class SelectionPlugin<TRow = unknown> extends BaseGridPlugin<SelectionCon
 
   /** True when selection was explicitly set (click/keyboard) — prevents #syncSelectionToFocus from overwriting */
   private explicitSelection = false;
+  /** 2 while a row drag holds focus sync; 1 skips one more sync after release. */
+  #focusSyncHold = 0;
   readonly #rowControls = new CheckboxControls<SelectionRowCheckboxContext<TRow>>();
   readonly #headerControls = new CheckboxControls<SelectionHeaderCheckboxContext<TRow>>();
   #embeddedCheckboxes?: EmbeddedCheckboxes<TRow>;
@@ -1924,7 +1926,8 @@ export class SelectionPlugin<TRow = unknown> extends BaseGridPlugin<SelectionCon
     // Only follow focus when the grid actually has focus. Otherwise, keep the
     // synced markers in step so the resting position is not retroactively selected
     // when focus enters the grid later.
-    if (!this.#gridHasFocus()) {
+    if (this.#focusSyncHold || !this.#gridHasFocus()) {
+      if (this.#focusSyncHold === 1) this.#focusSyncHold = 0;
       this.lastSyncedFocusRow = focusRow;
       this.lastSyncedFocusCol = focusCol;
       return;
@@ -2498,6 +2501,16 @@ export class SelectionPlugin<TRow = unknown> extends BaseGridPlugin<SelectionCon
     this.explicitSelection = true;
     this.emit<SelectionChangeDetail>('selection-change', this.#buildEvent());
     this.requestAfterRender();
+  }
+
+  /**
+   * Pause selection-follows-focus. A row drag focuses the pressed cell and
+   * re-renders while rows move, and that press must not select a row. Releasing
+   * still skips the next sync so the drop's own render does not select either.
+   * @internal
+   */
+  holdFocusSync(hold: boolean): void {
+    this.#focusSyncHold = hold ? 2 : 1;
   }
 
   /**

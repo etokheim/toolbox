@@ -97,6 +97,11 @@ export interface RowTreeAccess<T> {
   /** True when the row shows children that are currently expanded. */
   expanded(row: T): boolean;
   children(parent: T | null): readonly T[];
+  /**
+   * Whether `row` may hold children even when none are visible (an empty or
+   * collapsed parent). Omitted: only expanded parents take rows dropped into them.
+   */
+  canContain?(row: T): boolean;
 }
 
 /** A place the moving rows could land. */
@@ -119,8 +124,9 @@ function indexAmong<T>(siblings: readonly T[], moving: ReadonlySet<T>, anchor: T
 /**
  * Every parent/index the gap between `prev` and `next` (visible rows that
  * stay) can mean, nearest to `depth` first: before `next`; after `prev` or
- * any ancestor whose subtree ends at the gap; or as the first child of an
- * expanded `prev` whose children all move.
+ * any ancestor whose subtree ends at the gap; or as the first child of a
+ * `prev` with no visible child (all its children move, it is empty, or it is
+ * collapsed — the latter two when {@link RowTreeAccess.canContain} allows).
  */
 export function dropCandidates<T>(
   prev: T | undefined,
@@ -139,7 +145,9 @@ export function dropCandidates<T>(
     add(parent, indexAmong(tree.children(parent), moving, next, false), tree.depth(next));
   }
   const nextDepth = next === undefined ? -1 : tree.depth(next);
-  if (prev !== undefined && tree.expanded(prev) && nextDepth <= tree.depth(prev)) {
+  // The gap right below a parent with no visible child (expanded-but-empty,
+  // empty, or collapsed) drops into it, at its start.
+  if (prev !== undefined && nextDepth <= tree.depth(prev) && (tree.expanded(prev) || tree.canContain?.(prev))) {
     add(prev, 0, tree.depth(prev) + 1);
   }
   for (let p: T | null = prev ?? null; p !== null && tree.depth(p) >= nextDepth; p = tree.parent(p)) {

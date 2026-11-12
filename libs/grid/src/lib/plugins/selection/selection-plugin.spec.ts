@@ -1669,6 +1669,24 @@ describe('SelectionPlugin', () => {
         expect(plugin.getSelectedRowIndices()).toEqual([1]);
       });
 
+      it('does not follow focus while a row drag holds the sync, nor on the drop render', () => {
+        const mockGrid = createMockGrid([{ id: 1 }, { id: 2 }, { id: 3 }], [{ field: 'name' }]);
+        Object.assign(mockGrid, { _focusRow: 0, _focusCol: 0 });
+        mockGrid.hasAttribute = (attr: string) => attr === 'data-has-focus';
+        const plugin = new SelectionPlugin({ mode: 'row' });
+        plugin.attach(mockGrid);
+        plugin.holdFocusSync(true);
+        Object.assign(mockGrid, { _focusRow: 2 });
+        plugin.afterRender();
+        plugin.holdFocusSync(false);
+        Object.assign(mockGrid, { _focusRow: 1 });
+        plugin.afterRender();
+        expect(plugin.getSelectedRowIndices()).toEqual([]);
+        Object.assign(mockGrid, { _focusRow: 0 });
+        plugin.afterRender();
+        expect(plugin.getSelectedRowIndices()).toEqual([0]);
+      });
+
       it('should keep synced markers in step when grid has no focus (resting position)', () => {
         const mockGrid = createMockGrid([{ id: 1 }, { id: 2 }], [{ field: 'name' }]);
         Object.assign(mockGrid, { _focusRow: 0, _focusCol: 0 });
