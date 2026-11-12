@@ -71,8 +71,10 @@
     opacity: 0.6;
   }
 
-  /* When the row itself is the drag handle, hint at the affordance.    */
-  .data-grid-row[draggable='true'] {
+  /* Only when the row itself is the handle (`dragFrom: 'row'`) does the
+     row advertise grab; with 'both' the row's primary action is its own
+     click, so the grab cursor stays on the handle. */
+  [data-tbw-row-grab] .data-grid-row[draggable='true'] {
     cursor: grab;
   }
 
@@ -238,10 +240,13 @@
     transition: transform var(--tbw-transition-duration, 200ms) var(--tbw-transition-ease, ease);
   }
 
+  /* Above every other in-body layer: pinned/sticky cells (25–30), scoped
+     footers (20) and sticky ancestor rows (22 + order). */
   [data-tbw-row-lifting] .data-grid-row.tbw-row-lifted {
+    --tbw-row-lift-fill: linear-gradient(var(--tbw-row-lift-bg, var(--tbw-color-row-hover)) 0 0);
     position: relative;
-    z-index: 4;
-    background: var(--tbw-color-bg);
+    z-index: var(--tbw-z-layer-row-lift, 200);
+    background: var(--tbw-row-lift-fill), var(--tbw-color-bg);
     box-shadow: var(
       --tbw-row-lift-shadow,
       0 6px 16px light-dark(rgb(0 0 0 / 22%), rgb(0 0 0 / 55%)),
@@ -249,6 +254,13 @@
     );
     transition: none;
     will-change: transform;
+  }
+
+  /* The lifted row reads as hovered end to end: opaque sticky/pinned cells
+     would otherwise keep their panel background. */
+  [data-tbw-row-lifting] .data-grid-row.tbw-row-lifted > .cell.sticky-left,
+  [data-tbw-row-lifting] .data-grid-row.tbw-row-lifted > .cell.sticky-right {
+    background: var(--tbw-row-lift-fill), var(--tbw-color-panel-bg);
   }
 
   /* ::before — Selection owns the row's ::after (focus border, inset: 0). */

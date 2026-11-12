@@ -6,6 +6,7 @@ related:
     grid-hierarchy,
     grid-plugins-catalog-data,
     grid-plugin-responsive,
+    grid-plugin-row-drag-drop,
     grid-plugins-editing,
     grid-plugins-shell,
     grid-input,
@@ -19,7 +20,7 @@ Selection, independent row details, reordering and display-plugin ownership.
 
 - Architecture → `grid-plugins.md`; Shell → `grid-plugins-shell.md`.
 - Tree/GroupingRows composition and structural metadata → `grid-hierarchy.md`.
-- Editing/UndoRedo → `grid-plugins-editing.md`; Responsive → `grid-plugin-responsive.md`.
+- Editing/UndoRedo → `grid-plugins-editing.md`; Responsive → `grid-plugin-responsive.md`; RowDragDrop → `grid-plugin-row-drag-drop.md`.
 - Other row/column models, sorting/filtering, pinned totals and export → `grid-plugins-catalog-data.md`.
 
 Read order for incorrect pointer gestures: Selection dispatchers → drag-alternative decisions (#449) → ContextMenu order bands.
@@ -98,20 +99,7 @@ OWNS: row order, drag state. HOOKS: onCellMouseDown/Move/Up. QUERIES: `canMoveRo
 
 ### RowDragDrop (#225)
 
-OWNS: row order/cross-grid sessions. HOOKS: processColumns, onKeyDown, onCellClick, delegated dragstart/over/leave/drop/dragend. QUERIES: `canMoveRow`. EVENTS: `row-move`, `row-drag-start`/`row-drop` (cancelable), `row-drag-end`, `row-transfer`. USES: `drag-drop-registry.ts` (cross-bundle WeakRefs), `drag-drop-protocol.ts` (MIME, codec, positioning, auto-scroll, current session).
-
-- DECIDED (v3): removed `RowReorderPlugin`, `reorderRows` feature/aliases; `aliases === undefined`; docs redirect `reorder-rows` → `row-drag-drop`.
-- INVARIANT (#225): alias dedup by constructor identity (`collapseAliasDuplicates`); `mergeConfigsFrom`: equal silent, dedupe TBW023, conflict TBW025.
-- INVARIANT (#225): same-window `currentSession` enables synchronous `canDrop` during `dragover` (protected `getData()` is empty); cross-window uses `TBW_ROW_DRAG_MIME` JSON + `deserializeRow`. WeakRef registry restores live objects only on drop.
-- FLOW: missing `findPeerOnGrid(sourceGridId)` → `tbw-row-drag-drop:transfer` broadcasts `{sourceGridId,toGridId,dropZone,rowIndices,toIndex,operation,serializedRows}`. Source filters ID/zone → removes rows, emits `row-transfer`, sets `dragAccepted`. `BroadcastChannel` (`cross-window.ts`) is lazy/ref-counted; absent → source rows remain.
-- DECIDED (Apr 2026): `dragFrom?: 'handle'|'row'|'both'` (default `'handle'`); `'row'` hides the handle column unless `showDragHandle` is explicit. `applyRowDraggable()` MUST run from BOTH `afterRender` AND `onScrollRender` (recycling loses `draggable="true"`).
-- INVARIANT: row-origin interactive descendants (`button,input,select,textarea,a[href],[contenteditable]`) never start a drag — `INTERACTIVE_DRAG_SELECTORS` / `isInteractiveDragOrigin()`. Explicit `bindHandle` registration is the handle-only exception; nested independent controls still veto pickup.
-- OWNS: `drag-handle-controls.ts` revocable `ControlSlot` lease; SVG → registered HTML root. Host listeners run after React portal cancellation. Revocation restores owned attributes/closes owned menu, not native payload.
-- INVARIANT: native buttons keep Enter/Space clicks; other roots synthesize Enter-down/Space-up once. Local Alt/Ctrl-arrow precedes boundary bailout; custom move-menu boundary prevents Escape clearing Selection. `canDrag` refresh is custom-only/pure; default refresh skips control scanning. Editing/form/chrome guards own their chords; Ctrl reorder is a deprecated alias and still shadows core edge navigation.
-- FLOW: `resolveDragOrigin` → `{rowEl, handle}`: native veto → binding ownership/identity/generation → handle/row. `onDragStart` keeps rows → `canDrag` → cancelable DOM event → state/payload/registry → refresh; no post-event revalidation. Cleanup: per-plugin (including omitted-treeColumn wrapping).
-- DECIDED (drag-control slice): typed DOM + React-local hooks (per-grid providers/stable portals); Vue/Angular templates deferred.
-- INVARIANT: `setDragImage` clone lives in `this.gridElement` (scoped CSS, `--tbw-column-template`), at -10000px, removed in `setTimeout(0)`; no opacity/shadow.
-- DECIDED (3.11 `livePreview`): mouse/pen pointer lift in `row-live-drag.ts` (pure math `row-lift.ts`), mirrors PR #20: start geometry + midpoint hysteresis, one `row-move` on settle. Group = selected rows of grabbed `rowType` + tree subtrees; not into own subtree; Tree `canMoveRow` parent veto skipped. `canDropAt` → `{reason}` keeps room closed. Touch native.
+Moved to `grid-plugin-row-drag-drop.md` (native + live-preview drag, handle controls, cross-grid transfer).
 
 ## Display
 

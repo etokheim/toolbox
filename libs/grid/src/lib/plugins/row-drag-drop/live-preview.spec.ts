@@ -106,6 +106,69 @@ const events = (grid: ReturnType<typeof createGrid>['grid'], type: string) =>
 
 const announced = (host: HTMLElement) => host.querySelector('.tbw-sr-only')?.textContent ?? '';
 
+interface Meta {
+  key: string;
+  depth: number;
+  hasChildren: boolean;
+  isExpanded: boolean;
+  parentKey: string | null;
+}
+
+/**
+ * Tree plugin double over nested rows keyed by `id`. `toggle` flips a parent
+ * and hands the new visible rows to `onToggle` (the test decides when the grid
+ * re-renders).
+ */
+function treeOf(top: Row[], collapsed: string[] = []) {
+  const closed = new Set(collapsed);
+  const meta = new Map<Row, Meta>();
+  const byKey = new Map<string, Row>();
+  const flatten = () => {
+    const view: Row[] = [];
+    meta.clear();
+    const walk = (list: Row[], parentKey: string | null, depth: number, visible: boolean) => {
+      for (const row of list) {
+        const kids = row.children ?? [];
+        meta.set(row, { key: row.id, depth, hasChildren: kids.length > 0, isExpanded: !closed.has(row.id), parentKey });
+        byKey.set(row.id, row);
+        if (visible) view.push(row);
+        walk(kids, row.id, depth + 1, visible && !closed.has(row.id));
+      }
+    };
+    walk(top, null, 0, true);
+    return view;
+  };
+  const harness = {
+    view: flatten(),
+    onToggle: (_view: Row[]) => undefined as void,
+    plugin: {
+      getRowMeta: (row: Row) => meta.get(row),
+      getRowByKey: (key: string) => byKey.get(key),
+      getChildrenField: () => 'children',
+      toggle: vi.fn((key: string) => {
+        if (closed.has(key)) closed.delete(key);
+        else closed.add(key);
+        harness.view = flatten();
+        harness.onToggle(harness.view);
+      }),
+    },
+  };
+  return harness;
+}
+
+/** A tree grid showing `harness.view`; `show` re-renders and runs the plugin's after-render. */
+function setupTree(top: Row[], harness: ReturnType<typeof treeOf>, config: RowDragDropConfig<Row> = {}) {
+  const env = setup(top, config, { tree: harness.plugin });
+  const show = (view: Row[]) => {
+    env.grid.rows = view;
+    env.render(view);
+    env.plugin.afterRender();
+  };
+  env.grid.rows = harness.view;
+  env.render(harness.view);
+  return { ...env, show };
+}
+
 describe('RowDragDropPlugin livePreview', () => {
   beforeEach(() => vi.useFakeTimers());
   afterEach(() => {
@@ -233,6 +296,18 @@ describe('RowDragDropPlugin livePreview', () => {
     expect(host.querySelector('.tbw-row-drop-reason')).toBeNull();
   });
 
+  it('holds selection-follows-focus for the whole drag', () => {
+    const holdFocusSync = vi.fn();
+    const selection = { getSelectedRowIndices: () => [], holdFocusSync };
+    const { body, grid } = setup([{ id: 'a' }, { id: 'b' }, { id: 'c' }], {}, { selection });
+    const { target, y } = dragRow(body, 0, 2 * H);
+    expect(holdFocusSync.mock.calls).toEqual([[true]]);
+    pointer('pointerup', target, y);
+    vi.runAllTimers();
+    expect(events(grid, 'row-move')).toHaveLength(1);
+    expect(holdFocusSync.mock.calls).toEqual([[true], [false]]);
+  });
+
   it('moves every selected row of the grabbed type together', () => {
     const rows: Row[] = [
       { id: 'a', type: 'x' },
@@ -331,6 +406,155 @@ describe('RowDragDropPlugin livePreview', () => {
     const off = setup(flat(), { livePreview: false });
     dragRow(off.body, 0, 2 * H);
     expect(rowEl(off.body, 0).classList.contains('tbw-row-lifted')).toBe(false);
+  });
+
+  it('shows the row grab cursor only when the row itself is the drag source', () => {
+    const row = setup(flat(), { dragFrom: 'row' });
+    row.plugin.afterRender();
+    expect(row.host.hasAttribute('data-tbw-row-grab')).toBe(true);
+    document.body.innerHTML = '';
+
+    const both = setup(flat(), { dragFrom: 'both' });
+    both.plugin.afterRender();
+    expect(both.host.hasAttribute('data-tbw-row-grab')).toBe(false);
+  });
+
+  it('starts from links and checkboxes, blocking native link drag and swallowing only the drag click', () => {
+    const { host, body, grid } = setup(flat(), { dragFrom: 'both' });
+    const onClick = vi.fn();
+    host.addEventListener('click', onClick);
+    const cell = rowEl(body, 0).querySelector('.cell')!;
+    const link = document.createElement('a');
+    link.href = '#a';
+    const box = document.createElement('input');
+    box.type = 'checkbox';
+    cell.append(link, box);
+
+    pointer('pointerdown', link, 15);
+    expect(link.getAttribute('draggable')).toBe('false');
+    pointer('pointerup', link, 15);
+    expect(link.hasAttribute('draggable')).toBe(false);
+    link.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    expect(onClick).toHaveBeenCalledTimes(1);
+
+    for (const el of [link, box]) {
+      pointer('pointerdown', el, 15);
+      pointer('pointermove', el, 22);
+      expect(rowEl(body, 0).classList.contains('tbw-row-lifted')).toBe(true);
+      pointer('pointermove', el, 15 + 2 * H);
+      pointer('pointerup', el, 15 + 2 * H);
+      const click = new MouseEvent('click', { bubbles: true, cancelable: true });
+      el.dispatchEvent(click);
+      expect(click.defaultPrevented).toBe(true);
+      vi.runAllTimers();
+      grid.rows = flat();
+      (grid as { sourceRows: Row[] }).sourceRows = grid.rows;
+      // Re-render so the next press starts from a clean row.
+      rowEl(body, 0).querySelector('.cell')!.append(link, box);
+    }
+    expect(onClick).toHaveBeenCalledTimes(1);
+    expect(events(grid, 'row-move')).toHaveLength(2);
+    expect(link.hasAttribute('draggable')).toBe(false);
+  });
+
+  it('drops into an empty parent at index 0', () => {
+    const d1: Row = { id: 'd1' };
+    const m1: Row = { id: 'm1', children: [d1] };
+    const m2: Row = { id: 'm2', children: [] };
+    const top = [m1, m2];
+    const canDropAt = vi.fn(() => true);
+    const { body, grid } = setupTree(top, treeOf(top), { canDropAt });
+    const { target, y } = dragRow(body, 1, H);
+    expect(canDropAt).toHaveBeenCalledWith(expect.objectContaining({ targetParent: m2, index: 0 }));
+    pointer('pointerup', target, y);
+    vi.runAllTimers();
+    const detail = events(grid, 'row-move')[0].detail as RowMoveDetail<Row>;
+    expect(detail.targetParent).toBe(m2);
+    expect(detail.targetIndex).toBe(0);
+    expect(m1.children).toEqual([]);
+    expect(m2.children).toEqual([d1]);
+  });
+
+  it('reorders top-level rows of a tree', () => {
+    const p1: Row = { id: 'p1' };
+    const p: Row = { id: 'p', children: [p1] };
+    const q: Row = { id: 'q', children: [] };
+    const top = [p, q];
+    const { body, grid } = setupTree(top, treeOf(top));
+    const { target, y } = dragRow(body, 2, -2 * H);
+    pointer('pointerup', target, y);
+    vi.runAllTimers();
+    const detail = events(grid, 'row-move')[0].detail as RowMoveDetail<Row>;
+    expect(detail.targetParent).toBeNull();
+    expect(detail.targetIndex).toBe(0);
+    expect(grid.rows.map((r) => r.id)).toEqual(['q', 'p']);
+  });
+
+  /** Collapsed `p` above `s`, whose child `s1` is dragged into `p`. */
+  const collapsedAbove = () => {
+    const p1: Row = { id: 'p1' };
+    const p: Row = { id: 'p', children: [p1] };
+    const s1: Row = { id: 's1' };
+    const s: Row = { id: 's', children: [s1] };
+    return { p, p1, s, s1, top: [p, s] };
+  };
+
+  it('opens a collapsed parent above the source after a rest and keeps the drag', () => {
+    const { p, p1, s, s1, top } = collapsedAbove();
+    const harness = treeOf(top, ['p']);
+    const env = setupTree(top, harness);
+    harness.onToggle = env.show;
+    const { body, grid, host } = env;
+    const { target, y } = dragRow(body, 2, -H);
+    vi.advanceTimersByTime(599);
+    expect(harness.plugin.toggle).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(1);
+    expect(harness.plugin.toggle).toHaveBeenCalledWith('p');
+
+    expect(grid.rows).toEqual([p, p1, s, s1]);
+    expect(host.hasAttribute('data-tbw-row-lifting')).toBe(true);
+    expect(rowEl(body, 3).classList.contains('tbw-row-lifted')).toBe(true);
+    expect(rowEl(body, 3).style.transform).toBe(`translateY(-${2 * H}px)`);
+    expect(rowEl(body, 1).style.transform).toBe(`translateY(${H}px)`);
+
+    // The grabbed cell was re-rendered away; the captured pointer reports to the host.
+    expect(target.isConnected).toBe(false);
+    pointer('pointerup', host, y);
+    vi.runAllTimers();
+    const detail = events(grid, 'row-move')[0].detail as RowMoveDetail<Row>;
+    expect(detail.targetParent).toBe(p);
+    expect(detail.targetIndex).toBe(0);
+    expect(p.children).toEqual([s1, p1]);
+    expect(s.children).toEqual([]);
+  });
+
+  it('commits a release that lands before the expanded rows render', () => {
+    const { p, p1, s, s1, top } = collapsedAbove();
+    const harness = treeOf(top, ['p']);
+    const env = setupTree(top, harness);
+    let pending: Row[] | null = null;
+    harness.onToggle = (view) => {
+      pending = view;
+    };
+    const { y } = dragRow(env.body, 2, -H);
+    vi.advanceTimersByTime(600);
+    pointer('pointerup', env.host, y);
+    env.show(pending!);
+    vi.runAllTimers();
+    const detail = events(env.grid, 'row-move')[0].detail as RowMoveDetail<Row>;
+    expect(detail.targetParent).toBe(p);
+    expect(detail.targetIndex).toBe(0);
+    expect(p.children).toEqual([s1, p1]);
+    expect(s.children).toEqual([]);
+  });
+
+  it('never opens a parent with expandOnHoverDelay: false', () => {
+    const { top } = collapsedAbove();
+    const harness = treeOf(top, ['p']);
+    const env = setupTree(top, harness, { expandOnHoverDelay: false });
+    dragRow(env.body, 2, -H);
+    vi.advanceTimersByTime(5000);
+    expect(harness.plugin.toggle).not.toHaveBeenCalled();
   });
 
   it('a cancelled row-move reverts', () => {

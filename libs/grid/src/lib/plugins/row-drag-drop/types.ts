@@ -197,18 +197,35 @@ export interface RowDragDropConfig<T = unknown> {
    * release over an invalid target reverts. Touch keeps the native drag.
    *
    * With `dragFrom: 'row' | 'both'` the drag may start from anywhere on the
-   * row except links, buttons, form controls, open editors, selected text and
-   * elements marked `data-tbw-no-row-drag` / `.tbw-no-row-drag`. The click
-   * that follows a drag is suppressed, so a plain click still activates the row.
+   * row, including links and checkboxes (their native link drag is
+   * suppressed; a plain click keeps its meaning). Buttons, text inputs,
+   * selects, open editors, selected text and elements marked
+   * `data-tbw-no-row-drag` / `.tbw-no-row-drag` never start a drag. The click
+   * that ends a drag is suppressed, so a drop never also activates the row or
+   * link. Only the drag handle (and `dragFrom: 'row'` rows) shows the grab cursor.
    *
    * Tree-aware with the Tree plugin: a dragged parent carries its subtree,
    * a row never lands inside its own subtree, and the drop target parent is
-   * resolved from the gap the rows land in.
+   * resolved from the gap the rows land in. The gap right below a parent with
+   * no visible child — empty (`children: []`) or collapsed — drops into it at
+   * index 0; resting there opens a collapsed parent (see `expandOnHoverDelay`)
+   * without ending the drag.
    *
    * @default false
    * @since 3.11.0
    */
   livePreview?: boolean;
+
+  /**
+   * Live preview with the Tree plugin only. Milliseconds the accepted drop
+   * target must rest inside a collapsed parent before the parent expands
+   * (through the Tree plugin's `toggle`, so `tree-expand` fires). The drag
+   * keeps going over the new rows. `false` never expands.
+   *
+   * @default 600
+   * @since 3.11.0
+   */
+  expandOnHoverDelay?: number | false;
 
   /**
    * Live preview only. Classifies rows for multi-row drags: when the grabbed
@@ -331,7 +348,12 @@ export interface RowMoveDetail<T = unknown> {
   movedRows?: T[];
   /** Live preview only: parent the rows landed under (`null` = top level). @since 3.11.0 */
   targetParent?: T | null;
-  /** Live preview only: insertion index among the target parent's children. @since 3.11.0 */
+  /**
+   * Live preview only: insertion index among the target parent's children
+   * with the moved rows removed (`0` = first child, also for an empty or
+   * collapsed parent; `children.length` after removal = last).
+   * @since 3.11.0
+   */
   targetIndex?: number;
 }
 

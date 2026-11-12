@@ -96,6 +96,9 @@ import type {
  */
 export const ROW_DRAG_HANDLE_FIELD = '__tbw_row_drag';
 
+/** Grid attribute: rows show the grab cursor (`dragFrom: 'row'` only). */
+const ROW_GRAB_ATTR = 'data-tbw-row-grab';
+
 /**
  * Every plugin instance attached in this window.
  *
@@ -219,7 +222,7 @@ export class RowDragDropPlugin<T = unknown> extends BaseGridPlugin<RowDragDropCo
     grid: () => this.internalGrid,
     config: () => this.config,
     rowIndex: (el) => this.getRowIndex(el),
-    interactive: (el) => this.isInteractiveDragOrigin(el),
+    interactive: (el) => el.closest(RowDragDropPlugin.LIVE_INTERACTIVE_SELECTORS) !== null,
     rowDraggable: () => this.rowIsDraggable,
     busy: () => this.isDragging,
     settleMs: () => (this.animationType ? this.animationDuration : 0),
@@ -256,6 +259,7 @@ export class RowDragDropPlugin<T = unknown> extends BaseGridPlugin<RowDragDropCo
     for (const cell of this.#controls.keys()) this.#releaseHandle(cell);
     this.clearDebounceTimer();
     this.#liveDrag.destroy();
+    this.gridElement?.removeAttribute(ROW_GRAB_ATTR);
     this.autoScroller?.stop();
     this.autoScroller = null;
     unregisterRemoteTransferListener(this.remoteTransferListener);
@@ -459,6 +463,8 @@ export class RowDragDropPlugin<T = unknown> extends BaseGridPlugin<RowDragDropCo
     const body = this.internalGrid._bodyEl;
     if (!body) return;
     const wantDraggable = this.rowIsDraggable;
+    // Only a row that *is* the handle advertises grab; with 'both' rows keep their own cursor.
+    this.gridElement?.toggleAttribute(ROW_GRAB_ATTR, this.config.dragFrom === 'row');
     const rows = body.querySelectorAll<HTMLElement>('.data-grid-row');
     for (const row of rows) {
       if (wantDraggable) {
@@ -693,6 +699,14 @@ export class RowDragDropPlugin<T = unknown> extends BaseGridPlugin<RowDragDropCo
    */
   private static readonly INTERACTIVE_DRAG_SELECTORS =
     'input,textarea,select,button,a,[contenteditable=""],[contenteditable="true"],.dg-cell-editor,.tbw-checkbox-cell';
+
+  /**
+   * Live preview (`livePreview: true`) refuses fewer origins: a press on a link
+   * or checkbox may still lift the row once it travels the threshold, while a
+   * plain click keeps its native meaning. Text entry and buttons stay excluded.
+   */
+  private static readonly LIVE_INTERACTIVE_SELECTORS =
+    'input:not([type="checkbox"]):not([type="radio"]),textarea,select,button,[contenteditable=""],[contenteditable="true"],.dg-cell-editor';
 
   /** @internal */
   private isInteractiveDragOrigin(target: Element): boolean {

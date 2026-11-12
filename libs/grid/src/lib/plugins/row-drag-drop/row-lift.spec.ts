@@ -130,6 +130,23 @@ describe('tree helpers', () => {
     expect(out[0]).toEqual({ parent: c, index: 0, depth: 1 });
   });
 
+  it('dropCandidates offers into an empty or collapsed prev only when it can contain rows', () => {
+    const empty: Node = { id: 'e', children: [] };
+    const folded: Node = { id: 'f', children: [{ id: 'f1' }], expanded: false };
+    const tail: Node = { id: 't' };
+    const top = [empty, folded, tail];
+    const tree = treeOf(top);
+    const moving = new Set<Node>([{ id: 'x' }]);
+    expect(dropCandidates(empty, folded, moving, 1, tree).map((c) => c.parent?.id ?? null)).toEqual([null]);
+
+    const open = { ...tree, canContain: (n: Node) => Array.isArray(n.children) };
+    expect(dropCandidates(empty, folded, moving, 1, open)[0]).toEqual({ parent: empty, index: 0, depth: 1 });
+    expect(dropCandidates(folded, tail, moving, 1, open)[0]).toEqual({ parent: folded, index: 0, depth: 1 });
+    // A top-level mover still prefers being a sibling.
+    expect(dropCandidates(empty, folded, moving, 0, open)[0]).toEqual({ parent: null, index: 1, depth: 0 });
+    expect(dropCandidates(tail, undefined, moving, 1, open).map((c) => c.parent?.id ?? null)).toEqual([null]);
+  });
+
   it('dropCandidates falls back to the top level', () => {
     const { tree } = build();
     expect(dropCandidates(undefined, undefined, new Set(), 0, tree)).toEqual([{ parent: null, index: 0, depth: 0 }]);

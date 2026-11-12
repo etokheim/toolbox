@@ -81,6 +81,7 @@ Loaded on demand from `.github/knowledge/` — read relevant files before starti
 | `grid-hierarchy`            | Hierarchical row models     | Hierarchy, Tree, parent-scoped GroupingRows, occurrence identity, metadata generations and expansion ownership              |
 | `grid-plugin-server-side`   | ServerSide plugin           | Block cache, placeholders, abortable child fetches and viewport mapping                                                     |
 | `grid-plugin-selection`     | Selection and ContextMenu   | Selection modes, own-grid painting, keyboard/touch input and context-menu sync                                              |
+| `grid-plugin-row-drag-drop` | RowDragDrop plugin          | Native/live-preview row drag, handle controls, tree drop targets, hover-expand, cross-grid transfer                         |
 | `upstream-integration`      | Upstream compatibility      | Frozen source identities, upstream exceptions, conflict decisions and qualification boundary                                |
 | `grid-plugins-catalog-data` | Plugin catalog (data)       | ServerSide, Pivot, pinned/virtualized/grouped columns, sorting, filtering, pinned rows, clipboard/export/print              |
 | `grid-scoped-footers`       | Non-data scoped footers     | Scope admission, empty groups, row-flow offsets, capacity policy and React owner lifetime                                   |
