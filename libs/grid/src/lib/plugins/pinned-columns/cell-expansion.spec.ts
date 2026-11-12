@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, expectTypeOf, it, vi } from 'vitest';
 import { releaseControl } from '../../core/internal/control-lifecycle';
-import { setupRowHover } from '../../core/internal/row-hover';
+import { setupRowHover, ROW_HOVER_SCROLL_IDLE_MS } from '../../core/internal/row-hover';
 import type { AfterCellRenderContext, GridElementRef } from '../../core/plugin/base-plugin';
 import type { ColumnConfig, RowElementInternal } from '../../core/types';
 import { CellExpansion } from './cell-expansion';
@@ -110,7 +110,15 @@ function fixture(pinned: ColumnConfig['pinned'] = 'right', direction = 'ltr') {
     },
     scrollHit: (element: Element | null) => {
       hit = element;
-      host.dispatchEvent(new Event('scroll'));
+      // Row hover re-hit-tests once the scroll has been idle.
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      try {
+        host.dispatchEvent(new Event('scroll'));
+        flushHover();
+        vi.advanceTimersByTime(ROW_HOVER_SCROLL_IDLE_MS);
+      } finally {
+        vi.useRealTimers();
+      }
       flushHover();
     },
     syncHover: () => {

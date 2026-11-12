@@ -20,7 +20,20 @@ export function observeRowHover(host: HTMLElement, listener: () => void, signal:
   signal.addEventListener('abort', () => state.listeners.delete(listener), { once: true });
 }
 
-/** Reconcile row presentation without synthesizing browser pointer events. */
+/**
+ * Scroll idle delay before re-hit-testing. `scrollend` is not used: engines emit it
+ * after every discrete wheel tick, which would reconcile per tick.
+ */
+export const ROW_HOVER_SCROLL_IDLE_MS = 120;
+
+/**
+ * Reconcile row presentation without synthesizing browser pointer events.
+ *
+ * Hit testing forces style/layout, so it never runs while a scroll is active:
+ * scrolling only re-arms an idle timer, and the single hit test runs once
+ * scrolling has been idle. Like native `:hover`, the marker stays on
+ * its row element until then.
+ */
 export function setupRowHover(host: HTMLElement, signal: AbortSignal): () => void {
   const doc = host.ownerDocument;
   const win = doc.defaultView;
@@ -29,6 +42,7 @@ export function setupRowHover(host: HTMLElement, signal: AbortSignal): () => voi
   let y = 0;
   let active = false;
   let pending = 0;
+  let scrolling = 0;
   const state = stateFor(host);
 
   const update = (row: HTMLElement | null): void => {
@@ -42,8 +56,9 @@ export function setupRowHover(host: HTMLElement, signal: AbortSignal): () => voi
 
   const clear = (): void => {
     active = false;
-    if (pending) win.cancelAnimationFrame(pending);
-    pending = 0;
+    win.cancelAnimationFrame(pending);
+    win.clearTimeout(scrolling);
+    pending = scrolling = 0;
     update(null);
   };
   const reconcile = (): void => {
@@ -54,8 +69,24 @@ export function setupRowHover(host: HTMLElement, signal: AbortSignal): () => voi
     const next = hit?.closest('tbw-grid, [data-tbw-grid]') === host ? row : null;
     update(next);
   };
-  const schedule = (): void => {
+  const request = (): void => {
     if (active && !pending && !signal.aborted) pending = win.requestAnimationFrame(reconcile);
+  };
+  const settle = (): void => {
+    if (!scrolling) return;
+    win.clearTimeout(scrolling);
+    scrolling = 0;
+    request();
+  };
+  const scroll = (): void => {
+    if (!active || signal.aborted) return;
+    win.cancelAnimationFrame(pending);
+    win.clearTimeout(scrolling);
+    pending = 0;
+    scrolling = win.setTimeout(settle, ROW_HOVER_SCROLL_IDLE_MS);
+  };
+  const schedule = (): void => {
+    if (!scrolling) request();
   };
   const pointer = (event: PointerEvent): void => {
     if (event.pointerType !== 'mouse' || !host.contains(event.target as Node | null)) {
@@ -65,6 +96,7 @@ export function setupRowHover(host: HTMLElement, signal: AbortSignal): () => voi
     x = event.clientX;
     y = event.clientY;
     active = true;
+    if (event.type === 'pointerdown') settle();
     schedule();
   };
 
@@ -81,7 +113,7 @@ export function setupRowHover(host: HTMLElement, signal: AbortSignal): () => voi
     { capture: true, passive: true, signal },
   );
   // Includes outer-page and horizontal scrolling; the host may move under the pointer.
-  doc.addEventListener('scroll', schedule, { capture: true, passive: true, signal });
+  doc.addEventListener('scroll', scroll, { capture: true, passive: true, signal });
   win.addEventListener('blur', clear, { signal });
   signal.addEventListener('abort', clear, { once: true });
   return schedule;

@@ -21,7 +21,7 @@ When the constraints below conflict, resolve them in this order. A higher-priori
 **Trade-off rules:**
 
 - **Performance vs. maintainability** — prefer maintainability **unless** the code is on a documented hot path (scroll, cell render, virtualization, render scheduler tick) **or** the perf gap is measurable and material in a benchmark.
-- **Bundle size vs. maintainability** — investigate above the 45 KiB gzip soft warning, but do not sacrifice readable ownership or clear behavior for byte savings. Current core hard cap is 52.25 KiB gzip / 175 KiB raw. The user permits future increases after evaluating need, code quality, plugin placement and measured impact; record rationale and update enforcement together (see `copilot-instructions.md` → standing budget permission).
+- **Bundle size vs. maintainability** — investigate above the 45 KiB gzip soft warning, but do not sacrifice readable ownership or clear behavior for byte savings. Current core hard cap is 52.5 KiB gzip / 176 KiB raw. The user permits future increases after evaluating need, code quality, plugin placement and measured impact; record rationale and update enforcement together (see `copilot-instructions.md` → standing budget permission).
 - **Bundle size vs. performance** — consider a smaller form (lazy-load, plugin entry point, simpler algorithm), then a justified budget increase rather than a harmful runtime or readability trade-off. No per-increase approval is required; commit/remote consent rules are unchanged.
 - **Speed of delivery vs. anything above** — never. "It was faster to write" is not a valid justification.
 
@@ -49,7 +49,7 @@ Avoid shortcuts and quick hacks. Prefer correct, maintainable solutions even whe
 
 ## Bundle Size
 
-- **Core budget**: `tools/core-bundle-budget.ts`: ≤179200 raw / ≤53504 gzip bytes, soft warning at 46080 gzip bytes. Bun's default gzip is authoritative even when Nx/Vite runs under Node.
+- **Core budget**: `tools/core-bundle-budget.ts`: ≤180224 raw / ≤53760 gzip bytes, soft warning at 46080 gzip bytes. Bun's default gzip is authoritative even when Nx/Vite runs under Node.
 - **Plugin budget**: Each plugin ≤55 KiB raw except Editing ≤56 KiB and Selection ≤60 KiB.
 - **Adapter budgets**: `grid-react/index.js` ≤50 kB, `grid-vue/index.js` ≤50 kB
 - **Enforced automatically**: Vite `bundleBudget` plugin fails the build on violations (see `tools/vite-bundle-budget.ts`)

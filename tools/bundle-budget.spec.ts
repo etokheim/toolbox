@@ -23,24 +23,24 @@ afterEach(() => {
 
 describe('exact byte boundaries', () => {
   it('keeps the requested core thresholds in one definition', () => {
-    expect(CORE_BUNDLE_BUDGET).toEqual({ path: 'index.js', maxSize: 179200, maxGzip: 53504, warnGzip: 46080 });
+    expect(CORE_BUNDLE_BUDGET).toEqual({ path: 'index.js', maxSize: 180224, maxGzip: 53760, warnGzip: 46080 });
   });
 
   it.each([-1, 0, 1])('checks gzip hard boundary at limit %+i bytes', (delta) => {
-    const result = checkSizeBudget('index.js', { raw: 100000, gzip: 53504 + delta }, CORE_BUNDLE_BUDGET);
+    const result = checkSizeBudget('index.js', { raw: 100000, gzip: 53760 + delta }, CORE_BUNDLE_BUDGET);
     expect(result.violations).toHaveLength(delta > 0 ? 1 : 0);
-    if (delta > 0) expect(result.violations[0]).toContain('53505 B');
+    if (delta > 0) expect(result.violations[0]).toContain('53761 B');
   });
 
-  it('admits the reviewed acceptance payload without removing its soft warning', () => {
-    const result = checkSizeBudget('index.js', { raw: 178442, gzip: 53269 }, CORE_BUNDLE_BUDGET);
+  it('admits the reviewed scroll-perf payload without removing its soft warning', () => {
+    const result = checkSizeBudget('index.js', { raw: 179412, gzip: 53546 }, CORE_BUNDLE_BUDGET);
     expect(result.violations).toEqual([]);
     expect(result.warnings).toHaveLength(1);
-    expect(CORE_BUNDLE_BUDGET.maxGzip).toBe(53269 + 235);
+    expect(CORE_BUNDLE_BUDGET.maxGzip).toBe(53546 + 214);
   });
 
   it.each([-1, 0, 1])('checks raw hard boundary at limit %+i bytes', (delta) => {
-    const result = checkSizeBudget('index.js', { raw: 179200 + delta, gzip: 1000 }, CORE_BUNDLE_BUDGET);
+    const result = checkSizeBudget('index.js', { raw: 180224 + delta, gzip: 1000 }, CORE_BUNDLE_BUDGET);
     expect(result.violations).toHaveLength(delta > 0 ? 1 : 0);
   });
 
@@ -161,14 +161,14 @@ describe('build and CLI enforcement', () => {
 
   it.each(['bun', 'node'])('%s report enforces core and prints identical authority measurements', (runtime) => {
     mkdirSync(join(directory, 'grid'));
-    writeFileSync(join(directory, 'grid/index.js'), 'a'.repeat(179201));
+    writeFileSync(join(directory, 'grid/index.js'), 'a'.repeat(180225));
     const result = spawnSync(
       runtime === 'node' ? process.execPath : 'bun',
       [resolve(import.meta.dirname, 'build-size-report.ts'), '--dist', directory],
       { encoding: 'utf8' },
     );
     expect(result.status).toBe(1);
-    expect(result.stdout).toContain('179201 B');
+    expect(result.stdout).toContain('180225 B');
     expect(result.stdout).toContain('Authority: Bun ');
     expect(result.stdout).toContain('Core budget: **FAIL**');
   });
@@ -210,7 +210,7 @@ describe('build and CLI enforcement', () => {
 
   it('preserves nonzero report exit status when writing a failing CI summary', () => {
     mkdirSync(join(directory, 'grid'));
-    writeFileSync(join(directory, 'grid/index.js'), 'a'.repeat(179201));
+    writeFileSync(join(directory, 'grid/index.js'), 'a'.repeat(180225));
     const summary = join(directory, 'summary.md');
     const result = spawnSync(
       'bun',

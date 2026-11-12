@@ -122,7 +122,7 @@ OWNS: active tooltip + positioning, shared `#tbw-tooltip-popover`. HOOKS: afterC
 
 ### StickyRows (#279)
 
-OWNS: legacy clone overlay/cache or opt-in `ActiveAncestors`, never both. HOOKS: afterRender, onScrollRender, onScroll. CONFIG: `isSticky`, `mode:'push'|'stack'|'ancestors'` (default push), `maxStacked`, `className`; ancestors additionally accept actual `scrollContainer:HTMLElement` + external-header `topOffset`.
+OWNS: legacy clone overlay/cache or opt-in `ActiveAncestors`, never both. HOOKS: afterRender, onScrollRender, onScroll. Ancestor scroll layout is once per `scrollFrame` → `grid-scoped-footers.md`. CONFIG: `isSticky`, `mode:'push'|'stack'|'ancestors'` (default push), `maxStacked`, `className`; ancestors additionally accept actual `scrollContainer:HTMLElement` + external-header `topOffset`.
 
 #### Live ancestors
 

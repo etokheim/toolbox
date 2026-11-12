@@ -5,10 +5,12 @@ import {
   getRowCacheKey,
   getRowIndexAtOffset,
   getTotalHeight,
-  toVirtualScrollTop,
+  readViewportHeight,
+  readVirtualScrollTop,
 } from '../../core/internal/virtualization';
 import { CONFIG_RULE_WARN, warnDiagnostic } from '../../core/internal/diagnostics';
 import type { GridElement } from '../../core/plugin/base-plugin';
+import type { ScrollFrame } from '../../core/types';
 import { ControlSlot } from '../../core/plugin/control-view';
 import { buildAncestorIndex } from '../sticky-rows/ancestor-index';
 import type { FooterContext, FooterScope, PinnedRowsConfig, ScopedFooter } from './types';
@@ -35,6 +37,7 @@ export class ScopedFooters<TRow = unknown> implements RowFlow {
   #callback: PinnedRowsConfig<TRow>['scopedFooters'];
   #rowId: GridElement['effectiveConfig']['getRowId'];
   #disposed = false;
+  #laidOut: ScrollFrame | null = null;
   #exhausted = false;
 
   constructor(
@@ -207,8 +210,8 @@ export class ScopedFooters<TRow = unknown> implements RowFlow {
     const state = this.grid._virtualization;
     const external = getRowWindow(this.grid)?.viewport?.();
     return {
-      top: external?.scrollTop ?? toVirtualScrollTop(state.container?.scrollTop ?? 0, state.scrollMapping),
-      height: external?.height ?? state.viewportEl?.clientHeight ?? 0,
+      top: external?.scrollTop ?? readVirtualScrollTop(state),
+      height: external?.height ?? readViewportHeight(state),
     };
   }
 
@@ -255,18 +258,26 @@ export class ScopedFooters<TRow = unknown> implements RowFlow {
     return height < footer.definition.height + surface;
   }
 
+  /** Runs once per scroll dispatch (shared pre-write snapshot). */
   layout(): void {
     if (this.#disposed) return;
-    this.prepare();
     const grid = this.grid;
     const state = grid._virtualization;
+    const frame = state.scrollFrame;
+    if (frame) {
+      if (frame === this.#laidOut) return;
+      this.#laidOut = frame;
+    }
+    this.prepare();
     const body = grid._bodyEl;
     if (!body) return;
     const window = getRowWindow(grid);
     for (let i = 0; i < grid._rowPool.length; i++) {
       const index = window?.indices[i] ?? state.start + i;
       const extent = index >= state.start && index < state.end ? this.after(index) : 0;
-      grid._rowPool[i].style.marginBottom = extent ? `${extent}px` : '';
+      const margin = extent ? `${extent}px` : '';
+      const style = grid._rowPool[i].style;
+      if (style.marginBottom !== margin) style.marginBottom = margin;
     }
     if (!grid._rows.length) body.style.minHeight = `${this.emptyHeight()}px`;
     else body.style.removeProperty('min-height');

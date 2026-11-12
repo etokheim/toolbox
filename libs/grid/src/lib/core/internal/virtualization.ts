@@ -783,3 +783,25 @@ export function shouldBypassVirtualization(totalRows: number, threshold: number)
 }
 
 // #endregion
+
+/**
+ * Virtual scrollTop for scroll-time layout: the pre-write snapshot of the active
+ * scroll dispatch when present, otherwise a live (possibly layout-forcing) read.
+ * @internal
+ */
+export function readVirtualScrollTop(state: {
+  container: HTMLElement | null;
+  scrollMapping: ScrollMapping;
+  scrollFrame?: { scrollTop: number } | null;
+}): number {
+  return toVirtualScrollTop(state.scrollFrame?.scrollTop ?? state.container?.scrollTop ?? 0, state.scrollMapping);
+}
+
+/** Rows viewport height; cached (ResizeObserver-maintained) during a scroll dispatch. @internal */
+export function readViewportHeight(state: {
+  viewportEl: HTMLElement | null;
+  cachedViewportHeight: number;
+  scrollFrame?: object | null;
+}): number {
+  return (state.scrollFrame && state.cachedViewportHeight) || (state.viewportEl?.clientHeight ?? 0);
+}
