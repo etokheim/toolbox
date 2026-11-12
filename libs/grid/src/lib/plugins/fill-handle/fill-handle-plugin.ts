@@ -180,7 +180,7 @@ export class FillHandlePlugin<TRow = unknown> extends BaseGridPlugin<FillHandleC
       !isCellEntryTarget(event, this.gridElement)
     )
       return false;
-    const source = this.#source();
+    const source = this.#commitAndSource();
     if (!source) return false;
     event.preventDefault();
     const { firstRow, lastRow } = fillBounds({ source, targetRow: 0 }, this.rows.length, this.visibleColumns.length);
@@ -198,7 +198,7 @@ export class FillHandlePlugin<TRow = unknown> extends BaseGridPlugin<FillHandleC
     const key = event.key;
     if (!session || session.kind === 'armed') {
       if (key !== 'Enter' && key !== ' ') return session ? this.#escape(event) : false;
-      const source = session?.source ?? this.#source();
+      const source = session?.source ?? this.#commitAndSource();
       if (!source) return false;
       event.preventDefault();
       const { firstRow, lastRow } = fillBounds({ source, targetRow: 0 }, this.rows.length, this.visibleColumns.length);
@@ -231,7 +231,7 @@ export class FillHandlePlugin<TRow = unknown> extends BaseGridPlugin<FillHandleC
     if ((event.pointerType === 'mouse' && event.button !== 0) || !this.#handle) return;
     event.preventDefault();
     event.stopPropagation();
-    const source = this.#session?.kind === 'armed' ? this.#session.source : this.#source();
+    const source = this.#session?.kind === 'armed' ? this.#session.source : this.#commitAndSource();
     if (!source) return;
     const { lastRow } = fillBounds({ source, targetRow: 0 }, this.rows.length, this.visibleColumns.length);
     this.#start(source, lastRow, 'drag');
@@ -357,13 +357,28 @@ export class FillHandlePlugin<TRow = unknown> extends BaseGridPlugin<FillHandleC
 
   // #region Rendering
 
-  /** The single selected range, when fill is currently available. */
+  /**
+   * Starting a fill while a row edit is open commits that edit first, so the
+   * fill reads the committed value. Grid-mode editing (always editing) still blocks fill.
+   */
+  #commitAndSource(): CellRange | undefined {
+    const editing = this.grid.getPluginByName('editing');
+    if (this.#source() && editing?.resolvedConfig.mode !== 'grid' && this.#isEditing()) editing?.commitActiveRowEdit();
+    return this.#isEditing() ? undefined : this.#source();
+  }
+
+  #isEditing(): boolean {
+    return this.grid.query<boolean>('isEditing').some(Boolean);
+  }
+
+  /** The single selected range, when fill is currently available. An open row edit keeps the handle. */
   #source(): CellRange | undefined {
     if (this.grid.effectiveConfig.selectable === false) return undefined;
     const selection = this.grid.getPluginByName('selection');
     if (!selection || selection.resolvedConfig.enabled === false) return undefined;
-    if (this.grid.getPluginByName('editing')?.resolvedConfig.editOn === false) return undefined;
-    if (this.grid.query<boolean>('isEditing').some(Boolean)) return undefined;
+    const editing = this.grid.getPluginByName('editing');
+    if (editing?.resolvedConfig.editOn === false) return undefined;
+    if (editing?.resolvedConfig.mode === 'grid' && this.#isEditing()) return undefined;
     const { ranges } = selection.getSelection();
     return ranges.length === 1 ? ranges[0] : undefined;
   }

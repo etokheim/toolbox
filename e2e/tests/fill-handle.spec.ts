@@ -105,3 +105,49 @@ test('tapping the handle arms it and tapping a target cell applies', async ({ pa
   await page.locator('.cell[data-row="3"][data-field="qty"]').click();
   expect(await state(page)).toEqual({ rows: filled, reports: 1, actions: 1 });
 });
+
+async function dragHandleTo(page: Page, row: number, field: string) {
+  const box = (await page.locator('.tbw-fill-handle').boundingBox())!;
+  const target = (await page.locator(`.cell[data-row="${row}"][data-field="${field}"]`).boundingBox())!;
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(target.x + target.width / 2, target.y + target.height / 2, { steps: 6 });
+  await page.mouse.up();
+}
+
+test('dragging the handle during an edit commits the pending value and fills from it', async ({ page }) => {
+  const cell = page.locator('.cell[data-row="0"][data-field="qty"]');
+  await cell.dblclick();
+  const input = cell.locator('input');
+  await expect(input).toBeFocused();
+  await input.fill('5');
+  await expect(page.locator('.tbw-fill-handle')).toBeVisible();
+  await page.screenshot({ path: test.info().outputPath('edit-mode-handle.png') });
+  await dragHandleTo(page, 3, 'qty');
+  expect((await state(page)).rows.map(([qty]) => qty)).toEqual([5, 5, 5, 5, 0, 0]);
+  expect(await page.evaluate(() => window.fillFixture.grid.query<boolean>('isEditing').some(Boolean))).toBe(false);
+});
+
+test('Escape during an edit still cancels it when no fill was started', async ({ page }) => {
+  const cell = page.locator('.cell[data-row="0"][data-field="qty"]');
+  await cell.dblclick();
+  await cell.locator('input').fill('9');
+  await page.keyboard.press('Escape');
+  await expect(cell.locator('input')).toHaveCount(0);
+  expect((await state(page)).rows[0]).toEqual([1, '2024-01-31']);
+});
+
+test('an outside press clears the range and hides the handle; overlays do not', async ({ page }) => {
+  await selectSource(page);
+  const handle = page.locator('.tbw-fill-handle');
+  await expect(handle).toBeVisible();
+  await page.locator('#overlay').click();
+  await expect(handle).toBeVisible();
+  await expect(page.locator('.cell.selected')).not.toHaveCount(0);
+  await page.screenshot({ path: test.info().outputPath('before-outside-click.png') });
+  await page.locator('#outside').click();
+  await expect(handle).toBeHidden();
+  await expect(page.locator('.cell.selected')).toHaveCount(0);
+  await expect(page.locator('tbw-grid')).not.toHaveAttribute('data-has-focus');
+  await page.screenshot({ path: test.info().outputPath('after-outside-click.png') });
+});

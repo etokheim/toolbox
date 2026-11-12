@@ -129,6 +129,10 @@ Or construct `FillHandlePlugin` from `@toolbox-web/grid/plugins/fill-handle` aft
 
 The preview row count and the outcome are announced to screen readers.
 
+The handle stays available while a cell is in edit mode. Starting a fill (drag, tap, `Enter` on the handle or `Alt+Arrow`) commits the pending edit first and fills from the committed value; a rejected commit reverts as usual. `Escape` still cancels the edit when no fill was started. Grid-mode editing (`mode: 'grid'`, always editing) does not show the handle.
+
+The handle follows the selection state: it is visible exactly while one range is selected. To hide it when the user clicks elsewhere on the page, clear the selection with Selection's [`clearOnOutsideClick`](/grid/plugins/selection/#clear-on-outside-click) rather than hiding selection with focus CSS.
+
 ## Series inference
 
 With the default `mode: 'auto'`, each column is inferred from its own seed cells:

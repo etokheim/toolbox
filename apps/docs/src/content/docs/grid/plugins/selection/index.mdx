@@ -441,6 +441,26 @@ features: {
 }
 ```
 
+### Clear on Outside Click
+
+By default a selection survives focus leaving the grid. Set `clearOnOutsideClick: true` to clear every selection axis when the user presses anywhere outside the grid. `selection-change` fires, and dependent UI such as the [Fill Handle](/grid/plugins/fill-handle/) disappears with the selection.
+
+```ts
+features: {
+  selection: { mode: 'range', clearOnOutsideClick: true },
+}
+```
+
+Presses in the grid's own overlays do not clear: the context menu, filter panel, tooltips, keyboard move menus, elements registered with `grid.registerExternalFocusContainer()`, and panels owned by an open `aria-expanded="true"` + `aria-controls` trigger inside the grid. Mark any other portal-rendered popover (a custom dropdown or date picker rendered at `<body>`) with `data-tbw-overlay`:
+
+```html
+<div class="my-date-picker-portal" data-tbw-overlay>…</div>
+```
+
+:::caution
+Prefer this option over CSS that hides selection when the grid loses focus (for example `tbw-grid:not(:focus-within) .cell.selected`). Such CSS only hides the visuals — the selection, and the fill handle that follows it, stay active.
+:::
+
 ### Conditional Selection
 
 Use the `isSelectable` callback to prevent selection of specific rows or cells:

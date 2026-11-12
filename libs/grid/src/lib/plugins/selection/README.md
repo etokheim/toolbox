@@ -24,14 +24,15 @@ grid.gridConfig = {
 
 ## Configuration
 
-| Option         | Type                                          | Default   | Description                                    |
-| -------------- | --------------------------------------------- | --------- | ---------------------------------------------- |
-| `mode`         | `'cell' \| 'row' \| 'range'`                  | `'cell'`  | Selection mode                                 |
-| `multiSelect`  | `boolean`                                     | `true`    | Allow multiple items selected at once          |
-| `triggerOn`    | `'click' \| 'dblclick'`                       | `'click'` | Mouse event type that triggers selection       |
-| `enabled`      | `boolean`                                     | `true`    | Whether selection is enabled                   |
-| `checkbox`     | `boolean`                                     | `false`   | Show checkbox column (row mode only)           |
-| `isSelectable` | `(row, rowIndex, col?, colIndex?) => boolean` | -         | Callback to control per-row/cell selectability |
+| Option                | Type                                          | Default   | Description                                                                                  |
+| --------------------- | --------------------------------------------- | --------- | -------------------------------------------------------------------------------------------- |
+| `mode`                | `'cell' \| 'row' \| 'range'`                  | `'cell'`  | Selection mode                                                                               |
+| `multiSelect`         | `boolean`                                     | `true`    | Allow multiple items selected at once                                                        |
+| `triggerOn`           | `'click' \| 'dblclick'`                       | `'click'` | Mouse event type that triggers selection                                                     |
+| `enabled`             | `boolean`                                     | `true`    | Whether selection is enabled                                                                 |
+| `checkbox`            | `boolean`                                     | `false`   | Show checkbox column (row mode only)                                                         |
+| `isSelectable`        | `(row, rowIndex, col?, colIndex?) => boolean` | -         | Callback to control per-row/cell selectability                                               |
+| `clearOnOutsideClick` | `boolean`                                     | `false`   | Clear the selection on a press outside the grid (overlays and `[data-tbw-overlay]` excluded) |
 
 ## Selection Modes
 

@@ -27,10 +27,11 @@ async function setup(
     columns?: ColumnConfig<Row>[];
     fill?: FillHandleConfig<Row>;
     externalHistory?: ExternalHistoryOwner;
+    clearOnOutsideClick?: boolean;
   } = {},
 ) {
   const grid = document.createElement('tbw-grid') as DataGridElement<Row>;
-  const selection = new SelectionPlugin({ mode: 'range' });
+  const selection = new SelectionPlugin({ mode: 'range', clearOnOutsideClick: options.clearOnOutsideClick });
   const undo = new UndoRedoPlugin(options.externalHistory ? { externalHistory: options.externalHistory } : {});
   const fill = new FillHandlePlugin<Row>(options.fill);
   grid.gridConfig = {
@@ -284,5 +285,59 @@ describe('FillHandlePlugin interaction', () => {
     grid.querySelector<HTMLElement>('.cell[data-row="3"][data-col="0"]')!.click();
     expect(grid.rows.map((owner) => owner.n)).toEqual([1, 2, 3, 4]);
     expect(handle.getAttribute('aria-pressed')).toBe('false');
+  });
+
+  it('keeps the handle during an edit and commits the pending value before filling from it', async () => {
+    const { grid, selection } = await setup();
+    const editing = grid.getPluginByName('editing')!;
+    selection.setRanges([range(0, 0, 2, 2)]);
+    editing.beginCellEdit(0, 'text');
+    await frame();
+    await frame();
+    const input = grid.querySelector<HTMLInputElement>('.cell[data-row="0"][data-col="2"] input')!;
+    input.value = 'edited';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    const handle = grid.querySelector<HTMLElement>('.tbw-fill-handle')!;
+    expect(handle.hidden).toBe(false);
+    handle.setPointerCapture = vi.fn();
+    handle.releasePointerCapture = vi.fn();
+    handle.hasPointerCapture = vi.fn(() => true);
+    handle.dispatchEvent(
+      new PointerEvent('pointerdown', { bubbles: true, button: 0, pointerId: 1, pointerType: 'touch' }),
+    );
+    expect(grid.query<boolean>('isEditing').some(Boolean)).toBe(false);
+    expect(grid.rows[0].text).toBe('edited');
+    handle.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 1, pointerType: 'touch' }));
+    await frame();
+    grid.querySelector<HTMLElement>('.cell[data-row="2"][data-col="2"]')!.click();
+    expect(grid.rows.map((owner) => owner.text)).toEqual(['edited', 'edited', 'edited', '']);
+  });
+
+  it('leaves Escape to cancel the edit when no fill was started', async () => {
+    const { grid, selection } = await setup();
+    const editing = grid.getPluginByName('editing')!;
+    selection.setRanges([range(0, 0, 2, 2)]);
+    editing.beginCellEdit(0, 'text');
+    await frame();
+    const input = grid.querySelector<HTMLInputElement>('.cell[data-row="0"][data-col="2"] input')!;
+    input.value = 'discarded';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    press(input, 'Escape');
+    await frame();
+    expect(grid.query<boolean>('isEditing').some(Boolean)).toBe(false);
+    expect(grid.rows[0].text).toBe('x');
+  });
+
+  it('hides the handle when an outside press clears the selection', async () => {
+    const { grid, selection } = await setup({ clearOnOutsideClick: true });
+    selection.setRanges([range(0, 1)]);
+    await frame();
+    const handle = grid.querySelector<HTMLElement>('.tbw-fill-handle')!;
+    expect(handle.hidden).toBe(false);
+    const outside = document.body.appendChild(document.createElement('button'));
+    outside.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, composed: true }));
+    await Promise.resolve();
+    expect(selection.getSelection().ranges).toEqual([]);
+    expect(handle.hidden).toBe(true);
   });
 });

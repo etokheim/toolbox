@@ -366,6 +366,27 @@ export interface SelectionConfig<T = unknown> {
    * @since 3.5.0
    */
   touchMode?: TouchSelectionMode;
+
+  /**
+   * Clear the selection when a pointer is pressed outside the grid.
+   *
+   * A `pointerdown` anywhere outside this grid clears every selection axis
+   * (rows, cell, ranges, columns) and emits `selection-change`, so dependent
+   * UI such as the FillHandle corner disappears with it. The grid's own
+   * overlays do not count as outside:
+   *
+   * - elements registered with `grid.registerExternalFocusContainer()`;
+   * - panels owned by an open `aria-expanded="true"` + `aria-controls`
+   *   trigger inside the grid (comboboxes, date pickers);
+   * - built-in body-level overlays (context menu, filter panel, size popover,
+   *   tooltip, keyboard move menus);
+   * - any element inside a `[data-tbw-overlay]` ancestor — mark custom
+   *   portal-rendered popovers with this attribute.
+   *
+   * @default false
+   * @since 3.11.0
+   */
+  clearOnOutsideClick?: boolean;
 }
 
 /** Internal state managed by the selection plugin */

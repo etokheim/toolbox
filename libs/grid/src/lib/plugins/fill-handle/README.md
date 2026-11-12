@@ -34,6 +34,11 @@ Or construct `FillHandlePlugin` from `@toolbox-web/grid/plugins/fill-handle` aft
   cancels. On the focused handle, Enter/Space starts the same preview.
 - **API:** `grid.getPluginByName('fillHandle').fill({ source, targetRow })`.
 
+The handle stays usable while a cell is being edited: starting a fill commits the
+pending edit first and fills from the committed value. The handle follows the
+selection state, so use Selection's `clearOnOutsideClick` to remove it on outside
+clicks rather than hiding selection with `:focus-within` CSS.
+
 ## Series inference (`mode: 'auto'`, per column)
 
 | Seeds                                    | Result                                             |

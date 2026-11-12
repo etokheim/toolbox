@@ -97,6 +97,10 @@ const CHECKBOX_COLUMN_FIELD = '__tbw_checkbox';
  */
 const EXTEND_ITEM_ORDER = 60;
 
+/** Body-level grid overlays a `clearOnOutsideClick` press must not treat as outside. */
+const GRID_OVERLAY_SELECTOR =
+  '[data-tbw-overlay],.tbw-context-menu,.tbw-filter-panel,.tbw-size-popover,.tbw-tooltip-popover,.tbw-range-extend-menu,.tbw-col-move-menu,.tbw-row-move-menu,.tbw-visibility-move-menu,.tbw-pivot-chip-menu';
+
 /** Keys that move grid focus — selection reacts to these in cell/range mode. */
 const NAV_KEYS: readonly string[] = [
   'ArrowUp',
@@ -594,6 +598,34 @@ export class SelectionPlugin<TRow = unknown> extends BaseGridPlugin<SelectionCon
       }) as EventListener,
       { signal: this.disconnectSignal },
     );
+
+    if (this.config.clearOnOutsideClick) {
+      // Capture phase: a host handler that stops propagation must not keep a stale selection.
+      grid.ownerDocument.addEventListener('pointerdown', (event) => this.#onOutsidePointerDown(event), {
+        capture: true,
+        signal: this.disconnectSignal,
+      });
+    }
+  }
+
+  /** `clearOnOutsideClick`: clear every axis when a press lands outside this grid and its overlays. */
+  #onOutsidePointerDown(event: PointerEvent): void {
+    const hasSelection =
+      this.selected.size > 0 || this.ranges.length > 0 || this.selectedCell !== null || this.selectedColumns.size > 0;
+    if (!hasSelection && !this.#touchActive) return;
+    const host = this.gridElement;
+    const target = (event.composedPath?.()[0] ?? event.target) as Node | null;
+    if (!target || !host || event.composedPath?.().includes(host) || host.contains(target)) return;
+    if (this.grid.containsFocus?.(target)) return;
+    const el = (target.nodeType === 1 ? target : target.parentElement) as Element | null;
+    if (el?.closest(GRID_OVERLAY_SELECTOR)) return;
+    // Portals owned by an open combobox/picker trigger inside the grid (WAI-ARIA aria-controls).
+    for (const trigger of host.querySelectorAll('[aria-expanded="true"][aria-controls]')) {
+      const panel = host.ownerDocument.getElementById(trigger.getAttribute('aria-controls') ?? '');
+      if (panel?.contains(target)) return;
+    }
+    this.exitTouchSelection();
+    if (hasSelection) this.clearSelection();
   }
 
   /**

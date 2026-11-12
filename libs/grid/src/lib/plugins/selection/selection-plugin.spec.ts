@@ -2814,4 +2814,65 @@ describe('SelectionPlugin', () => {
       expect(lastDetail.selectedColumns).toEqual(['a', 'c', 'd']);
     });
   });
+
+  describe('clearOnOutsideClick', () => {
+    const press = (target: Element) =>
+      target.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, composed: true }));
+
+    const setup = (clearOnOutsideClick?: boolean) => {
+      const grid = createMockGrid();
+      document.body.appendChild(grid);
+      const plugin = new SelectionPlugin({ mode: 'range', clearOnOutsideClick });
+      plugin.attach(grid);
+      plugin.setRanges([{ from: { row: 0, col: 0 }, to: { row: 1, col: 1 } }]);
+      const outside = document.body.appendChild(document.createElement('div'));
+      return { grid, plugin, outside };
+    };
+
+    it('clears every axis and emits on a press outside the grid', () => {
+      const { grid, plugin, outside } = setup(true);
+      plugin['selectedColumns'].add('a');
+      (grid.dispatchEvent as ReturnType<typeof vi.fn>).mockClear();
+      press(outside);
+      expect(plugin.getSelection().ranges).toEqual([]);
+      expect(plugin['selectedColumns'].size).toBe(0);
+      expect(grid.dispatchEvent).toHaveBeenCalledWith(expect.objectContaining({ type: 'selection-change' }));
+      plugin.detach();
+    });
+
+    it('is off by default and ignores presses inside the grid', () => {
+      const { plugin, outside } = setup();
+      press(outside);
+      expect(plugin.getSelection().ranges).toHaveLength(1);
+      plugin.detach();
+      const enabled = setup(true);
+      press(enabled.grid.querySelector('.tbw-grid-root')!);
+      expect(enabled.plugin.getSelection().ranges).toHaveLength(1);
+      enabled.plugin.detach();
+    });
+
+    it('keeps the selection for presses in grid overlays', () => {
+      const { grid, plugin } = setup(true);
+      const marked = document.body.appendChild(document.createElement('div'));
+      marked.setAttribute('data-tbw-overlay', '');
+      press(marked.appendChild(document.createElement('span')));
+      const menu = document.body.appendChild(document.createElement('div'));
+      menu.className = 'tbw-context-menu';
+      press(menu);
+      const panel = document.body.appendChild(document.createElement('div'));
+      panel.id = 'combo-panel';
+      const trigger = grid.querySelector('.tbw-grid-root')!.appendChild(document.createElement('input'));
+      trigger.setAttribute('aria-expanded', 'true');
+      trigger.setAttribute('aria-controls', 'combo-panel');
+      press(panel);
+      const registered = document.body.appendChild(document.createElement('div'));
+      grid.containsFocus = (node: Node) => registered.contains(node);
+      press(registered);
+      expect(plugin.getSelection().ranges).toHaveLength(1);
+      trigger.setAttribute('aria-expanded', 'false');
+      press(panel);
+      expect(plugin.getSelection().ranges).toEqual([]);
+      plugin.detach();
+    });
+  });
 });
