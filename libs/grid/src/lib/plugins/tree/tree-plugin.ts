@@ -1318,11 +1318,14 @@ export class TreePlugin<TRow = unknown> extends BaseGridPlugin<TreeConfig<TRow>>
     this.#refreshDisclosures();
     const body = this.gridElement?.querySelector('.rows');
     this.#retireRowMetadata(body);
-    const style = this.animationStyle;
-    this.#reveal.reconcile(body, (element) => this.#renderedRevealKey(element), style !== false);
+    // Lazy: animationStyle reads computed style; most renders animate nothing.
+    let resolved: ExpandCollapseAnimation | undefined;
+    const animation = () => (resolved ??= this.animationStyle);
+    this.#reveal.reconcile(body, this.#revealKey, () => animation() !== false);
     if (!body) return;
 
-    const shouldAnimate = style !== false && this.keysToAnimate.size > 0;
+    const style = this.keysToAnimate.size > 0 ? animation() : false;
+    const shouldAnimate = style !== false;
     const animClass = style === 'fade' ? 'tbw-tree-fade-in' : 'tbw-tree-slide-in';
 
     for (const rowEl of body.querySelectorAll<HTMLElement>(':scope > .data-grid-row')) {
@@ -1349,16 +1352,12 @@ export class TreePlugin<TRow = unknown> extends BaseGridPlugin<TreeConfig<TRow>>
 
   /** @internal */
   override onScrollRender(): void {
-    this.#reveal.reconcile(
-      this.gridElement?.querySelector('.rows') ?? null,
-      (element) => this.#renderedRevealKey(element),
-      this.animationStyle !== false,
-    );
+    const body = this.gridElement?.querySelector('.rows') ?? null;
+    this.#reveal.reconcile(body, this.#revealKey, () => this.animationStyle !== false);
   }
 
-  #renderedRevealKey(element: HTMLElement): string | undefined {
-    return this.#rowMeta.get((element as RowElementInternal).__rowDataRef as object)?.key;
-  }
+  readonly #revealKey = (element: HTMLElement): string | undefined =>
+    this.#rowMeta.get((element as RowElementInternal).__rowDataRef as object)?.key;
 
   #retireRowMetadata(body?: Element | null): void {
     for (const element of this.#rowMetadata.elements) {

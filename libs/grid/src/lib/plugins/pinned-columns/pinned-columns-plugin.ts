@@ -158,6 +158,7 @@ export class PinnedColumnsPlugin extends BaseGridPlugin<PinnedColumnsConfig> {
   #groupEndAdjustments: GroupEndAdjustments = { addGroupEnd: new Set(), removeGroupEnd: new Set() };
   /** Split explicit-group state for scroll-driven label transfer. */
   #splitGroups: SplitGroupState[] = [];
+  #splitScrollLeft = NaN;
   /**
    * Snapshot of the column field order before the first context-menu pin.
    * Used to restore original positions when unpinning.
@@ -301,6 +302,7 @@ export class PinnedColumnsPlugin extends BaseGridPlugin<PinnedColumnsConfig> {
       this.rightOffsets = result.rightOffsets;
       this.#splitGroups = result.splitGroups;
       // Re-apply scroll-driven state (transfer + translateX) to the fresh DOM elements
+      this.#splitScrollLeft = NaN;
       this.#updateSplitGroupScroll();
     });
   }
@@ -357,7 +359,10 @@ export class PinnedColumnsPlugin extends BaseGridPlugin<PinnedColumnsConfig> {
    * transfer.
    * @internal
    */
-  override onScroll(_event: ScrollEvent): void {
+  override onScroll(event: ScrollEvent): void {
+    // Split-group geometry moves only horizontally; vertical-only ticks would force layout for nothing.
+    if (event.scrollLeft === this.#splitScrollLeft) return;
+    this.#splitScrollLeft = event.scrollLeft;
     this.#updateSplitGroupScroll();
   }
 

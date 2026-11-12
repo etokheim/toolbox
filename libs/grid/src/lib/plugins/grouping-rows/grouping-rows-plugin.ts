@@ -1061,9 +1061,17 @@ export class GroupingRowsPlugin extends BaseGridPlugin<GroupingRowsConfig> imple
     this.#disclosures.refresh();
     this.#releaseRowMetadata(this.isActive);
     const body = this.gridElement?.querySelector('.rows') ?? null;
-    const style = this.animationStyle;
-    this.#reveal.reconcile(body, (element) => this.#renderedRevealKey(element), this.isActive && style !== false);
-    if (!this.isActive || !body || style === false || this.keysToAnimate.size === 0) return;
+    // Resolve lazily: animationStyle reads computed style, and most renders have nothing to animate.
+    let resolved: ExpandCollapseAnimation | undefined;
+    const animation = () => (resolved ??= this.animationStyle);
+    this.#reveal.reconcile(
+      body,
+      (element) => this.#renderedRevealKey(element),
+      () => this.isActive && animation() !== false,
+    );
+    if (!this.isActive || !body || this.keysToAnimate.size === 0) return;
+    const style = animation();
+    if (style === false) return;
     const animClass = style === 'fade' ? 'tbw-group-fade-in' : 'tbw-group-slide-in';
 
     for (const rowEl of body.querySelectorAll<HTMLElement>(':scope > .data-grid-row')) {
@@ -1080,7 +1088,7 @@ export class GroupingRowsPlugin extends BaseGridPlugin<GroupingRowsConfig> imple
     this.#reveal.reconcile(
       this.gridElement?.querySelector('.rows') ?? null,
       (element) => this.#renderedRevealKey(element),
-      this.isActive && this.animationStyle !== false,
+      () => this.isActive && this.animationStyle !== false,
     );
   }
 

@@ -1414,4 +1414,23 @@ describe('tree plugin integration', () => {
       expect(grid.querySelector('.data-grid-row')?.getAttribute('aria-busy')).toBe('true');
     });
   });
+
+  it('does not read computed style on steady scroll renders or idle renders', async () => {
+    const grid = document.createElement('tbw-grid') as GridElement;
+    document.body.appendChild(grid);
+    const plugin = new TreePlugin({ defaultExpanded: false });
+    grid.gridConfig = { columns: [{ field: 'name' }], plugins: [plugin] };
+    grid.rows = [{ name: 'a', children: [{ name: 'b' }] }];
+    await waitUpgrade(grid);
+    await nextFrame();
+
+    const spy = vi.spyOn(window, 'getComputedStyle');
+    try {
+      plugin.onScrollRender();
+      plugin.afterRender();
+      expect(spy).not.toHaveBeenCalled();
+    } finally {
+      spy.mockRestore();
+    }
+  });
 });
