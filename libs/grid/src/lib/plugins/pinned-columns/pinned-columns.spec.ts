@@ -3,7 +3,11 @@
  * @vitest-environment happy-dom
  */
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import '../../core/grid';
+import { nextFrame, waitUpgrade } from '../../../../test/helpers';
+import { GroupingColumnsPlugin } from '../grouping-columns';
+import { PinnedColumnsPlugin } from './pinned-columns-plugin';
 import {
   applyStickyOffsets,
   calculateLeftStickyOffsets,
@@ -1199,5 +1203,42 @@ describe('RTL support', () => {
       expect(priority).toBeDefined();
       expect(priority).toBeLessThan(0);
     });
+  });
+});
+
+describe('PinnedColumnsPlugin split-group scroll', () => {
+  afterEach(() => {
+    document.body.innerHTML = '';
+  });
+
+  it('measures split groups only when horizontal scroll moves', async () => {
+    const grid = document.createElement('tbw-grid') as HTMLElement & { gridConfig: unknown; rows: unknown[] };
+    document.body.appendChild(grid);
+    const pinned = new PinnedColumnsPlugin();
+    grid.gridConfig = {
+      columns: [{ field: 'a', pinned: 'left' }, { field: 'b' }, { field: 'c' }],
+      columnGroups: [{ id: 'g', header: 'G', children: ['a', 'b'] }],
+      plugins: [new GroupingColumnsPlugin(), pinned],
+    };
+    grid.rows = [{ a: 1, b: 2, c: 3 }];
+    await waitUpgrade(grid as never);
+    await nextFrame();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(grid.querySelectorAll('.header-group-cell[data-group="g"]').length).toBe(2);
+
+    const spy = vi.spyOn(Element.prototype, 'getBoundingClientRect');
+    const tick = (scrollLeft: number) =>
+      pinned.onScroll({ scrollTop: 0, scrollLeft, scrollHeight: 0, scrollWidth: 0, clientHeight: 0, clientWidth: 0 });
+    try {
+      tick(0);
+      const first = spy.mock.calls.length;
+      expect(first).toBeGreaterThan(0);
+      tick(0);
+      expect(spy.mock.calls.length).toBe(first);
+      tick(10);
+      expect(spy.mock.calls.length).toBeGreaterThan(first);
+    } finally {
+      spy.mockRestore();
+    }
   });
 });

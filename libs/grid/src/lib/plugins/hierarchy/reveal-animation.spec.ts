@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { RevealAnimation, stripRevealAnimation } from './reveal-animation';
 
 afterEach(() => document.body.replaceChildren());
@@ -18,18 +18,44 @@ describe('reveal animation ownership', () => {
 
   it('retains same-occurrence motion but cancels recycled, removed and disabled owners', () => {
     const { body, row, animation } = fixture();
-    animation.reconcile(body, () => 'a/item', true);
+    animation.reconcile(
+      body,
+      () => 'a/item',
+      () => true,
+    );
     expect(row.classList.contains('tbw-tree-slide-in')).toBe(true);
-    animation.reconcile(body, () => 'b/item', true);
+    animation.reconcile(
+      body,
+      () => 'b/item',
+      () => true,
+    );
     expect(row.classList.contains('tbw-tree-slide-in')).toBe(false);
     animation.apply(row, 'b/item', 'tbw-tree-fade-in');
     row.remove();
-    animation.reconcile(body, () => 'b/item', true);
+    animation.reconcile(
+      body,
+      () => 'b/item',
+      () => true,
+    );
     expect(row.classList.contains('tbw-tree-fade-in')).toBe(false);
     body.append(row);
     animation.apply(row, 'b/item', 'tbw-tree-fade-in');
-    animation.reconcile(body, () => 'b/item', false);
+    animation.reconcile(
+      body,
+      () => 'b/item',
+      () => false,
+    );
     expect(row.classList.contains('tbw-tree-fade-in')).toBe(false);
+  });
+
+  it('resolves the enabled flag only while a reveal is in flight', () => {
+    const { body, animation } = fixture();
+    const enabled = vi.fn(() => true);
+    animation.reconcile(body, () => 'a/item', enabled);
+    expect(enabled).toHaveBeenCalledTimes(1);
+    animation.clear();
+    animation.reconcile(body, () => 'a/item', enabled);
+    expect(enabled).toHaveBeenCalledTimes(1);
   });
 
   it.each(['animationend', 'animationcancel'])('handles own %s but ignores nested and unrelated events', (type) => {

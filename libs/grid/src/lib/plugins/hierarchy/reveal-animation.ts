@@ -9,9 +9,15 @@ export function stripRevealAnimation(element: HTMLElement): void {
 export class RevealAnimation {
   #active = new Map<HTMLElement, { key: unknown; className: string; finish: (event: Event) => void }>();
 
-  reconcile(body: Element | null | undefined, keyOf: (element: HTMLElement) => unknown, enabled: boolean): void {
+  /**
+   * `enabled` is lazy: resolving it reads computed style, and steady scroll
+   * frames with no reveal in flight must not pay for that read.
+   */
+  reconcile(body: Element | null | undefined, keyOf: (element: HTMLElement) => unknown, enabled: () => boolean): void {
+    if (this.#active.size === 0) return;
+    const on = enabled();
     for (const [element, state] of this.#active) {
-      if (!enabled || element.parentElement !== body || keyOf(element) !== state.key) this.#release(element);
+      if (!on || element.parentElement !== body || keyOf(element) !== state.key) this.#release(element);
     }
   }
 
