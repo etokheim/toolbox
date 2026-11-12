@@ -1088,7 +1088,7 @@ export class GroupingRowsPlugin extends BaseGridPlugin<GroupingRowsConfig> imple
     this.#reveal.reconcile(
       this.gridElement?.querySelector('.rows') ?? null,
       (element) => this.#renderedRevealKey(element),
-      () => this.isActive && this.animationStyle !== false,
+      () => this.isActive,
     );
   }
 

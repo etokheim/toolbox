@@ -10,15 +10,23 @@ export class RevealAnimation {
   #active = new Map<HTMLElement, { key: unknown; className: string; finish: (event: Event) => void }>();
 
   /**
-   * `enabled` is lazy: resolving it reads computed style, and steady scroll
-   * frames with no reveal in flight must not pay for that read.
+   * Releases reveals whose row left `body`, changed occurrence, or lost its
+   * class. Core row rendering resets `className`, and Chrome never fires
+   * `animationcancel`, so these entries are pruned without reading styles.
+   * `enabled` is lazy and optional: it reads computed style, so scroll frames
+   * omit it and only renders that may start reveals consult it.
    */
-  reconcile(body: Element | null | undefined, keyOf: (element: HTMLElement) => unknown, enabled: () => boolean): void {
-    if (this.#active.size === 0) return;
-    const on = enabled();
+  reconcile(body: Element | null | undefined, keyOf: (element: HTMLElement) => unknown, enabled?: () => boolean): void {
     for (const [element, state] of this.#active) {
-      if (!on || element.parentElement !== body || keyOf(element) !== state.key) this.#release(element);
+      if (
+        element.parentElement !== body ||
+        !element.classList.contains(state.className) ||
+        keyOf(element) !== state.key
+      )
+        this.#release(element);
     }
+    if (this.#active.size === 0 || !enabled || enabled()) return;
+    this.clear();
   }
 
   apply(element: HTMLElement, key: unknown, className: string): void {

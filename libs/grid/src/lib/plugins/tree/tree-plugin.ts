@@ -1353,7 +1353,7 @@ export class TreePlugin<TRow = unknown> extends BaseGridPlugin<TreeConfig<TRow>>
   /** @internal */
   override onScrollRender(): void {
     const body = this.gridElement?.querySelector('.rows') ?? null;
-    this.#reveal.reconcile(body, this.#revealKey, () => this.animationStyle !== false);
+    this.#reveal.reconcile(body, this.#revealKey);
   }
 
   readonly #revealKey = (element: HTMLElement): string | undefined =>
