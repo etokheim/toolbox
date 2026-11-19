@@ -305,9 +305,37 @@ declare module '../../core/types' {
      * { field: 'location', editable: true, width: 120, editorWidth: 320 }
      * { field: 'date', type: 'date', editable: true, width: 90, editorWidth: 'content' }
      * ```
+     * The cell grows with a short clip-path animation and is elevated with a shadow;
+     * theme via `--tbw-editor-expand-duration` (`0ms` disables it; reduced motion
+     * disables it by default), `--tbw-editor-expand-easing` and
+     * `--tbw-editor-expanded-shadow`.
+     *
+     * @example
+     * ```typescript
+     * { field: 'location', editable: true, width: 120, editorWidth: 320 }
+     * { field: 'date', type: 'date', editable: true, width: 90, editorWidth: 'content' }
+     * ```
      * @since 3.11.0
      */
     editorWidth?: number | 'content';
+    /**
+     * Height the cell may grow to while its editor is focused. Requires EditingPlugin.
+     *
+     * Same rules as {@link editorWidth}, vertically: the cell overlays the rows
+     * below without changing row heights or virtualization, is clamped to the
+     * visible rows viewport, and grows upwards when there is not enough room
+     * below. Combine with `editorWidth` to grow in both directions.
+     *
+     * - `number` — target height in pixels.
+     * - `'content'` — the editor's intrinsic (max-content) height at its expanded width.
+     *
+     * @example
+     * ```typescript
+     * { field: 'note', editable: true, width: 140, editorWidth: 300, editorHeight: 96, editor: textareaEditor }
+     * ```
+     * @since 3.11.0
+     */
+    editorHeight?: number | 'content';
     /**
      * Whether this column allows `null` values. Requires EditingPlugin.
      *

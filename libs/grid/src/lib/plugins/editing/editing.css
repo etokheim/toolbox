@@ -109,14 +109,23 @@
     }
 
     /* ============================================================================
-       Expanded Editor (column.editorWidth)
+       Expanded Editor (column.editorWidth / column.editorHeight)
        ============================================================================
-       Width and negative margins are set inline; the margins cancel the extra
-       width so the column track and neighbouring cells keep their geometry. */
+       Size and negative margins are set inline; the margins cancel the extra
+       size so the column track, row height and neighbouring cells keep their
+       geometry. The grow/shrink is a clip-path animation driven from JS. */
 
     /* Opaque fill so the overlaid neighbours do not show through */
     --tbw-editor-expanded-bg: Canvas;
-    --tbw-editor-expanded-shadow: 0 2px 8px var(--tbw-color-shadow);
+    /* Elevation of the expanded editor */
+    --tbw-editor-expanded-shadow: 0 4px 14px var(--tbw-color-shadow), 0 1px 3px var(--tbw-color-shadow);
+    /* Grow/shrink animation; 0ms disables it */
+    --tbw-editor-expand-duration: 120ms;
+    --tbw-editor-expand-easing: cubic-bezier(0.2, 0, 0, 1);
+
+    @media (prefers-reduced-motion: reduce) {
+      --tbw-editor-expand-duration: 0ms;
+    }
 
     .data-grid-row > .cell[data-tbw-editor-expanded] {
       position: relative;
@@ -127,6 +136,13 @@
       background-color: var(--tbw-editor-expanded-bg);
       background-image: linear-gradient(var(--tbw-editing-bg), var(--tbw-editing-bg));
       box-shadow: var(--tbw-editor-expanded-shadow);
+    }
+
+    /* Rows are stacking contexts (contain: layout); lift the expanded cell's
+       row so its overlay and shadow paint above the rows below. */
+    .data-grid-row[data-tbw-editor-expanded-row] {
+      position: relative;
+      z-index: 1;
     }
   }
 } /* End @layer tbw-plugins */

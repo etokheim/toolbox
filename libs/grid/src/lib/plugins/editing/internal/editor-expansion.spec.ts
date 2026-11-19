@@ -2,13 +2,17 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { DataGridElement } from '../../../core/grid';
 import type { ColumnConfig } from '../../../core/types';
 import { EditingPlugin } from '../editing-plugin';
-import { EDITOR_EXPANDED_ATTR } from './editor-expansion';
+import { EDITOR_EXPANDED_ATTR, EDITOR_EXPANDED_ROW_ATTR } from './editor-expansion';
 
 type Row = { id: string; a: string; b: string; c: string; d: string };
 
 const COL = 100;
 const VIEWPORT = 400;
 const CONTENT = 250;
+const ROW = 24;
+const CONTENT_HEIGHT = 80;
+/** Top of the row in the 200px-tall rows viewport. */
+let rowTop = 0;
 
 /** Lay out cells as 100px tracks in a 400px scroll area, honouring inline width/margins. */
 function mockLayout(): void {
@@ -21,7 +25,13 @@ function mockLayout(): void {
       // An expanded cell without inline width shrink-to-fits (`justify-self: start`).
       const shrunk = this.hasAttribute(EDITOR_EXPANDED_ATTR) && !this.style.width;
       const width = this.style.width === 'max-content' || shrunk ? CONTENT : parseFloat(this.style.width) || COL;
-      return new DOMRect(base + (parseFloat(this.style.marginLeft) || 0), 0, width, 24);
+      const height = this.style.height === 'max-content' ? CONTENT_HEIGHT : parseFloat(this.style.height) || ROW;
+      return new DOMRect(
+        base + (parseFloat(this.style.marginLeft) || 0),
+        rowTop + (parseFloat(this.style.marginTop) || 0),
+        width,
+        height,
+      );
     }
     return new DOMRect(0, 0, VIEWPORT, 200);
   });
@@ -62,6 +72,7 @@ async function settle(): Promise<void> {
 }
 
 afterEach(() => {
+  rowTop = 0;
   document.body.replaceChildren();
   vi.restoreAllMocks();
 });
@@ -152,6 +163,76 @@ describe('column.editorWidth', () => {
     const { cell, focus } = await setup([{ editorWidth: 200 }], 'rtl');
     await focus(0);
     expect(cell(0).hasAttribute(EDITOR_EXPANDED_ATTR)).toBe(false);
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining('editorWidth supports LTR grids only'));
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('support LTR grids only'));
+  });
+
+  it('grows down over the rows below and lifts its row', async () => {
+    const { cell, focus } = await setup([{ editorHeight: 100 }, { editorWidth: 200, editorHeight: 'content' }]);
+    await focus(0);
+    const expanded = cell(0);
+    expect(expanded.getAttribute(EDITOR_EXPANDED_ATTR)).toBe('down');
+    expect(expanded.style.height).toBe('100px');
+    expect(expanded.style.marginTop).toBe('0px');
+    // Outer height = height + margins = the 24px row.
+    expect(expanded.style.marginBottom).toBe('-76px');
+    expect(expanded.style.width).toBe('');
+    expect(expanded.parentElement!.hasAttribute(EDITOR_EXPANDED_ROW_ATTR)).toBe(true);
+    await focus(1);
+    expect(cell(0).style.height).toBe('');
+    expect(cell(1).getAttribute(EDITOR_EXPANDED_ATTR)).toBe('right down');
+    expect(cell(1).style.height).toBe(`${CONTENT_HEIGHT}px`);
+    expect(cell(1).parentElement!.hasAttribute(EDITOR_EXPANDED_ROW_ATTR)).toBe(true);
+    await focus(2);
+    expect(cell(1).parentElement!.hasAttribute(EDITOR_EXPANDED_ROW_ATTR)).toBe(false);
+  });
+
+  it('grows up near the bottom of the rows viewport and clamps to it', async () => {
+    rowTop = 160;
+    const { cell, focus } = await setup([{ editorHeight: 100 }, { editorHeight: 1000 }]);
+    await focus(0);
+    expect(cell(0).getAttribute(EDITOR_EXPANDED_ATTR)).toBe('up');
+    // Slides up only as far as needed to fit above the viewport bottom (200).
+    expect(cell(0).style.marginTop).toBe('-60px');
+    expect(cell(0).style.marginBottom).toBe('-16px');
+    await focus(1);
+    expect(cell(1).style.height).toBe('200px');
+    expect(cell(1).style.marginTop).toBe('-160px');
+  });
+
+  it('animates the grow and keeps the cell expanded until the shrink finishes', async () => {
+    const animations: { keyframes: Keyframe[]; options: KeyframeAnimationOptions; finish: () => void }[] = [];
+    HTMLElement.prototype.animate = function (keyframes: Keyframe[], options: KeyframeAnimationOptions) {
+      const target = new EventTarget();
+      const animation = Object.assign(target, { cancel: vi.fn() }) as unknown as Animation;
+      animations.push({ keyframes, options, finish: () => target.dispatchEvent(new Event('finish')) });
+      return animation;
+    } as HTMLElement['animate'];
+    const computed = window.getComputedStyle;
+    vi.spyOn(window, 'getComputedStyle').mockImplementation((el) => {
+      const style = computed(el);
+      if (!el.matches('.cell')) return style;
+      return {
+        getPropertyValue: (name: string) =>
+          name === '--tbw-editor-expand-duration' ? '0.12s' : style.getPropertyValue(name),
+      } as CSSStyleDeclaration;
+    });
+    try {
+      const { cell, focus } = await setup([{ editorWidth: 250 }]);
+      await focus(0);
+      expect(animations).toHaveLength(1);
+      expect(animations[0].keyframes[0].clipPath).toBe('inset(0px 150px 0px 0px)');
+      expect(animations[0].options.duration).toBe(120);
+      await focus(1);
+      // Shrinking: still laid out wide until the animation ends.
+      expect(animations).toHaveLength(2);
+      expect(animations[1].keyframes[1].clipPath).toBe('inset(0px 150px 0px 0px)');
+      expect(cell(0).style.width).toBe('250px');
+      animations[1].finish();
+      expect(cell(0).style.width).toBe('');
+      expect(cell(0).hasAttribute(EDITOR_EXPANDED_ATTR)).toBe(false);
+      expect(cell(0).parentElement!.hasAttribute(EDITOR_EXPANDED_ROW_ATTR)).toBe(false);
+    } finally {
+      delete (HTMLElement.prototype as Partial<HTMLElement>).animate;
+    }
   });
 });
