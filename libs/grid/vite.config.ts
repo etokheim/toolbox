@@ -527,11 +527,11 @@ export default defineConfig(({ command }) => ({
             outDir,
             budgets: [
               CORE_BUNDLE_BUDGET,
-              // Default 55 KiB; Editing's identity-safe validation needs 56 KiB,
-              // and Selection's embedded checkbox lifecycle needs 60 KiB.
+              // Default 55 KiB; Editing's identity-safe validation plus focused-editor
+              // expansion (editorWidth) and Selection's checkbox lifecycle need 60 KiB.
               ...pluginNames.map((name) => ({
                 path: `lib/plugins/${name}/index.js`,
-                maxSize: (name === 'selection' ? 60 : name === 'editing' ? 56 : 55) * 1024,
+                maxSize: (name === 'selection' ? 60 : name === 'editing' ? 60 : 55) * 1024,
               })),
             ],
             // #259/#370 v3: the shell is opt-in and MUST tree-shake out of core.

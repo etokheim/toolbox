@@ -50,6 +50,7 @@ import type {} from '../fill-handle/types';
 import { CellValidationManager } from './internal/cell-validation';
 import { type BaselinesCapturedDetail, type DirtyChangeDetail, type DirtyRowEntry } from './internal/dirty-tracking';
 import { DirtyTrackingManager } from './internal/dirty-tracking-manager';
+import { EditorExpansion } from './internal/editor-expansion';
 import { type EditorInjectionDeps, injectEditor as injectEditorImpl } from './internal/editor-injection';
 import { type CellEditRequest, isEntryCell, leaveCellEditing, nextEditCell } from './internal/single-cell-entry';
 import {
@@ -383,6 +384,9 @@ export class EditingPlugin<T = unknown> extends BaseGridPlugin<EditingConfig> {
   /** Dependency bag created once in `attach()` and reused by every `#injectEditor` call. */
   #editorDeps!: EditorInjectionDeps<T>;
 
+  /** Overlay widening for the focused editor of `editorWidth` columns. */
+  #editorExpansion: EditorExpansion | undefined;
+
   /**
    * Narrows the grid to its row type `T`. `GridElement` is intentionally
    * non-generic, so this accessor re-applies the plugin's own `T`.
@@ -449,6 +453,9 @@ export class EditingPlugin<T = unknown> extends BaseGridPlugin<EditingConfig> {
     (grid as any).resetChangedRows = (silent?: boolean) => this.resetChangedRows(silent);
 
     this.#attachRowModeListeners(signal, internalGrid);
+
+    // Repaint position-dependent overlays (fill handle) when the editor cell changes size.
+    this.#editorExpansion = new EditorExpansion(internalGrid, signal, () => this.requestAfterRender());
 
     // In grid mode, request a full render to trigger afterCellRender hooks
     if (this.#isGridMode) {
@@ -784,6 +791,8 @@ export class EditingPlugin<T = unknown> extends BaseGridPlugin<EditingConfig> {
     this.#gridModeCellSnapshot = null;
     this.#singleCellEdit = false;
     this.#seededFromAttr = new WeakSet<HTMLElement>();
+    this.#editorExpansion?.dispose();
+    this.#editorExpansion = undefined;
     super.detach();
   }
 
@@ -1508,6 +1517,7 @@ export class EditingPlugin<T = unknown> extends BaseGridPlugin<EditingConfig> {
    */
   override afterRender(): void {
     const internalGrid = this.#internalGrid;
+    this.#editorExpansion?.schedule();
 
     // --- Editing stability: verify active edit row index ---
     // processRows already moved the index against the final rows; this is the

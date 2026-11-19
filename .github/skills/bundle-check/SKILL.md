@@ -88,7 +88,7 @@ The build/report must fail. Evaluate the checklist, then either reduce size with
 
 ## Plugin Bundle Sizes
 
-Individual plugins are separate entry points. The report lists their raw/gzip bytes. Existing limits remain 55 KiB raw per plugin, except Editing at 56 KiB and Selection at 60 KiB. Any future increase must justify the affected entry, not silently loosen a shared wildcard or move always-loaded bytes into core. Disabled configuration does not remove an imported plugin's download/parse cost.
+Individual plugins are separate entry points. The report lists their raw/gzip bytes. Existing limits remain 55 KiB raw per plugin, except Editing and Selection at 60 KiB. Any future increase must justify the affected entry, not silently loosen a shared wildcard or move always-loaded bytes into core. Disabled configuration does not remove an imported plugin's download/parse cost.
 
 ## Tooling regression checks
 
