@@ -73,6 +73,7 @@ const KNOWN_COLUMN_PROPERTIES: InternalPropertyDefinition[] = [
   },
   { property: 'editor', pluginName: 'editing', level: 'column', description: '' },
   { property: 'editorParams', pluginName: 'editing', level: 'column', description: '' },
+  { property: 'editorWidth', pluginName: 'editing', level: 'column', description: '' },
   // GroupingColumnsPlugin
   { property: 'group', pluginName: 'groupingColumns', level: 'column', description: '' },
   // PinnedColumnsPlugin

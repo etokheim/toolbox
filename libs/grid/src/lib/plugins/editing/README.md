@@ -70,6 +70,13 @@ names. With `tabToEdit`, boundary Tab/Shift+Tab leaves the grid, supporting
 | `editable`     | `boolean \| ((row: TRow) => boolean)` | Whether the column is editable (static or per-row) |
 | `editor`       | `ColumnEditorSpec`                    | Built-in editor type or custom editor factory      |
 | `editorParams` | `EditorParams`                        | Configuration for built-in editors                 |
+| `editorWidth`  | `number \| 'content'`                 | Cell width while its editor is focused (overlay)   |
+
+`editorWidth` lets a narrow column's cell overlay its neighbours while its editor owns focus
+(px, or `'content'` for the editor's intrinsic width). Column widths and layout are untouched;
+the cell is clamped to the visible scroll area (growing left when the right lacks room) and
+shrinks back when focus leaves the editor or the edit ends. Pinned columns and RTL grids are
+not expanded.
 
 ### Conditional Editing
 

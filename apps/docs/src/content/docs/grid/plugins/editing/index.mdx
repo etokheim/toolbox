@@ -13,6 +13,7 @@ import EditingClickToEditDemo from '@components/demos/editing/EditingClickToEdit
 import EditingConditionalDemo from '@components/demos/editing/EditingConditionalDemo.astro';
 import EditingCustomEditorDemo from '@components/demos/editing/EditingCustomEditorDemo.astro';
 import EditingEditingEventsDemo from '@components/demos/editing/EditingEditingEventsDemo.astro';
+import EditingEditorWidthDemo from '@components/demos/editing/EditingEditorWidthDemo.astro';
 import EditingGridModeDemo from '@components/demos/editing/EditingGridModeDemo.astro';
 import EditorParametersDemo from '@components/demos/editing/EditorParametersDemo.astro';
 import ShowSource from '@components/ShowSource.astro';
@@ -426,6 +427,41 @@ Grid mode supports Excel-style keyboard interaction with two modes:
 - **Arrow Keys**: In navigation mode, use arrow keys to move between cells. In edit mode, arrows work within the input (e.g., moving cursor in text, incrementing numbers)
 
 This mimics Excel/Google Sheets behavior where you can quickly navigate a grid with arrows, then press Enter to edit a cell.
+
+## Wider Editors in Narrow Columns (`editorWidth`)
+
+Set `editorWidth` on a column to let its cell grow while its editor is focused — useful for
+an autocomplete in a narrow text column, or a date column that shows one short date but
+needs a full date/range editor. The expanded cell overlays its right-hand neighbours; column
+widths, row height and layout never change, and the cell shrinks back as soon as focus leaves
+the editor or the edit ends.
+
+```ts
+columns: [
+  { field: 'location', editable: true, width: 110, editorWidth: 320 },      // pixels
+  { field: 'date', type: 'date', editable: true, width: 90, editorWidth: 'content' }, // editor's intrinsic width
+]
+```
+
+<ShowSource file="demos/editing/EditingEditorWidthDemo.astro">
+  <EditingEditorWidthDemo />
+</ShowSource>
+
+- **Follows focus.** Only the cell whose editor owns focus expands — every entry path (click,
+  Enter, F2, typing) and Tab/arrow navigation between editors move the expansion with focus.
+  In row mode the other editors of the row stay at their column width.
+- **Overlays stay open.** Focus inside an overlay registered with
+  [`registerExternalFocusContainer()`](#external-focus-containers), or owned by the editor via
+  `aria-expanded="true"` + `aria-controls`, keeps the cell expanded.
+- **Clamped to the viewport.** The width is limited to the visible scroll area between pinned
+  columns. If there is no room to the right, the cell grows to the left instead.
+- **Never narrower** than the column; `'content'` is re-measured after framework adapters mount.
+- **Not supported:** pinned columns and RTL grids (a diagnostic warns once and the cell keeps
+  its column width).
+
+The expanded cell carries `data-tbw-editor-expanded="right" | "left"` (growth direction) and
+is styled with `--tbw-editor-expanded-bg` (opaque fill, default `Canvas`) and
+`--tbw-editor-expanded-shadow`.
 
 ## Editor Parameters
 

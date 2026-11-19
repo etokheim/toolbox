@@ -50,7 +50,7 @@ Avoid shortcuts and quick hacks. Prefer correct, maintainable solutions even whe
 ## Bundle Size
 
 - **Core budget**: `tools/core-bundle-budget.ts`: ≤180224 raw / ≤53760 gzip bytes, soft warning at 46080 gzip bytes. Bun's default gzip is authoritative even when Nx/Vite runs under Node.
-- **Plugin budget**: Each plugin ≤55 KiB raw except Editing ≤56 KiB and Selection ≤60 KiB.
+- **Plugin budget**: Each plugin ≤55 KiB raw except Editing and Selection ≤60 KiB.
 - **Adapter budgets**: `grid-react/index.js` ≤50 kB, `grid-vue/index.js` ≤50 kB
 - **Enforced automatically**: Vite `bundleBudget` plugin fails the build on violations (see `tools/vite-bundle-budget.ts`)
 - **Tree-shakeable**: Features and plugins are separate entry points, not bundled in core
