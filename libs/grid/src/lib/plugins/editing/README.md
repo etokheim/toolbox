@@ -71,12 +71,15 @@ names. With `tabToEdit`, boundary Tab/Shift+Tab leaves the grid, supporting
 | `editor`       | `ColumnEditorSpec`                    | Built-in editor type or custom editor factory      |
 | `editorParams` | `EditorParams`                        | Configuration for built-in editors                 |
 | `editorWidth`  | `number \| 'content'`                 | Cell width while its editor is focused (overlay)   |
+| `editorHeight` | `number \| 'content'`                 | Cell height while its editor is focused (overlay)  |
 
 `editorWidth` lets a narrow column's cell overlay its neighbours while its editor owns focus
 (px, or `'content'` for the editor's intrinsic width). Column widths and layout are untouched;
 the cell is clamped to the visible scroll area (growing left when the right lacks room) and
-shrinks back when focus leaves the editor or the edit ends. Pinned columns and RTL grids are
-not expanded.
+shrinks back when focus leaves the editor or the edit ends. `editorHeight` does the same
+vertically (overlaying the rows below, growing up near the bottom). The cell grows with a short
+animation (`--tbw-editor-expand-duration`, `0ms` under reduced motion) and is elevated with
+`--tbw-editor-expanded-shadow`. Pinned columns and RTL grids are not expanded.
 
 ### Conditional Editing
 
