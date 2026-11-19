@@ -109,7 +109,9 @@ export class EditorExpansion {
   #expand(cell: HTMLElement, requested: number | 'content'): void {
     const viewport = this.#viewport();
     if (!viewport) return;
+    // Measure the unexpanded cell: the attribute's `justify-self: start` would shrink it to its content.
     for (const prop of STYLE_PROPS) cell.style.removeProperty(prop);
+    cell.removeAttribute(EDITOR_EXPANDED_ATTR);
     const base = cell.getBoundingClientRect();
     let left = viewport.left;
     let right = viewport.right;

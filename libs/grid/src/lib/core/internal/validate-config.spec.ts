@@ -110,6 +110,18 @@ describe('validatePluginProperties', () => {
     });
   });
 
+  describe('editorWidth property', () => {
+    it('is ignored without EditingPlugin (read-only grids)', () => {
+      const config: GridConfig = {
+        columns: [{ field: 'name', editorWidth: 320 }],
+      };
+
+      expect(() => {
+        validatePluginProperties(config, []);
+      }).not.toThrow();
+    });
+  });
+
   describe('explicit feature opt-out', () => {
     it('does not throw when editor is used and features.editing is explicitly false', () => {
       const config: GridConfig = {

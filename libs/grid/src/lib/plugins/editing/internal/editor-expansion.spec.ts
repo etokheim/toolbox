@@ -18,7 +18,9 @@ function mockLayout(): void {
   vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
     if (this.matches('.data-grid-row > .cell[data-col]')) {
       const base = Number(this.getAttribute('data-col')) * COL;
-      const width = this.style.width === 'max-content' ? CONTENT : parseFloat(this.style.width) || COL;
+      // An expanded cell without inline width shrink-to-fits (`justify-self: start`).
+      const shrunk = this.hasAttribute(EDITOR_EXPANDED_ATTR) && !this.style.width;
+      const width = this.style.width === 'max-content' || shrunk ? CONTENT : parseFloat(this.style.width) || COL;
       return new DOMRect(base + (parseFloat(this.style.marginLeft) || 0), 0, width, 24);
     }
     return new DOMRect(0, 0, VIEWPORT, 200);
@@ -76,6 +78,18 @@ describe('column.editorWidth', () => {
     // Outer size = width + margins = the 100px track.
     expect(expanded.style.marginRight).toBe('-150px');
     expect(grid.style.getPropertyValue('--tbw-column-template')).toBe(template);
+  });
+
+  it('stays expanded across re-syncs of a content-width editor', async () => {
+    const { grid, cell, focus } = await setup([{ editorWidth: 'content' }]);
+    await focus(0);
+    expect(cell(0).style.width).toBe(`${CONTENT}px`);
+    for (let i = 0; i < 3; i++) {
+      grid.dispatchEvent(new FocusEvent('focusin'));
+      await settle();
+      expect(cell(0).getAttribute(EDITOR_EXPANDED_ATTR)).toBe('right');
+      expect(cell(0).style.width).toBe(`${CONTENT}px`);
+    }
   });
 
   it('grows to the left when the right side lacks room', async () => {
