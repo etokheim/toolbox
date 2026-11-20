@@ -587,6 +587,49 @@ export class MasterDetailPlugin<TRow = unknown> extends BaseGridPlugin<MasterDet
     }
   }
 
+  /**
+   * With a configured `getRowId`, a replacement row (immutable data refresh) is the
+   * same row: its expansion, mounted detail panel, measured height and fetched
+   * detail data move to the new object instead of collapsing. The panel is kept,
+   * not re-rendered, so framework state inside it survives the refresh.
+   */
+  #carryReplacedRows(rows: readonly unknown[]): void {
+    const getRowId = this.grid.effectiveConfig?.getRowId;
+    if (!getRowId || (this.expandedRows.size === 0 && this.detailElements.size === 0)) return;
+    const current = new Set(rows);
+    const staleById = new Map<string, object>();
+    for (const row of new Set([...this.expandedRows, ...this.detailElements.keys()])) {
+      if (current.has(row)) continue;
+      const id = tryResolveRowId(row, getRowId);
+      if (id !== undefined) staleById.set(id, row);
+    }
+    for (const row of rows) {
+      if (staleById.size === 0) return;
+      if (!this.#isDetailRow(row)) continue;
+      const id = tryResolveRowId(row, getRowId);
+      const stale = id === undefined ? undefined : staleById.get(id);
+      if (!stale) continue;
+      staleById.delete(id as string);
+      this.#transferRow(stale, row as object);
+    }
+  }
+
+  #transferRow(from: object, to: object): void {
+    if (this.expandedRows.delete(from)) this.expandedRows.add(to);
+    if (this.#expandAllExcluded.has(from)) this.#expandAllExcluded.add(to);
+    if (this.rowsToAnimate.delete(from)) this.rowsToAnimate.add(to);
+    const detail = this.detailElements.get(from);
+    if (detail) {
+      this.detailElements.delete(from);
+      this.detailElements.set(to, detail);
+    }
+    const height = this.measuredDetailHeights.get(from);
+    if (height !== undefined) this.measuredDetailHeights.set(to, height);
+    const data = this.detailDataMap.get(from);
+    if (data) this.detailDataMap.set(to, data);
+    if (this.#detailRequested.has(from)) this.#detailRequested.add(to);
+  }
+
   #rememberCachedRow(row: object): void {
     if (this.#cacheRefs.has(row)) return;
     const ref = new WeakRef(row);
@@ -700,6 +743,7 @@ export class MasterDetailPlugin<TRow = unknown> extends BaseGridPlugin<MasterDet
 
   /** @internal */
   override processRows(rows: readonly unknown[]): unknown[] {
+    this.#carryReplacedRows(rows);
     this.#reconcileEligibility();
     return rows as unknown[];
   }

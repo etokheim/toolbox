@@ -228,3 +228,30 @@ it('retains reference identity, default labels and guarded idempotent detail act
   replacement.setExpanded(true);
   expect(plugin.isExpanded(0)).toBe(false);
 });
+
+it('keeps an expanded detail panel across a replacement row with the same configured id', async () => {
+  const detailRenderer = vi.fn(() => document.createElement('div'));
+  const plugin = new MasterDetailPlugin({ animation: false, detailRenderer });
+  const grid = document.createElement('tbw-grid') as DataGridElement;
+  const row = { id: 'a', name: 'A' };
+  grid.gridConfig = { columns: [{ field: 'name' }], plugins: [plugin], getRowId: (value: { id: string }) => value.id };
+  grid.rows = [row, { id: 'b', name: 'B' }];
+  document.body.append(grid);
+  await waitUpgrade(grid);
+  plugin.expand(0);
+  await waitUpgrade(grid);
+  const detail = plugin.getDetailElement(0);
+  expect(detail?.isConnected).toBe(true);
+
+  grid.rows = [{ ...row, name: 'Refreshed' }, { id: 'b', name: 'B' }];
+  await vi.waitFor(() => expect(grid.querySelector('.rows .cell[data-field="name"]')?.textContent).toBe('Refreshed'));
+  expect(plugin.isExpanded(0)).toBe(true);
+  expect(plugin.getDetailElement(0)).toBe(detail);
+  expect(detail?.isConnected).toBe(true);
+  expect(detailRenderer).toHaveBeenCalledOnce();
+
+  grid.rows = [{ id: 'b', name: 'B' }, { ...row, name: 'Moved' }];
+  await vi.waitFor(() => expect(plugin.isExpanded(1)).toBe(true));
+  expect(plugin.isExpanded(0)).toBe(false);
+  expect(plugin.getDetailElement(1)).toBe(detail);
+});
