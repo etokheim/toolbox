@@ -24,7 +24,7 @@ related: [build-css, release-versioning, docs-agent-endpoints, grid-core]
 
 ## bundle budget ([tools/vite-bundle-budget.ts](tools/vite-bundle-budget.ts))
 
-- OWNS: `tools/core-bundle-budget.ts` defines core 180224 B raw / 53760 B gzip hard, 46080 B gzip soft (176/52.5/45 KiB). Plugins: 55 KiB raw except Editing 56 KiB and Selection 60 KiB; React/Vue 50 KiB raw + existing gzip rules; Angular 276 KiB raw.
+- OWNS: `tools/core-bundle-budget.ts` defines core 180224 B raw / 53760 B gzip hard, 46080 B gzip soft (176/52.5/45 KiB). Plugins: 55 KiB raw except Selection 60 KiB, Editing 64 KiB; React/Vue 50 KiB raw + existing gzip rules; Angular 276 KiB raw.
 - FLOW: Vite `closeBundle` / CLI / report → `tools/bundle-size.ts` → Bun default `node:zlib.gzipSync`; Node uses one batched Bun worker. Missing Bun/failed or invalid child output throws, never Node fallback. Exact bytes/version printed; missing/over-budget core fails even `--ci`; other report entries informational.
 - READS FROM: upstream `bac5cc3a`: Node24+Bun (`ci.yml:113–119,210–216,244`), Nx Node shebang, `@nx/vite:build`; unchanged through `305c01c9`. Fork CI delta: publication guards. Budget/report origins: `9bfda50a`/`c4e97239`; `node:` works in Bun.
 - DECIDED (2026-10, user): gzip50→52 KiB for ownership/readability; raw170/soft45 then unchanged.
@@ -32,6 +32,8 @@ related: [build-css, release-versioning, docs-agent-endpoints, grid-core]
 - INVARIANT: budget matches accumulate; no override precedence. Per-entry increases, not wildcard loosening. Imported disabled plugins still download/parse; only mounted registries are lazy.
 - INVARIANT: `warnSize`/`warnGzip` never fail the build; `maxSize`/`maxGzip` fail with exit 1 under `severity: 'error'`.
 - POLICY: increases require placement/need/quality review, exact before/after bytes and Bun version; procedure → `bundle-check`.
+- DECIDED (2026-11-19): Editing raw57344→61440 for opt-in `editorWidth`; Bun1.4.4 56919→60917 raw, 19042 gz.
+- DECIDED (2026-11-21): Editing raw61440→65536 for `editorHeight` + grow/shrink animation; Bun1.4.4 ~61000→63261 raw, 19893 gz.
 - DECIDED (2026-10-30, user-approved): core raw174080→175104; Editing raw56320→57344; gzip/other caps unchanged. Bun1.4.2 raw/gzip: core174080/51879→174439/52011, Editing55721/17093→56999/17538. WHY: core owns source/cache/a11y seams; optional Editing/CellEntry own validation/clearing. Preserve safeguards.
 - DECIDED (2026-10-30, upstream integration): core raw175104→179200; gzip53248/soft46080/other caps unchanged. Bun1.4.2/Node26.10.0: upstream tree `1a23fa1cf970b52a0145aaf2f05065793dee62dd` 177897/53029 raw/gzip; integrated178256/53158 (+359/+129), headroom944/90 B. WHY: upstream alone exceeds171KiB;175KiB covers shared source/cache/a11y seams. Failed enforcement evidence retained.
 - DECIDED (2026-11-02, user-approved acceptance/history): core gzip53248→53504 (+256 B), other limits unchanged. Bun1.4.2 default gzip, Node24.15.0: tree `55cf8a32` core178442/53269 raw/gzip unchanged by cap edit; gzip headroom235 B. WHY: core updateRow needs deferred acceptance; owner delegation stays plugin-local. Bounded pass saved166/73 B; preserve identity/diagnostics over cosmetic shrinking. Retain old21 B-over evidence.

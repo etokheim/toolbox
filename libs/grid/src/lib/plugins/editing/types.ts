@@ -283,6 +283,60 @@ declare module '../../core/types' {
      */
     editorParams?: EditorParams;
     /**
+     * Width the cell may grow to while its editor is focused. Requires EditingPlugin.
+     *
+     * The editing cell overlays its right-hand neighbours without changing column
+     * widths, row height or layout, and shrinks back when focus leaves the editor
+     * or the edit ends. Only the cell whose editor owns focus expands (so in row
+     * mode, Tab moves the expansion with focus); focus inside an overlay the editor
+     * registered via `grid.registerExternalFocusContainer()` or owns through
+     * `aria-expanded` + `aria-controls` keeps it expanded.
+     *
+     * - `number` — target width in pixels.
+     * - `'content'` — the editor's intrinsic (max-content) width.
+     *
+     * The width is clamped to the visible scroll area between pinned columns. When
+     * there is not enough room to the right, the cell grows to the left instead.
+     * Never narrower than the column. Pinned columns and RTL grids are not
+     * expanded (a diagnostic warns once for RTL).
+     *
+     * @example
+     * ```typescript
+     * { field: 'location', editable: true, width: 120, editorWidth: 320 }
+     * { field: 'date', type: 'date', editable: true, width: 90, editorWidth: 'content' }
+     * ```
+     * The cell grows with a short clip-path animation and is elevated with a shadow;
+     * theme via `--tbw-editor-expand-duration` (`0ms` disables it; reduced motion
+     * disables it by default), `--tbw-editor-expand-easing` and
+     * `--tbw-editor-expanded-shadow`.
+     *
+     * @example
+     * ```typescript
+     * { field: 'location', editable: true, width: 120, editorWidth: 320 }
+     * { field: 'date', type: 'date', editable: true, width: 90, editorWidth: 'content' }
+     * ```
+     * @since 3.11.0
+     */
+    editorWidth?: number | 'content';
+    /**
+     * Height the cell may grow to while its editor is focused. Requires EditingPlugin.
+     *
+     * Same rules as {@link editorWidth}, vertically: the cell overlays the rows
+     * below without changing row heights or virtualization, is clamped to the
+     * visible rows viewport, and grows upwards when there is not enough room
+     * below. Combine with `editorWidth` to grow in both directions.
+     *
+     * - `number` — target height in pixels.
+     * - `'content'` — the editor's intrinsic (max-content) height at its expanded width.
+     *
+     * @example
+     * ```typescript
+     * { field: 'note', editable: true, width: 140, editorWidth: 300, editorHeight: 96, editor: textareaEditor }
+     * ```
+     * @since 3.11.0
+     */
+    editorHeight?: number | 'content';
+    /**
      * Whether this column allows `null` values. Requires EditingPlugin.
      *
      * When `true`:

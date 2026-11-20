@@ -13,6 +13,7 @@ import EditingClickToEditDemo from '@components/demos/editing/EditingClickToEdit
 import EditingConditionalDemo from '@components/demos/editing/EditingConditionalDemo.astro';
 import EditingCustomEditorDemo from '@components/demos/editing/EditingCustomEditorDemo.astro';
 import EditingEditingEventsDemo from '@components/demos/editing/EditingEditingEventsDemo.astro';
+import EditingEditorWidthDemo from '@components/demos/editing/EditingEditorWidthDemo.astro';
 import EditingGridModeDemo from '@components/demos/editing/EditingGridModeDemo.astro';
 import EditorParametersDemo from '@components/demos/editing/EditorParametersDemo.astro';
 import ShowSource from '@components/ShowSource.astro';
@@ -426,6 +427,54 @@ Grid mode supports Excel-style keyboard interaction with two modes:
 - **Arrow Keys**: In navigation mode, use arrow keys to move between cells. In edit mode, arrows work within the input (e.g., moving cursor in text, incrementing numbers)
 
 This mimics Excel/Google Sheets behavior where you can quickly navigate a grid with arrows, then press Enter to edit a cell.
+
+## Larger Editors in Small Cells (`editorWidth` / `editorHeight`)
+
+Set `editorWidth` and/or `editorHeight` on a column to let its cell grow while its editor is
+focused — useful for an autocomplete in a narrow text column, a date column that shows one
+short date but needs a full date/range editor, or a multi-line note. The expanded cell overlays
+its neighbours (to the right and below); column widths, row heights, virtualization and layout
+never change, and the cell shrinks back as soon as focus leaves the editor or the edit ends.
+
+```ts
+columns: [
+  { field: 'location', editable: true, width: 110, editorWidth: 320 },      // pixels
+  { field: 'date', type: 'date', editable: true, width: 90, editorWidth: 'content' }, // editor's intrinsic width
+  { field: 'note', editable: true, width: 140, editorWidth: 300, editorHeight: 96 },  // grow both ways
+]
+```
+
+<ShowSource file="demos/editing/EditingEditorWidthDemo.astro">
+  <EditingEditorWidthDemo />
+</ShowSource>
+
+- **Follows focus.** Only the cell whose editor owns focus expands — every entry path (click,
+  Enter, F2, typing) and Tab/arrow navigation between editors move the expansion with focus.
+  In row mode the other editors of the row stay at their column size.
+- **Overlays stay open.** Focus inside an overlay registered with
+  [`registerExternalFocusContainer()`](#external-focus-containers), or owned by the editor via
+  `aria-expanded="true"` + `aria-controls`, keeps the cell expanded.
+- **Clamped to the viewport.** The width is limited to the visible scroll area between pinned
+  columns, the height to the visible rows area. If there is no room to the right (or below),
+  the cell grows to the left (or upwards) instead.
+- **Never smaller** than the cell; `'content'` (the editor's max-content size — height is
+  measured at the expanded width) is re-measured after framework adapters mount.
+- **Animated and elevated.** The cell grows and shrinks with a short clip animation (disabled
+  under `prefers-reduced-motion`) and is lifted above its neighbours with a shadow, but stays
+  below pinned columns.
+- **Not supported:** pinned columns and RTL grids (a diagnostic warns once and the cell keeps
+  its size).
+
+The expanded cell carries `data-tbw-editor-expanded` with its growth directions
+(`"right"`/`"left"`, then `"down"`/`"up"` when the height grows, e.g. `"right down"`), and its
+row carries `data-tbw-editor-expanded-row`. Theme it with:
+
+| CSS custom property            | Default                                   | Purpose                             |
+| ------------------------------ | ----------------------------------------- | ----------------------------------- |
+| `--tbw-editor-expanded-bg`     | `Canvas`                                  | Opaque fill over the neighbours     |
+| `--tbw-editor-expanded-shadow` | `0 4px 14px …, 0 1px 3px …` (theme shadow) | Elevation shadow                    |
+| `--tbw-editor-expand-duration` | `120ms` (`0ms` with reduced motion)       | Grow/shrink duration; `0ms` disables |
+| `--tbw-editor-expand-easing`   | `cubic-bezier(0.2, 0, 0, 1)`              | Grow/shrink easing                  |
 
 ## Editor Parameters
 

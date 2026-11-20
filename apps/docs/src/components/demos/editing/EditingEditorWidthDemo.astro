@@ -1,0 +1,59 @@
+---
+// EditingEditorWidthDemo.astro — Small cells that grow while their editor is open
+---
+<div class="grid-demo not-content" id="editing-editor-width-demo">
+  <tbw-grid style="height: 250px;"></tbw-grid>
+</div>
+
+<script>
+import '@toolbox-web/grid';
+import { queryGrid } from '@toolbox-web/grid';
+
+import '@toolbox-web/grid/features/editing';
+
+const container = document.getElementById('editing-editor-width-demo');
+if (container) {
+  const grid = queryGrid('tbw-grid', container);
+
+  grid.gridConfig = {
+    fitMode: 'fixed',
+    columns: [
+      { field: 'id', header: 'ID', width: 60 },
+      { field: 'location', header: 'Location', width: 110, editable: true, editorWidth: 320 },
+      { field: 'date', header: 'Date', type: 'date', width: 90, editable: true, editorWidth: 'content' },
+      { field: 'qty', header: 'Qty', type: 'number', width: 70, editable: true },
+      {
+        field: 'note',
+        header: 'Note',
+        width: 140,
+        editable: true,
+        editorWidth: 300,
+        editorHeight: 96,
+        // Multi-line editor: Enter adds a line, Ctrl/Cmd+Enter commits, Escape cancels.
+        editor: (ctx) => {
+          const area = document.createElement('textarea');
+          area.value = String(ctx.value ?? '');
+          area.style.cssText = 'width:100%;height:100%;box-sizing:border-box;resize:none;font:inherit;';
+          area.addEventListener('keydown', (e) => {
+            if (e.key !== 'Enter') return;
+            e.stopPropagation();
+            if (e.ctrlKey || e.metaKey) {
+              e.preventDefault();
+              ctx.commit(area.value);
+            }
+          });
+          return area;
+        },
+      },
+    ],
+    features: { editing: 'click' },
+  };
+
+  grid.rows = [
+    { id: 1, location: 'Oslo, Norway — Terminal 4, Gate B', date: '2026-11-19', qty: 12, note: 'Fragile' },
+    { id: 2, location: 'Bergen harbour', date: '2026-11-20', qty: 4, note: 'Deliver before noon' },
+    { id: 3, location: 'Trondheim depot', date: '2026-11-22', qty: 9, note: '' },
+    { id: 4, location: 'Stavanger', date: '2026-11-25', qty: 1, note: 'Call on arrival' },
+  ];
+}
+</script>
